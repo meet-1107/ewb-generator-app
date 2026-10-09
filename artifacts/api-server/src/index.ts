@@ -1,7 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 
-const rawPort = process.env["PORT"];
+const rawPort = process.env["PORT"] ?? (process.env.NODE_ENV === "production" ? undefined : "5000");
 
 if (!rawPort) {
   throw new Error(

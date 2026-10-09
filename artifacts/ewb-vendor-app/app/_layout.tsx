@@ -1,8 +1,9 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
+import { StatusBar } from 'expo-status-bar';
 import { ErrorBoundary } from '@/components/ErrorBoundary';
 import {
   Inter_400Regular,
@@ -11,31 +12,58 @@ import {
   Inter_700Bold,
   useFonts,
 } from '@expo-google-fonts/inter';
-import { Stack } from 'expo-router';
+import { router, Stack, useSegments } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { AuthProvider } from '@/state/auth';
-import { AppStoreProvider } from '@/state/app-store';
+import { AuthProvider, useAuth } from '@/state/auth';
+import { AppStoreProvider, useAppStore } from '@/state/app-store';
+import { DialogProvider } from '@/components/Dialog';
+import { loadThemePreference } from '@/state/theme';
+import { useColors } from '@/hooks/useColors';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
 
 const queryClient = new QueryClient();
 
+/** Route guard: no business data is reachable before sign-in and business setup. */
+function useAuthGuard() {
+  const auth = useAuth();
+  const store = useAppStore();
+  const segments = useSegments();
+  const first = segments[0] as string | undefined;
+  useEffect(() => {
+    if (auth.isLoading || !store.isHydrated) return;
+    const signedIn = auth.previewMode || Boolean(auth.user?.emailVerified);
+    if (!signedIn && first !== undefined && first !== 'index') router.replace('/');
+    else if (signedIn && !store.business && first !== undefined && first !== 'setup' && first !== 'index') router.replace('/setup');
+  }, [auth.isLoading, auth.previewMode, auth.user, store.isHydrated, store.business, first]);
+}
+
 function RootLayoutNav() {
+  const colors = useColors();
+  useAuthGuard();
   return (
-    <Stack screenOptions={{ headerBackTitle: 'Back', headerShown: false }}>
-      <Stack.Screen name="index" />
-      <Stack.Screen name="setup" />
-      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen name="invoice/new" options={{ presentation: 'modal' }} />
-      <Stack.Screen name="invoice/import" options={{ presentation: 'modal' }} />
-      <Stack.Screen name="invoice/[id]" options={{ presentation: 'modal' }} />
-      <Stack.Screen name="ewb/[id]" options={{ presentation: 'modal' }} />
-    </Stack>
+    <>
+      <StatusBar style={colors.isDark ? 'light' : 'dark'} />
+      <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background }, animation: 'slide_from_right' }}>
+        <Stack.Screen name="index" options={{ animation: 'fade' }} />
+        <Stack.Screen name="setup" options={{ animation: 'fade' }} />
+        <Stack.Screen name="(tabs)" options={{ animation: 'fade' }} />
+        <Stack.Screen name="invoice/new" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="invoice/import" options={{ presentation: 'modal' }} />
+        <Stack.Screen name="invoice/[id]" />
+        <Stack.Screen name="ewb/review/[invoiceId]" />
+        <Stack.Screen name="ewb/[id]" />
+        <Stack.Screen name="subscription" />
+        <Stack.Screen name="saved/[kind]" />
+        <Stack.Screen name="help" />
+      </Stack>
+    </>
   );
 }
 
 export default function RootLayout() {
+  const [themeReady, setThemeReady] = useState(false);
   const [fontsLoaded, fontError] = useFonts({
     Inter_400Regular,
     Inter_500Medium,
@@ -44,22 +72,28 @@ export default function RootLayout() {
   });
 
   useEffect(() => {
-    if (fontsLoaded || fontError) {
+    void loadThemePreference().finally(() => setThemeReady(true));
+  }, []);
+
+  useEffect(() => {
+    if ((fontsLoaded || fontError) && themeReady) {
       SplashScreen.hideAsync();
     }
-  }, [fontsLoaded, fontError]);
+  }, [fontsLoaded, fontError, themeReady]);
 
-  if (!fontsLoaded && !fontError) return null;
+  if ((!fontsLoaded && !fontError) || !themeReady) return null;
 
   return (
     <SafeAreaProvider>
       <ErrorBoundary>
         <QueryClientProvider client={queryClient}>
-          <GestureHandlerRootView>
+          <GestureHandlerRootView style={{ flex: 1 }}>
             <KeyboardProvider>
               <AuthProvider>
                 <AppStoreProvider>
-                  <RootLayoutNav />
+                  <DialogProvider>
+                    <RootLayoutNav />
+                  </DialogProvider>
                 </AppStoreProvider>
               </AuthProvider>
             </KeyboardProvider>

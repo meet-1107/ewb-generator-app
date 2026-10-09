@@ -1,41 +1,58 @@
 import React from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
+import { router } from 'expo-router';
 import { useColors } from '@/hooks/useColors';
-import { formatInr, invoiceTotals, type Invoice } from '@/lib/domain';
+import { formatDate, formatInr, invoiceTotals, type Invoice } from '@/lib/domain';
 import { Card, StatusPill, TextBlock } from '@/components/AppUI';
 
-export default function InvoiceCard({ invoice, onPress }: { invoice: Invoice; onPress: () => void }) {
+const statusMeta = {
+  draft: { label: 'Draft', tone: 'neutral' as const },
+  ready: { label: 'Ready to generate', tone: 'blue' as const },
+  ewb_generated: { label: 'EWB generated', tone: 'green' as const },
+};
+
+export default function InvoiceCard({ invoice, onPress, onLongPress }: { invoice: Invoice; onPress: () => void; onLongPress?: () => void }) {
   const colors = useColors();
   const total = invoiceTotals(invoice).total;
-  const state = invoice.status === 'ready' ? 'Ready' : invoice.status === 'ewb_generated' ? 'EWB linked' : 'Draft';
-  const tone = invoice.status === 'ready' || invoice.status === 'ewb_generated' ? 'green' : 'neutral';
+  const meta = statusMeta[invoice.status];
   return (
-    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={`Open invoice ${invoice.invoiceNumber || 'draft'}`}>
-      <Card style={styles.card}>
-        <View style={styles.top}>
-          <View style={[styles.icon, { backgroundColor: colors.accent }]}><Feather name="file-text" size={17} color={colors.primary} /></View>
-          <View style={{ flex: 1, gap: 4 }}>
-            <TextBlock size={14} weight="semibold">{invoice.invoiceNumber || 'Untitled invoice'}</TextBlock>
-            <TextBlock size={12} color={colors.mutedForeground}>{invoice.buyerName || 'Buyer not added'} · {invoice.invoiceDate || 'Date not set'}</TextBlock>
+    <Pressable onPress={onPress} onLongPress={onLongPress} accessibilityRole="button" accessibilityLabel={`Invoice ${invoice.invoiceNumber || 'draft'}, ${invoice.buyerName || 'no buyer'}, ${formatInr(total)}, ${meta.label}`} accessibilityHint={onLongPress ? 'Long press for more actions' : undefined}>
+      {({ pressed }) => (
+        <Card style={[styles.card, pressed ? { opacity: 0.88, transform: [{ scale: 0.995 }] } : undefined] as never}>
+          <View style={styles.top}>
+            <View style={[styles.icon, { backgroundColor: invoice.status === 'ewb_generated' ? colors.successBackground : colors.accent }]}>
+              <Feather name={invoice.status === 'ewb_generated' ? 'check' : 'file-text'} size={17} color={invoice.status === 'ewb_generated' ? colors.successForeground : colors.primary} />
+            </View>
+            <View style={{ flex: 1, gap: 3 }}>
+              <TextBlock size={15} weight="semibold" numberOfLines={1}>{invoice.invoiceNumber || 'Untitled invoice'}</TextBlock>
+              <TextBlock size={12} color={colors.mutedForeground} numberOfLines={1}>{invoice.buyerName || 'Buyer not added'} · {formatDate(invoice.invoiceDate)}</TextBlock>
+            </View>
+            <View style={{ alignItems: 'flex-end', gap: 2 }}>
+              <TextBlock size={15} weight="bold">{formatInr(total)}</TextBlock>
+            </View>
           </View>
-          <Feather name="arrow-up-right" size={16} color={colors.mutedForeground} />
-        </View>
-        <View style={styles.bottom}>
-          <StatusPill label={state} tone={tone} />
-          <View style={{ alignItems: 'flex-end', gap: 2 }}>
-            <TextBlock size={10} color={colors.mutedForeground}>TOTAL VALUE</TextBlock>
-            <TextBlock size={15} weight="bold">{formatInr(total)}</TextBlock>
+          <View style={styles.bottom}>
+            <StatusPill label={meta.label} tone={meta.tone} />
+            {invoice.ewbNumber && invoice.ewbId ? (
+              <Pressable onPress={() => router.push(`/ewb/${invoice.ewbId}`)} hitSlop={8} style={styles.ewbLink} accessibilityRole="link" accessibilityLabel={`Open e-way bill ${invoice.ewbNumber}`}>
+                <Feather name="truck" size={12} color={colors.primary} />
+                <TextBlock size={12} weight="semibold" color={colors.primary}>{invoice.ewbNumber}</TextBlock>
+              </Pressable>
+            ) : invoice.sourceFileName ? (
+              <View style={styles.ewbLink}><Feather name="paperclip" size={12} color={colors.mutedForeground} /><TextBlock size={11} color={colors.mutedForeground}>From PDF</TextBlock></View>
+            ) : null}
           </View>
-        </View>
-      </Card>
+        </Card>
+      )}
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  card: { padding: 15, gap: 13, borderRadius: 18 },
+  card: { padding: 14, gap: 11, borderRadius: 18 },
   top: { flexDirection: 'row', gap: 11, alignItems: 'center' },
-  icon: { width: 39, height: 39, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
-  bottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 50 },
+  icon: { width: 40, height: 40, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  bottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 51 },
+  ewbLink: { flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 28 },
 });

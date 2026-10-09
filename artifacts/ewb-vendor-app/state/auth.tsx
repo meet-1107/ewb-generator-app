@@ -17,7 +17,10 @@ import {
   updateProfile,
   type User,
 } from 'firebase/auth';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import { auth, firebaseConfigured } from '@/lib/firebase';
+
+const PREVIEW_KEY = 'ewb-vendor-v1:preview-session';
 
 type AuthValue = {
   user: User | null;
@@ -36,22 +39,39 @@ const AuthContext = createContext<AuthValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [isLoading, setIsLoading] = useState(Boolean(auth));
+  const [authLoading, setAuthLoading] = useState(Boolean(auth));
+  const [previewLoading, setPreviewLoading] = useState(!firebaseConfigured);
   const [previewMode, setPreviewMode] = useState(false);
+  const isLoading = authLoading || previewLoading;
 
   useEffect(() => {
     if (!auth) {
-      setIsLoading(false);
+      setAuthLoading(false);
       return;
     }
     return onAuthStateChanged(auth, (nextUser) => {
       setUser(nextUser);
-      setIsLoading(false);
+      setAuthLoading(false);
     });
   }, []);
 
-  const enterPreview = useCallback(() => setPreviewMode(true), []);
-  const exitPreview = useCallback(() => setPreviewMode(false), []);
+  // Preview sessions survive reloads and deep links (preview is only offered without Firebase).
+  useEffect(() => {
+    if (firebaseConfigured) return;
+    AsyncStorage.getItem(PREVIEW_KEY)
+      .then((value) => setPreviewMode(value === '1'))
+      .catch(() => undefined)
+      .finally(() => setPreviewLoading(false));
+  }, []);
+
+  const enterPreview = useCallback(() => {
+    setPreviewMode(true);
+    void AsyncStorage.setItem(PREVIEW_KEY, '1').catch(() => undefined);
+  }, []);
+  const exitPreview = useCallback(() => {
+    setPreviewMode(false);
+    void AsyncStorage.removeItem(PREVIEW_KEY).catch(() => undefined);
+  }, []);
 
   const value = useMemo<AuthValue>(
     () => ({
@@ -82,6 +102,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       async signOut() {
         setPreviewMode(false);
+        await AsyncStorage.removeItem(PREVIEW_KEY).catch(() => undefined);
         if (auth) await firebaseSignOut(auth);
       },
     }),

@@ -1,0 +1,122 @@
+import { Platform } from 'react-native';
+import type { Confidence, EwbRecord, GstSnapshot } from '@/lib/domain';
+
+/**
+ * Client for the trusted backend (artifacts/api-server). Provider calls,
+ * entitlement checks and PDF parsing only happen there; the app never talks
+ * to an EWB/GST provider directly.
+ */
+
+function resolveBaseUrl() {
+  const explicit = process.env.EXPO_PUBLIC_API_URL;
+  if (explicit) return explicit.replace(/\/$/, '');
+  const domain = process.env.EXPO_PUBLIC_DOMAIN;
+  if (domain) return `https://${domain}`;
+  if (Platform.OS === 'web' && typeof window !== 'undefined') {
+    const { protocol, hostname } = window.location;
+    return hostname === 'localhost' || hostname === '127.0.0.1' ? `${protocol}//${hostname}:5000` : `${protocol}//${window.location.host}`;
+  }
+  return Platform.OS === 'android' ? 'http://10.0.2.2:5000' : 'http://localhost:5000';
+}
+
+export const API_BASE = resolveBaseUrl();
+
+export class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+    readonly code: string,
+    readonly body: Record<string, unknown> = {},
+  ) {
+    super(message);
+  }
+  get offline() {
+    return this.status === 0;
+  }
+}
+
+type Identity = { workspaceId: string | null; getToken: (() => Promise<string | null>) | null };
+let identity: Identity = { workspaceId: null, getToken: null };
+
+export function setApiIdentity(next: Identity) {
+  identity = next;
+}
+
+async function request<T>(path: string, init: { method?: string; body?: unknown; timeoutMs?: number } = {}): Promise<T> {
+  const headers: Record<string, string> = { Accept: 'application/json' };
+  if (init.body !== undefined) headers['Content-Type'] = 'application/json';
+  if (identity.workspaceId) headers['x-workspace-id'] = identity.workspaceId;
+  const token = identity.getToken ? await identity.getToken().catch(() => null) : null;
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), init.timeoutMs ?? 20_000);
+  let response: Response;
+  try {
+    response = await fetch(`${API_BASE}/api${path}`, {
+      method: init.method ?? (init.body !== undefined ? 'POST' : 'GET'),
+      headers,
+      body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    const aborted = (error as Error).name === 'AbortError';
+    throw new ApiError(aborted ? 'The server took too long to respond.' : 'You appear to be offline, or the service is unreachable.', 0, aborted ? 'timeout' : 'offline');
+  } finally {
+    clearTimeout(timer);
+  }
+  const text = await response.text();
+  let json: Record<string, unknown> = {};
+  try {
+    json = text ? (JSON.parse(text) as Record<string, unknown>) : {};
+  } catch {
+    json = {};
+  }
+  if (!response.ok) {
+    throw new ApiError(typeof json.message === 'string' ? json.message : `Request failed (${response.status}).`, response.status, typeof json.error === 'string' ? json.error : 'error', json);
+  }
+  return json as T;
+}
+
+export type ProviderInfo = { id: string; label: string; sandbox: boolean } | null;
+export type ServiceConfig = { authMode: string; ewbProvider: ProviderInfo; gstProvider: ProviderInfo; billingMode: string; pdfParser: string };
+export type ProviderIssue = { field: string; section: 'seller' | 'buyer' | 'invoice' | 'items' | 'transport'; message: string };
+export type Plan = { id: string; name: string; pricePaise: number; cadence: string; ewbLimit: number | null; gstins: number; users: number; features: string[] };
+export type Subscription = {
+  planId: string;
+  entitlementState: 'trial' | 'active' | 'grace' | 'expired';
+  usagePeriod: string;
+  usageCount: number;
+  renewalAt: string;
+  billingHistory: { at: string; planId: string; amountPaise: number; reference: string }[];
+};
+type Candidate<T = string> = { value: T; confidence: Confidence };
+export type ExtractedInvoice = {
+  invoiceNumber?: Candidate; invoiceDate?: Candidate;
+  sellerName?: Candidate; sellerGstin?: Candidate; sellerState?: Candidate; sellerPincode?: Candidate;
+  buyerName?: Candidate; buyerGstin?: Candidate; buyerState?: Candidate; buyerPincode?: Candidate;
+  vehicleNumber?: Candidate; totalPaise?: Candidate<number>; taxablePaise?: Candidate<number>;
+  lines: { description: string; hsn: string; quantity: string; taxablePaise: number; taxRate: number; confidence: Confidence }[];
+  pageCount: number;
+};
+export type SyncEnvelope = { id: string; updatedAt: string; deleted?: boolean; data?: unknown };
+
+export const api = {
+  health: () => request<{ status: string }>('/healthz', { timeoutMs: 6000 }),
+  config: () => request<ServiceConfig>('/config', { timeoutMs: 8000 }),
+  validateEwb: (input: unknown) => request<{ issues: ProviderIssue[]; warnings: string[]; provider: ProviderInfo }>('/ewb/validate', { body: { input } }),
+  generateEwb: (idempotencyKey: string, input: unknown) => request<{ ewb: EwbRecord; replay?: boolean }>('/ewb/generate', { body: { idempotencyKey, input }, timeoutMs: 45_000 }),
+  listEwbs: () => request<{ ewbs: EwbRecord[]; provider: ProviderInfo }>('/ewb'),
+  getEwb: (id: string) => request<{ ewb: EwbRecord }>(`/ewb/${encodeURIComponent(id)}`),
+  ewbAction: (id: string, body: { action: 'cancel'; reason: string } | { action: 'extend'; reason: string; remainingKm: number } | { action: 'update_vehicle'; reason: string; vehicleNumber: string }) =>
+    request<{ ewb: EwbRecord }>(`/ewb/${encodeURIComponent(id)}/actions`, { body, timeoutMs: 30_000 }),
+  gstStatus: (gstin: string, period: string) => request<{ snapshots: GstSnapshot[]; provider: ProviderInfo }>(`/gst/status?gstin=${encodeURIComponent(gstin)}&period=${encodeURIComponent(period)}`),
+  refreshGst: (gstin: string, period: string) => request<{ snapshots: GstSnapshot[]; provider: ProviderInfo }>('/gst/refresh', { body: { gstin, period } }),
+  parsePdf: (fileName: string, contentBase64: string) => request<{ fields: ExtractedInvoice; parserVersion: string; retention: string }>('/pdf/parse', { body: { fileName, contentBase64 }, timeoutMs: 60_000 }),
+  subscription: () => request<{ subscription: Subscription; plan: Plan; plans: Plan[]; plansAreSamples: boolean; billingMode: string }>('/subscription'),
+  changePlan: (planId: string) => request<{ subscription: Subscription; plan: Plan }>('/subscription/change', { body: { planId } }),
+  sync: (since: string | undefined, collections: Record<string, SyncEnvelope[]>) =>
+    request<{ serverTime: string; changes: Record<string, SyncEnvelope[]> }>('/sync', { body: { since, collections }, timeoutMs: 30_000 }),
+};
+
+/** Support inbox; set EXPO_PUBLIC_SUPPORT_EMAIL before release. */
+export const SUPPORT_EMAIL = process.env.EXPO_PUBLIC_SUPPORT_EMAIL ?? '';

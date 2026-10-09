@@ -1,221 +1,291 @@
-import React, { useState } from 'react';
-import { Alert, Pressable, StyleSheet, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { Linking, Share, StyleSheet, View } from 'react-native';
 import { router } from 'expo-router';
-import { Feather } from '@expo/vector-icons';
+import Constants from 'expo-constants';
 import { useColors } from '@/hooks/useColors';
 import { useAppStore } from '@/state/app-store';
 import { useAuth } from '@/state/auth';
-import { Button, Card, Divider, Field, Heading, Notice, Page, SectionTitle, StatusPill, TextBlock } from '@/components/AppUI';
+import { setThemePreference, useThemePreference, type ThemePreference } from '@/state/theme';
+import { formatDate, gstinProblem, relativeTime, STATES, stateForGstin, templates, type Business } from '@/lib/domain';
+import { Button, Card, Divider, Field, Heading, ListRow, Notice, Page, Segmented, SectionTitle, SelectField, Sheet, StatusPill, TextBlock } from '@/components/AppUI';
+import { useDialog } from '@/components/Dialog';
+import { SUPPORT_EMAIL } from '@/lib/api';
+
+const stateOptions = STATES.map((state) => ({ value: state.name, label: state.name }));
 
 export default function AccountScreen() {
   const colors = useColors();
   const auth = useAuth();
   const store = useAppStore();
+  const dialog = useDialog();
+  const theme = useThemePreference();
   const [editing, setEditing] = useState(false);
-  const [name, setName] = useState(store.business?.name ?? '');
-  const [gstin, setGstin] = useState(store.business?.gstin ?? '');
-  const [address, setAddress] = useState(store.business?.address ?? '');
-  const [businessState, setBusinessState] = useState(store.business?.state ?? '');
-  const [phone, setPhone] = useState(store.business?.phone ?? '');
-  const [email, setEmail] = useState(store.business?.email ?? '');
-  const [timezone, setTimezone] = useState(store.business?.timezone ?? 'Asia/Kolkata');
-  const [registrationGstin, setRegistrationGstin] = useState('');
-  const [registrationName, setRegistrationName] = useState('');
-  const [registrationState, setRegistrationState] = useState('');
-  const [addingRegistration, setAddingRegistration] = useState(false);
-  const registrations = store.business?.gstRegistrations ?? (store.business?.gstin ? [{
-    gstin: store.business.gstin,
-    displayName: store.business.name,
-    state: store.business.state,
-    isDefault: true,
-  }] : []);
+  const [form, setForm] = useState<Business | null>(store.business);
+  const [formError, setFormError] = useState<Record<string, string>>({});
 
-  const save = async () => {
-    if (!store.business) return;
-    const normalizedGstin = gstin.trim().toUpperCase();
-    if (normalizedGstin && !/^[0-9A-Z]{15}$/.test(normalizedGstin)) {
-      Alert.alert('Check the GSTIN', 'Enter 15 letters and numbers. This is a format check only, not verification.');
-      return;
-    }
-    const normalizedRegistrations = registrations.map((item) => ({
-      ...item,
-      isDefault: item.gstin === normalizedGstin,
-    }));
-    if (normalizedGstin) {
-      const existing = normalizedRegistrations.find((item) => item.gstin === normalizedGstin);
-      if (existing) existing.displayName = name;
-      else normalizedRegistrations.push({ gstin: normalizedGstin, displayName: name, state: businessState, isDefault: true });
-    }
-    await store.saveBusiness({
-      ...store.business,
-      name,
-      gstin: normalizedGstin,
-      defaultGstin: normalizedGstin,
-      gstRegistrations: normalizedRegistrations,
-      address,
-      state: businessState,
-      phone,
-      email,
-      timezone,
-    });
-    if (normalizedGstin) await store.setActiveGstin(normalizedGstin);
+  useEffect(() => {
+    void store.refreshSubscription();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const business = store.business;
+  const registrations = business?.gstRegistrations ?? [];
+  const name = auth.user?.displayName || (auth.previewMode ? 'Preview workspace' : auth.user?.email) || 'Your account';
+  const initials = name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase();
+  const sub = store.subscription;
+  const usagePct = sub?.plan.ewbLimit ? Math.min(1, sub.subscription.usageCount / sub.plan.ewbLimit) : 0;
+
+  const saveProfile = async () => {
+    if (!form || !business) return;
+    const errors: Record<string, string> = {};
+    if (!form.name.trim()) errors.name = 'Business name is required.';
+    if (form.pincode && !/^[1-9]\d{5}$/.test(form.pincode)) errors.pincode = 'PIN code must be 6 digits.';
+    if (form.email && !/^\S+@\S+\.\S+$/.test(form.email)) errors.email = 'Enter a valid email.';
+    setFormError(errors);
+    if (Object.keys(errors).length) return;
+    await store.saveBusiness({ ...business, ...form, name: form.name.trim() });
     setEditing(false);
-    Alert.alert('Business details saved', 'New invoice drafts will use these details. Existing invoices are unchanged.');
+    dialog.toast('Business profile saved. Existing invoices and bills are unchanged.', 'success');
   };
 
   const addRegistration = async () => {
-    if (!store.business) return;
-    const normalized = registrationGstin.trim().toUpperCase();
-    if (!/^[0-9A-Z]{15}$/.test(normalized)) {
-      Alert.alert('Check the GSTIN', 'Enter a 15-character GSTIN. This app will not verify it against a government source.');
-      return;
-    }
-    if (registrations.some((item) => item.gstin === normalized)) {
-      Alert.alert('GSTIN already added', 'This registration is already in your business profile.');
-      return;
-    }
-    const makeDefault = registrations.length === 0;
-    const next = {
-      ...store.business,
-      gstRegistrations: [...registrations, { gstin: normalized, displayName: registrationName || store.business.name, state: registrationState, isDefault: makeDefault }],
-      ...(makeDefault ? { gstin: normalized, defaultGstin: normalized } : {}),
-    };
-    await store.saveBusiness(next);
-    if (makeDefault) await store.setActiveGstin(normalized);
-    setRegistrationGstin('');
-    setRegistrationName('');
-    setRegistrationState('');
-    setAddingRegistration(false);
+    if (!business) return;
+    const result = await dialog.prompt({
+      title: 'Add GST registration',
+      message: 'For businesses registered in more than one state. Format and check digit are validated; the portal is not contacted.',
+      inputLabel: 'GSTIN',
+      placeholder: '29AABCT1332L1ZA',
+      autoCapitalize: 'characters',
+      requireInput: true,
+      confirmLabel: 'Add',
+      validate: ({ text }) => {
+        const gstin = text.toUpperCase();
+        if (registrations.some((item) => item.gstin === gstin)) return 'This GSTIN is already added.';
+        return gstinProblem(gstin);
+      },
+    });
+    if (!result) return;
+    const gstin = result.text.toUpperCase();
+    const state = stateForGstin(gstin)?.name ?? '';
+    await store.saveBusiness({ ...business, gstRegistrations: [...registrations, { gstin, displayName: `${business.name} · ${state}`, state, isDefault: false }] });
+    dialog.toast(`${gstin} added`, 'success');
   };
 
-  const signOut = () => {
-    Alert.alert('Sign out and clear local data?', 'Unsynced invoice drafts and business details on this device will be deleted. This cannot be undone.', [
-      { text: 'Stay signed in', style: 'cancel' },
-      { text: 'Clear and sign out', style: 'destructive', onPress: () => { void store.clearLocalData().then(() => auth.signOut()).then(() => router.replace('/')); } },
-    ]);
+  const registrationActions = async (gstin: string) => {
+    if (!business) return;
+    const registration = registrations.find((item) => item.gstin === gstin)!;
+    const choices = [
+      ...(store.activeGstin !== gstin ? ['Switch dashboard to this GSTIN'] : []),
+      ...(!registration.isDefault ? ['Make default for new invoices', 'Remove registration'] : []),
+    ];
+    if (!choices.length) {
+      await dialog.alert({ title: gstin, message: 'This is your default and active registration. Add another registration to switch between them.' });
+      return;
+    }
+    const result = await dialog.prompt({ title: gstin, message: `${registration.state} · Format checked, not verified with the GST portal.`, choices });
+    if (!result) return;
+    if (result.choice.startsWith('Switch')) {
+      await store.setActiveGstin(gstin);
+      dialog.toast(`Showing ${gstin}`);
+    } else if (result.choice.startsWith('Make default')) {
+      await store.saveBusiness({ ...business, gstin, defaultGstin: gstin, state: registration.state, gstRegistrations: registrations.map((item) => ({ ...item, isDefault: item.gstin === gstin })) });
+      dialog.toast('Default registration updated', 'success');
+    } else {
+      const ok = await dialog.confirm({ title: 'Remove this registration?', message: 'Invoices and e-way bills already created with it are kept. You can add it again later.', confirmLabel: 'Remove', tone: 'danger', icon: 'trash-2' });
+      if (!ok) return;
+      await store.saveBusiness({ ...business, gstRegistrations: registrations.filter((item) => item.gstin !== gstin) });
+      if (store.activeGstin === gstin) await store.setActiveGstin(business.defaultGstin ?? business.gstin);
+      dialog.toast('Registration removed');
+    }
   };
-  const clearData = () => {
-    Alert.alert('Clear on-device drafts?', 'This permanently removes the business profile and invoice drafts saved on this device.', [
-      { text: 'Keep my data', style: 'cancel' },
-      { text: 'Clear local data', style: 'destructive', onPress: () => { void store.clearLocalData().then(() => router.replace('/setup')); } },
-    ]);
+
+  const chooseLayout = async () => {
+    if (!business) return;
+    const result = await dialog.prompt({ title: 'Default invoice layout', message: 'Used for new invoices. You can still change it per invoice.', choices: templates.map((item) => `${item.name} — ${item.note}`) });
+    if (!result) return;
+    const template = templates.find((item) => result.choice.startsWith(item.name))!;
+    await store.saveBusiness({ ...business, defaultTemplateId: template.id });
+    dialog.toast(`New invoices will use ${template.name}`, 'success');
+  };
+
+  const exportData = async () => {
+    const json = store.exportData();
+    try {
+      await Share.share({ title: 'EWB Vendor data export', message: json });
+    } catch {
+      dialog.toast('Could not open the share sheet', 'danger');
+    }
+  };
+
+  const requestDeletion = async () => {
+    const ok = await dialog.confirm({
+      title: 'Request account deletion?',
+      message: 'We will delete your workspace, invoices and saved details after verifying the request. E-way bill records may be retained where the law requires it.',
+      confirmLabel: 'Email request',
+      tone: 'danger',
+      icon: 'user-x',
+    });
+    if (!ok) return;
+    if (!SUPPORT_EMAIL) {
+      await dialog.alert({ title: 'Support not configured', message: 'Set EXPO_PUBLIC_SUPPORT_EMAIL so deletion requests reach your support team.', tone: 'warning' });
+      return;
+    }
+    void Linking.openURL(`mailto:${SUPPORT_EMAIL}?subject=${encodeURIComponent('Account deletion request')}&body=${encodeURIComponent(`Workspace: ${store.workspaceId ?? ''}`)}`).catch(() => dialog.toast('No email app found', 'danger'));
+  };
+
+  const signOut = async () => {
+    const ok = await dialog.confirm({
+      title: auth.previewMode ? 'Leave preview?' : 'Sign out?',
+      message: auth.previewMode
+        ? 'Your preview data stays on this device until you clear it.'
+        : 'Your synced data stays safe in your account. Data on this device is cleared for privacy.',
+      confirmLabel: auth.previewMode ? 'Leave preview' : 'Sign out',
+      icon: 'log-out',
+    });
+    if (!ok) return;
+    if (!auth.previewMode) {
+      await store.syncNow();
+      await store.clearLocalData();
+    }
+    await auth.signOut();
+    router.replace('/');
+  };
+
+  const clearPreview = async () => {
+    const ok = await dialog.confirm({ title: 'Clear preview data?', message: 'This removes the business profile and every draft from this device. It cannot be undone.', confirmLabel: 'Clear data', tone: 'danger', icon: 'trash-2' });
+    if (!ok) return;
+    await store.clearLocalData();
+    router.replace('/setup');
   };
 
   return (
     <Page contentStyle={styles.page}>
-      <Heading eyebrow="Workspace" title="Account" subtitle={auth.user?.displayName || auth.user?.email || 'Local preview'} />
-      {auth.previewMode ? <Notice title="Preview-only workspace" body="This session has no authenticated account. Use test details; provider actions and cloud sync are not available." tone="warning" /> : null}
-      <View style={styles.headerRow}>
-        <SectionTitle title="Business profile" />
-        <Pressable onPress={() => setEditing((current) => !current)} hitSlop={8}><TextBlock size={13} weight="semibold" color={colors.primary}>{editing ? 'Cancel' : 'Edit'}</TextBlock></Pressable>
-      </View>
-      <Card>
-        {editing ? (
-          <>
-            <Field label="Legal business name" value={name} onChangeText={setName} placeholder="Business name" autoCapitalize="words" />
-            <Field label="Default GSTIN" value={gstin} onChangeText={setGstin} placeholder="GSTIN" autoCapitalize="characters" />
-            <Field label="Business address" value={address} onChangeText={setAddress} placeholder="Address" multiline />
-            <Field label="State / union territory" value={businessState} onChangeText={setBusinessState} placeholder="State" />
-            <Field label="Phone" value={phone} onChangeText={setPhone} placeholder="Business phone" keyboardType="phone-pad" />
-            <Field label="Business email" value={email} onChangeText={setEmail} placeholder="billing@business.com" keyboardType="email-address" autoCapitalize="none" />
-            <Field label="Business timezone" value={timezone} onChangeText={setTimezone} placeholder="Asia/Kolkata" autoCapitalize="none" />
-            <Button title="Save changes" onPress={save} />
-          </>
-        ) : (
-          <View style={{ gap: 13 }}>
-            <SettingRow icon="briefcase" label="Legal name" value={store.business?.name || 'Not set'} />
-            <Divider />
-            <SettingRow icon="shield" label="GST registration" value={store.business?.gstin || 'Not added'} />
-            {registrations.map((registration) => (
-              <View key={registration.gstin} style={styles.registrationRow}>
-                <View style={{ flex: 1, gap: 3 }}>
-                  <TextBlock size={12} weight="semibold">{registration.displayName || store.business?.name}</TextBlock>
-                  <TextBlock size={11} color={colors.mutedForeground}>{registration.gstin} · {registration.state || 'State not added'} · Not verified</TextBlock>
-                </View>
-                {registration.isDefault ? <StatusPill label="Default" tone="green" /> : (
-                  <Pressable onPress={() => {
-                    if (!store.business) return;
-                    const nextRegistrations = registrations.map((item) => ({ ...item, isDefault: item.gstin === registration.gstin }));
-                    void store.saveBusiness({ ...store.business, gstin: registration.gstin, defaultGstin: registration.gstin, gstRegistrations: nextRegistrations }).then(() => store.setActiveGstin(registration.gstin));
-                  }}>
-                    <TextBlock size={11} weight="semibold" color={colors.primary}>Make default</TextBlock>
-                  </Pressable>
-                )}
-              </View>
-            ))}
-            <Pressable onPress={() => setAddingRegistration((current) => !current)} style={styles.addRegistration}>
-              <Feather name="plus-circle" size={15} color={colors.primary} /><TextBlock size={12} weight="semibold" color={colors.primary}>{addingRegistration ? 'Cancel' : 'Add GST registration'}</TextBlock>
-            </Pressable>
-            {addingRegistration ? <>
-              <Field label="GSTIN *" value={registrationGstin} onChangeText={setRegistrationGstin} placeholder="15-character GSTIN" autoCapitalize="characters" />
-              <Field label="Display name" value={registrationName} onChangeText={setRegistrationName} placeholder={store.business?.name || 'Business name'} />
-              <Field label="State" value={registrationState} onChangeText={setRegistrationState} placeholder="State or territory" />
-              <Button title="Add registration" onPress={addRegistration} />
-            </> : null}
-            <Divider />
-            <SettingRow icon="map-pin" label="Address" value={store.business?.address || 'Not added'} />
-            <Divider />
-            <SettingRow icon="globe" label="State" value={store.business?.state || 'Not added'} />
-            <Divider />
-            <SettingRow icon="phone" label="Contact" value={store.business?.phone || 'Not added'} />
-            <Divider />
-            <SettingRow icon="mail" label="Business email" value={store.business?.email || 'Not added'} />
-            <View style={[styles.softNote, { backgroundColor: colors.muted }]}><TextBlock size={11} color={colors.mutedForeground}>GSTIN source / verification: Not checked</TextBlock></View>
-          </View>
-        )}
+      <Heading eyebrow="Settings" title="Account" />
+
+      <Card style={styles.profile}>
+        <View style={[styles.avatar, { backgroundColor: colors.primary }]}><TextBlock size={18} weight="bold" color={colors.primaryForeground}>{initials || 'U'}</TextBlock></View>
+        <View style={{ flex: 1, gap: 3 }}>
+          <TextBlock size={16} weight="semibold" numberOfLines={1}>{name}</TextBlock>
+          <TextBlock size={12} color={colors.mutedForeground} numberOfLines={1}>{auth.user?.email ?? 'Test data only · not signed in'}</TextBlock>
+        </View>
+        {auth.previewMode ? <StatusPill label="Preview" tone="amber" /> : <StatusPill label="Verified" tone="green" icon="check" />}
+      </Card>
+
+      <SectionTitle title="Business profile" action="Edit" onPress={() => { setForm(store.business); setEditing(true); }} />
+      <Card style={{ padding: 0, gap: 0 }}>
+        <ListRow icon="briefcase" title={business?.name || 'Not set'} detail={[business?.address, business?.state, business?.pincode].filter(Boolean).join(', ') || 'Add your address'} onPress={() => { setForm(store.business); setEditing(true); }} />
+        <Divider inset={64} />
+        <ListRow icon="phone" title="Contact" detail={[business?.phone, business?.email].filter(Boolean).join(' · ') || 'Not added'} />
+        <Divider inset={64} />
+        <ListRow icon="hash" title="Invoice numbering" detail={`Prefix ${business?.invoicePrefix || 'INV-'} · timezone ${business?.timezone || 'Asia/Kolkata'}`} onPress={() => { setForm(store.business); setEditing(true); }} />
+      </Card>
+
+      <SectionTitle title="GST registrations" count={registrations.length} action="Add" onPress={() => void addRegistration()} />
+      <Card style={{ padding: 0, gap: 0 }}>
+        {registrations.map((registration, index) => (
+          <React.Fragment key={registration.gstin}>
+            {index ? <Divider inset={64} /> : null}
+            <ListRow
+              icon="shield"
+              title={registration.gstin}
+              detail={`${registration.state || 'State not set'} · format checked`}
+              onPress={() => void registrationActions(registration.gstin)}
+              right={<View style={{ gap: 4, alignItems: 'flex-end' }}>
+                {registration.isDefault ? <StatusPill label="Default" tone="green" /> : null}
+                {store.activeGstin === registration.gstin ? <StatusPill label="Showing" tone="blue" /> : null}
+              </View>}
+            />
+          </React.Fragment>
+        ))}
       </Card>
 
       <SectionTitle title="Saved details" />
-      <Card style={{ padding: 0 }}>
-        <SettingLink icon="users" title="Buyers & receivers" detail="No saved buyers" />
-        <Divider />
-        <SettingLink icon="package" title="Products & services" detail="No saved items" />
-        <Divider />
-        <SettingLink icon="truck" title="Transporters" detail="No saved transporters" />
-        <Divider />
-        <SettingLink icon="layout" title="Invoice layouts" detail="6 reusable templates" />
+      <Card style={{ padding: 0, gap: 0 }}>
+        <ListRow icon="users" title="Buyers & receivers" detail={`${store.parties.length} saved`} onPress={() => router.push('/saved/parties')} testID="saved-parties" />
+        <Divider inset={64} />
+        <ListRow icon="package" title="Products & services" detail={`${store.products.length} saved`} onPress={() => router.push('/saved/products')} testID="saved-products" />
+        <Divider inset={64} />
+        <ListRow icon="truck" title="Transporters" detail={`${store.transporters.length} saved`} onPress={() => router.push('/saved/transporters')} />
+        <Divider inset={64} />
+        <ListRow icon="layout" title="Default invoice layout" detail={templates.find((item) => item.id === (business?.defaultTemplateId ?? 'classic'))?.name} onPress={() => void chooseLayout()} />
       </Card>
 
-      <SectionTitle title="Subscription & usage" />
+      <SectionTitle title="Plan & usage" action="Manage" onPress={() => router.push('/subscription')} />
+      <Card onPress={() => router.push('/subscription')} accessibilityLabel="Open subscription">
+        <View style={styles.planTop}>
+          <View style={{ flex: 1, gap: 2 }}>
+            <TextBlock size={16} weight="bold">{sub?.plan.name ?? 'Plan'}</TextBlock>
+            <TextBlock size={12} color={colors.mutedForeground}>{sub ? `${sub.subscription.entitlementState === 'trial' ? 'Trial ends' : 'Renews'} ${formatDate(sub.subscription.renewalAt)}` : store.online === false ? 'Offline' : 'Loading…'}</TextBlock>
+          </View>
+          {sub ? <StatusPill label={sub.subscription.entitlementState === 'trial' ? 'Trial' : sub.subscription.entitlementState === 'active' ? 'Active' : sub.subscription.entitlementState} tone={sub.subscription.entitlementState === 'expired' ? 'red' : 'green'} /> : null}
+        </View>
+        {sub ? (
+          <View style={{ gap: 6 }}>
+            <View style={[styles.meter, { backgroundColor: colors.muted }]}><View style={[styles.meterFill, { width: `${usagePct * 100}%`, backgroundColor: usagePct > 0.85 ? colors.destructive : colors.primary }]} /></View>
+            <TextBlock size={12} color={colors.mutedForeground}>{sub.subscription.usageCount} of {sub.plan.ewbLimit ?? 'unlimited'} e-way bills used this month</TextBlock>
+          </View>
+        ) : null}
+      </Card>
+
+      <SectionTitle title="Preferences" />
       <Card>
-        <SettingRow icon="credit-card" label="Billing setup" value="Not configured" />
-        <TextBlock size={12} color={colors.mutedForeground} style={{ lineHeight: 18 }}>Plan limits, pricing, purchase and renewal terms need approval before billing can be enabled. Historic records should remain accessible if a plan lapses.</TextBlock>
-        <Button title="Manage subscription unavailable" secondary disabled onPress={() => undefined} />
+        <TextBlock size={13} weight="semibold">Appearance</TextBlock>
+        <Segmented<ThemePreference> options={[{ label: 'System', value: 'system' }, { label: 'Light', value: 'light' }, { label: 'Dark', value: 'dark' }]} value={theme} onChange={(value) => void setThemePreference(value)} />
+        <Divider />
+        <View style={styles.planTop}>
+          <View style={{ flex: 1, gap: 2 }}>
+            <TextBlock size={14} weight="semibold">Cloud sync</TextBlock>
+            <TextBlock size={12} color={colors.mutedForeground}>{store.syncState === 'syncing' ? 'Syncing now…' : store.online === false ? 'Offline — changes are saved on this device' : store.lastSyncAt ? `Last synced ${relativeTime(store.lastSyncAt)}` : 'Not synced yet'}</TextBlock>
+          </View>
+          <Button title="Sync now" size="sm" variant="outline" icon="refresh-cw" onPress={() => void store.syncNow().then(() => dialog.toast('Sync complete', 'success'))} loading={store.syncState === 'syncing'} />
+        </View>
+        <Divider />
+        <View style={styles.planTop}>
+          <TextBlock size={14} weight="semibold" style={{ flex: 1 }}>Language & currency</TextBlock>
+          <TextBlock size={13} color={colors.mutedForeground}>English · ₹ INR</TextBlock>
+        </View>
       </Card>
 
-      <SectionTitle title="App & support" />
-      <Card style={{ padding: 0 }}>
-        <SettingLink icon="help-circle" title="Help & support" detail="Support contact not configured" />
-        <Divider />
-        <SettingLink icon="lock" title="Privacy & terms" detail="Read the policies before launch" />
-        <Divider />
-        <SettingLink icon="download" title="Data export" detail="Available after secure sync is connected" />
-        <Divider />
-        <SettingLink icon="trash-2" title="Request account deletion" detail="Deletion flow not configured" />
+      <SectionTitle title="Help & data" />
+      <Card style={{ padding: 0, gap: 0 }}>
+        <ListRow icon="help-circle" title="Help & support" detail="Guides, FAQs and contact" onPress={() => router.push('/help')} />
+        <Divider inset={64} />
+        <ListRow icon="lock" title="Privacy & terms" detail="How your data is handled" onPress={() => router.push({ pathname: '/help', params: { section: 'privacy' } })} />
+        <Divider inset={64} />
+        <ListRow icon="download" title="Export my data" detail="Invoices, saved details and bills as JSON" onPress={() => void exportData()} />
+        <Divider inset={64} />
+        <ListRow icon="user-x" title="Request account deletion" tone="danger" onPress={() => void requestDeletion()} />
       </Card>
-      {auth.previewMode ? <Button title="Clear local preview data" icon="trash-2" secondary onPress={clearData} /> : null}
-      <Button title={auth.previewMode ? 'Exit local preview' : 'Sign out'} icon="log-out" secondary onPress={signOut} />
-      <TextBlock size={11} color={colors.mutedForeground} style={{ textAlign: 'center' }}>English · INR · Business timezone {store.business?.timezone || 'Asia/Kolkata'}</TextBlock>
+
+      {store.storageError ? <Notice tone="danger" title="Storage problem" body={store.storageError} /> : null}
+      {auth.previewMode ? <Button title="Clear preview data" icon="trash-2" variant="danger" onPress={() => void clearPreview()} /> : null}
+      <Button title={auth.previewMode ? 'Leave preview' : 'Sign out'} icon="log-out" variant="outline" onPress={() => void signOut()} testID="sign-out" />
+      <TextBlock size={11} color={colors.mutedForeground} style={{ textAlign: 'center' }}>Version {Constants.expoConfig?.version ?? '1.0.0'} · {store.config ? `${store.config.authMode} mode` : 'service offline'}</TextBlock>
+
+      <Sheet visible={editing} onClose={() => setEditing(false)} title="Edit business profile" subtitle="Changes apply to new invoices only." footer={<Button title="Save profile" onPress={() => void saveProfile()} />}>
+        {form ? (
+          <View style={{ paddingHorizontal: 18, gap: 12 }}>
+            <Field label="Legal business name" required value={form.name} onChangeText={(value) => setForm({ ...form, name: value })} error={formError.name} autoCapitalize="words" />
+            <Field label="Address" value={form.address} onChangeText={(value) => setForm({ ...form, address: value })} multiline />
+            <View style={{ flexDirection: 'row', gap: 10 }}>
+              <View style={{ flex: 1.3 }}><SelectField label="State" value={form.state} placeholder="Choose" options={stateOptions} onSelect={(value) => setForm({ ...form, state: value })} /></View>
+              <View style={{ flex: 1 }}><Field label="PIN code" value={form.pincode ?? ''} onChangeText={(value) => setForm({ ...form, pincode: value.replace(/\D/g, '').slice(0, 6) })} keyboardType="number-pad" error={formError.pincode} /></View>
+            </View>
+            <Field label="Phone" value={form.phone} onChangeText={(value) => setForm({ ...form, phone: value })} keyboardType="phone-pad" />
+            <Field label="Email" value={form.email} onChangeText={(value) => setForm({ ...form, email: value })} keyboardType="email-address" autoCapitalize="none" error={formError.email} />
+            <Field label="Invoice prefix" value={form.invoicePrefix ?? ''} onChangeText={(value) => setForm({ ...form, invoicePrefix: value.toUpperCase() })} autoCapitalize="characters" maxLength={12} />
+          </View>
+        ) : null}
+      </Sheet>
     </Page>
   );
 }
 
-function SettingRow({ icon, label, value }: { icon: keyof typeof Feather.glyphMap; label: string; value: string }) {
-  const colors = useColors();
-  return <View style={styles.settingRow}><Feather name={icon} size={16} color={colors.primary} /><View style={{ flex: 1, gap: 3 }}><TextBlock size={11} color={colors.mutedForeground}>{label}</TextBlock><TextBlock size={13} weight="medium">{value}</TextBlock></View></View>;
-}
-
-function SettingLink({ icon, title, detail }: { icon: keyof typeof Feather.glyphMap; title: string; detail: string }) {
-  const colors = useColors();
-  return <Pressable onPress={() => Alert.alert(title, detail)} style={styles.settingLink}><Feather name={icon} size={17} color={colors.primary} /><View style={{ flex: 1, gap: 4 }}><TextBlock size={13} weight="semibold">{title}</TextBlock><TextBlock size={11} color={colors.mutedForeground}>{detail}</TextBlock></View><Feather name="chevron-right" size={16} color={colors.mutedForeground} /></Pressable>;
-}
-
 const styles = StyleSheet.create({
-  page: { gap: 17 },
-  headerRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  settingRow: { flexDirection: 'row', alignItems: 'center', gap: 11 },
-  registrationRow: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingLeft: 26, paddingVertical: 5 },
-  addRegistration: { flexDirection: 'row', alignItems: 'center', gap: 7, paddingVertical: 8 },
-  settingLink: { minHeight: 66, paddingHorizontal: 16, flexDirection: 'row', alignItems: 'center', gap: 12 },
-  softNote: { padding: 10, borderRadius: 11, alignItems: 'center' },
+  page: { gap: 14 },
+  profile: { flexDirection: 'row', alignItems: 'center', gap: 13 },
+  avatar: { width: 50, height: 50, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
+  planTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  meter: { height: 8, borderRadius: 4, overflow: 'hidden' },
+  meterFill: { height: 8, borderRadius: 4 },
 });

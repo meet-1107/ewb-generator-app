@@ -1,155 +1,238 @@
-import React, { useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useColors } from '@/hooks/useColors';
-import { useAppStore } from '@/state/app-store';
+import { useAppStore, useScopedRecords } from '@/state/app-store';
 import { useAuth } from '@/state/auth';
-import { formatInr, invoiceTotals } from '@/lib/domain';
-import { Card, Heading, Notice, Page, SectionTitle, StatusPill, TextBlock } from '@/components/AppUI';
+import {
+  ewbStatusMeta,
+  formatInr,
+  GST_STATUS_META,
+  invoiceTotals,
+  liveEwbStatus,
+  periodLabel,
+  previousPeriod,
+  relativeTime,
+  today,
+} from '@/lib/domain';
+import { api } from '@/lib/api';
+import { Card, Divider, IconButton, Notice, Page, SectionTitle, StatCard, StatusPill, TextBlock, SelectSheet } from '@/components/AppUI';
 import InvoiceCard from '@/components/InvoiceCard';
 
 export default function DashboardScreen() {
   const colors = useColors();
   const store = useAppStore();
   const auth = useAuth();
-  const [showBusinesses, setShowBusinesses] = useState(false);
-  const currentMonth = new Date().toISOString().slice(0, 7);
-  const visibleInvoices = store.invoices.filter((invoice) =>
-    !store.activeGstin || invoice.sellerGstin.toUpperCase() === store.activeGstin.toUpperCase(),
-  );
-  const monthInvoices = visibleInvoices.filter((invoice) => invoice.invoiceDate.startsWith(currentMonth));
-  const monthTotal = monthInvoices.reduce((sum, invoice) => sum + invoiceTotals(invoice).total, 0);
+  const { invoices, ewbs } = useScopedRecords();
+  const [refreshing, setRefreshing] = useState(false);
+  const [gstinPicker, setGstinPicker] = useState(false);
+  const period = today().slice(0, 7);
+  const gstPeriod = previousPeriod();
+  const gstKey = `${store.activeGstin}:${gstPeriod}`;
+  const gstCached = store.gstCache[gstKey];
+  const registrations = store.business?.gstRegistrations ?? [];
+
+  const stats = useMemo(() => {
+    const monthInvoices = invoices.filter((invoice) => invoice.invoiceDate.startsWith(period));
+    const live = ewbs.map((ewb) => ({ ewb, status: liveEwbStatus(ewb) }));
+    const expiringSoon = live.filter(({ status, ewb }) => (status === 'active' || status === 'part_b_pending') && Date.parse(ewb.validUntil) - Date.now() < 8 * 3_600_000);
+    return {
+      monthCount: monthInvoices.length,
+      monthValue: monthInvoices.reduce((sum, invoice) => sum + invoiceTotals(invoice).total, 0),
+      generated: ewbs.filter((ewb) => ewb.generatedAt.slice(0, 7) === period).length,
+      active: live.filter(({ status }) => status === 'active' || status === 'part_b_pending').length,
+      expired: live.filter(({ status }) => status === 'expired').length,
+      expiringSoon,
+      drafts: invoices.filter((invoice) => invoice.status === 'draft').length,
+      ready: invoices.filter((invoice) => invoice.status === 'ready').length,
+    };
+  }, [invoices, ewbs, period]);
+
+  const loadGst = useCallback(async () => {
+    if (!store.activeGstin || !store.workspaceId) return;
+    try {
+      const result = await api.gstStatus(store.activeGstin, gstPeriod);
+      if (result.snapshots.length) store.setGstCache(gstKey, result.snapshots);
+    } catch {
+      // Cached / "Not checked" is shown instead.
+    }
+  }, [gstKey, gstPeriod, store]);
+
+  useEffect(() => {
+    if (!gstCached) void loadGst();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store.activeGstin, store.workspaceId]);
+
+  const refresh = async () => {
+    setRefreshing(true);
+    await Promise.allSettled([store.refreshEwbs(), store.syncNow(), loadGst(), store.refreshServices()]);
+    setRefreshing(false);
+  };
+
+  const activity = useMemo(() => {
+    const items = [
+      ...invoices.slice(0, 8).map((invoice) => ({ kind: 'invoice' as const, at: invoice.updatedAt, invoice })),
+      ...ewbs.slice(0, 8).map((ewb) => ({ kind: 'ewb' as const, at: ewb.history[ewb.history.length - 1]?.at ?? ewb.generatedAt, ewb })),
+    ];
+    return items.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 6);
+  }, [invoices, ewbs]);
+
+  const hour = Number(new Date().toLocaleString('en-IN', { hour: 'numeric', hour12: false, timeZone: 'Asia/Kolkata' }));
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+  const firstName = (auth.user?.displayName ?? '').split(' ')[0];
+  const sandbox = store.config?.ewbProvider?.sandbox;
+  const lastSync = store.lastSyncAt ?? store.ewbsFetchedAt;
 
   return (
-    <Page contentStyle={styles.page}>
+    <Page contentStyle={styles.page} onRefresh={refresh} refreshing={refreshing}>
       <View style={styles.topline}>
-        <View style={{ flex: 1 }}>
-          <TextBlock size={11} weight="bold" color={colors.primary} style={{ letterSpacing: 1 }}>MARG / EWB DESK</TextBlock>
-          <Pressable onPress={() => setShowBusinesses((current) => !current)} style={styles.businessSelector}>
-            <TextBlock size={14} weight="semibold" color={colors.foreground} style={{ marginTop: 4 }}>{store.business?.name || 'Your business'}</TextBlock>
-            {store.business?.gstRegistrations && store.business.gstRegistrations.length > 1 ? <Feather name="chevron-down" size={14} color={colors.mutedForeground} /> : null}
+        <Pressable
+          onPress={() => registrations.length > 1 && setGstinPicker(true)}
+          style={{ flex: 1, gap: 3 }}
+          accessibilityRole={registrations.length > 1 ? 'button' : undefined}
+          accessibilityLabel={`Business ${store.business?.name}, GSTIN ${store.activeGstin}${registrations.length > 1 ? '. Tap to switch registration' : ''}`}
+        >
+          <TextBlock size={16} weight="bold" numberOfLines={1}>{store.business?.name || 'Your business'}</TextBlock>
+          <View style={styles.gstinRow}>
+            <TextBlock size={12} color={colors.mutedForeground} style={{ letterSpacing: 0.4 }}>{store.activeGstin || 'GSTIN not added'}</TextBlock>
+            {registrations.length > 1 ? <Feather name="chevron-down" size={14} color={colors.mutedForeground} /> : null}
+          </View>
+        </Pressable>
+        <IconButton icon="help-circle" accessibilityLabel="Help and support" onPress={() => router.push('/help')} filled />
+        <IconButton icon="user" accessibilityLabel="Open account" onPress={() => router.push('/(tabs)/account')} filled color={colors.primary} />
+      </View>
+
+      <View style={{ gap: 3 }}>
+        <TextBlock size={24} weight="bold" style={{ letterSpacing: -0.7 }}>{greeting}{firstName ? `, ${firstName}` : ''}</TextBlock>
+        <View style={styles.syncRow}>
+          <View style={[styles.syncDot, { backgroundColor: store.online === false ? colors.warmAccent : store.syncState === 'error' ? colors.destructive : colors.primary }]} />
+          <TextBlock size={12} color={colors.mutedForeground}>
+            {store.online === false ? `Offline · showing data from ${lastSync ? relativeTime(lastSync) : 'this device'}` : store.syncState === 'syncing' ? 'Syncing…' : lastSync ? `Synced ${relativeTime(lastSync)}` : 'Not synced yet'}
+          </TextBlock>
+        </View>
+      </View>
+
+      {sandbox ? <Notice title="Sandbox mode" body="E-way bills and GST status come from a test provider. Nothing is sent to the government portal — use test data only." tone="warning" /> : null}
+      {store.online === false ? <Notice title="You're offline" body="Drafts keep saving on this device. E-way bill generation needs a connection and is never queued." tone="info" /> : null}
+      {store.storageError ? <Notice title="Storage problem" body={store.storageError} tone="danger" /> : null}
+      {stats.expiringSoon.length ? (
+        <Notice
+          tone="danger"
+          title={`${stats.expiringSoon.length} e-way bill${stats.expiringSoon.length === 1 ? '' : 's'} expiring soon`}
+          body={`${stats.expiringSoon[0]!.ewb.ewbNumber} expires ${relativeTime(stats.expiringSoon[0]!.ewb.validUntil)}. Extend it if the goods are still in transit.`}
+          action="Review bill"
+          onAction={() => router.push(`/ewb/${stats.expiringSoon[0]!.ewb.id}`)}
+        />
+      ) : null}
+
+      <LinearGradient colors={[colors.heroStart, colors.heroEnd]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
+        <View style={styles.heroDecor} />
+        <TextBlock size={11} weight="bold" color={colors.heroMuted} style={{ letterSpacing: 1 }}>{new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }).toUpperCase()} · SALES</TextBlock>
+        <TextBlock size={32} weight="bold" color={colors.heroText} style={{ letterSpacing: -1 }}>{formatInr(stats.monthValue)}</TextBlock>
+        <TextBlock size={12} color={colors.heroMuted}>{stats.monthCount} invoice{stats.monthCount === 1 ? '' : 's'} this month · {stats.drafts} draft{stats.drafts === 1 ? '' : 's'} · {stats.ready} ready for EWB</TextBlock>
+        <View style={styles.heroActions}>
+          <Pressable onPress={() => router.push('/invoice/new')} style={({ pressed }) => [styles.heroButton, { backgroundColor: colors.warmAccent, opacity: pressed ? 0.85 : 1 }]} accessibilityRole="button" testID="dashboard-new-invoice">
+            <Feather name="plus" size={17} color="#1b1206" />
+            <TextBlock size={14} weight="bold" color="#1b1206">Create invoice</TextBlock>
+          </Pressable>
+          <Pressable onPress={() => router.push('/invoice/import')} style={({ pressed }) => [styles.heroButton, styles.heroGhost, { opacity: pressed ? 0.8 : 1 }]} accessibilityRole="button" testID="dashboard-import-pdf">
+            <Feather name="upload" size={16} color={colors.heroText} />
+            <TextBlock size={14} weight="semibold" color={colors.heroText}>Import PDF</TextBlock>
           </Pressable>
         </View>
-        <Pressable accessibilityRole="button" accessibilityLabel="Open account" onPress={() => router.push('/(tabs)/account')} style={[styles.avatar, { borderColor: colors.border, backgroundColor: colors.card }]}>
-          <Feather name="user" size={18} color={colors.primary} />
-        </Pressable>
-      </View>
-      {showBusinesses && store.business?.gstRegistrations && store.business.gstRegistrations.length > 1 ? (
-        <Card style={{ gap: 8 }}>
-          <TextBlock size={12} weight="semibold">Dashboard for GST registration</TextBlock>
-          {store.business.gstRegistrations.map((registration) => (
-            <Pressable
-              key={registration.gstin}
-              onPress={() => { void store.setActiveGstin(registration.gstin); setShowBusinesses(false); }}
-              style={[styles.gstinChoice, { borderColor: store.activeGstin === registration.gstin ? colors.primary : colors.border, backgroundColor: store.activeGstin === registration.gstin ? colors.accent : colors.background }]}
-            >
-              <View style={{ flex: 1, gap: 3 }}><TextBlock size={12} weight="semibold">{registration.displayName || registration.gstin}</TextBlock><TextBlock size={10} color={colors.mutedForeground}>{registration.gstin} · Not verified</TextBlock></View>
-              {store.activeGstin === registration.gstin ? <Feather name="check" size={16} color={colors.primary} /> : null}
-            </Pressable>
-          ))}
-        </Card>
-      ) : null}
-      <View style={styles.greeting}>
-        <View style={{ flex: 1, gap: 3 }}>
-          <TextBlock size={13} color={colors.mutedForeground}>{new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}</TextBlock>
-          <TextBlock size={25} weight="bold" style={styles.greetTitle}>Make today move.</TextBlock>
-        </View>
-      </View>
-      {auth.previewMode || store.previewOnly ? (
-        <Notice title={auth.previewMode ? 'Local preview workspace' : 'Local draft storage'} body="Drafts are saved on this device only. Use test details until secure business sync is connected." tone="warning" />
-      ) : null}
-      {store.storageError ? <Notice title="Local storage problem" body={store.storageError} tone="warning" /> : null}
-
-      <LinearGradient colors={[colors.heroStart, colors.heroEnd]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.monthCard}>
-        <View style={styles.monthCardHeader}>
-          <TextBlock size={10} weight="bold" color={colors.heroMuted} style={{ letterSpacing: 1 }}>THIS MONTH · SAVED INVOICES</TextBlock>
-          <View style={[styles.localBadge, { backgroundColor: colors.heroDecoration }]}><View style={[styles.localDot, { backgroundColor: colors.warmAccent }]} /><TextBlock size={9} weight="bold" color={colors.heroMuted}>ON DEVICE</TextBlock></View>
-        </View>
-        <View style={styles.monthStats}>
-          <View style={{ flex: 1, gap: 2 }}>
-            <TextBlock size={38} weight="bold" color={colors.heroText}>{String(monthInvoices.length).padStart(2, '0')}</TextBlock>
-            <TextBlock size={12} color={colors.heroMuted}>{monthInvoices.length === 1 ? 'invoice saved' : 'invoices saved'}</TextBlock>
-          </View>
-          <View style={[styles.monthSeparator, { backgroundColor: colors.heroDecoration }]} />
-          <View style={{ flex: 1, gap: 4 }}>
-            <TextBlock size={10} weight="semibold" color={colors.heroMuted}>TOTAL VALUE</TextBlock>
-            <TextBlock size={19} weight="bold" color={colors.heroText}>{formatInr(monthTotal)}</TextBlock>
-            <TextBlock size={9} color={colors.heroMuted}>Not filed or submitted</TextBlock>
-          </View>
-        </View>
-        <Pressable onPress={() => router.push('/(tabs)/invoices')} style={styles.monthLink}>
-          <TextBlock size={11} weight="semibold" color={colors.heroText}>View invoice library</TextBlock>
-          <Feather name="arrow-up-right" size={14} color={colors.warmAccent} />
-        </Pressable>
       </LinearGradient>
 
-      <View style={styles.quickActions}>
-        <Pressable onPress={() => router.push('/invoice/new')} style={[styles.quickAction, { backgroundColor: colors.primary, borderColor: colors.primary }]} testID="dashboard-new-invoice">
-          <View style={[styles.quickIcon, { backgroundColor: colors.heroDecoration }]}><Feather name="plus" size={18} color={colors.warmAccent} /></View>
-          <View style={{ flex: 1, gap: 4 }}><TextBlock size={13} weight="semibold" color={colors.primaryForeground}>New invoice</TextBlock><TextBlock size={10} color={colors.heroMuted}>Start a clean draft</TextBlock></View>
-          <Feather name="arrow-up-right" size={15} color={colors.heroMuted} />
-        </Pressable>
-        <Pressable onPress={() => router.push('/invoice/import')} style={[styles.quickAction, { backgroundColor: colors.card, borderColor: colors.border }]} testID="dashboard-import-pdf">
-          <View style={[styles.quickIcon, { backgroundColor: colors.warmAccentSoft }]}><Feather name="file-plus" size={17} color={colors.warningForeground} /></View>
-          <View style={{ flex: 1, gap: 4 }}><TextBlock size={13} weight="semibold">Import a PDF</TextBlock><TextBlock size={10} color={colors.mutedForeground}>Enter details manually</TextBlock></View>
-          <Feather name="arrow-up-right" size={15} color={colors.mutedForeground} />
-        </Pressable>
+      <View style={styles.stats}>
+        <StatCard label="Invoices this period" value={String(stats.monthCount)} icon="file-text" tone="blue" onPress={() => router.push({ pathname: '/(tabs)/invoices', params: { period } })} testID="stat-invoices" />
+        <StatCard label="EWB generated" value={String(stats.generated)} hint="This month" icon="check-circle" tone="green" onPress={() => router.push({ pathname: '/(tabs)/ewbs', params: { status: 'all', period } })} testID="stat-generated" />
+        <StatCard label="Active EWB" value={String(stats.active)} icon="truck" tone="amber" onPress={() => router.push({ pathname: '/(tabs)/ewbs', params: { status: 'active' } })} testID="stat-active" />
+        <StatCard label="Expired EWB" value={String(stats.expired)} icon="clock" tone="neutral" onPress={() => router.push({ pathname: '/(tabs)/ewbs', params: { status: 'expired' } })} testID="stat-expired" />
       </View>
 
-      <SectionTitle title="Connected services" />
-      <Pressable onPress={() => router.push('/(tabs)/gst')} style={[styles.serviceCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <View style={[styles.serviceIcon, { backgroundColor: colors.warmAccentSoft }]}><Feather name="bar-chart-2" size={17} color={colors.warningForeground} /></View>
-        <View style={{ flex: 1, gap: 4 }}><TextBlock size={13} weight="semibold">GST returns</TextBlock><TextBlock size={11} color={colors.mutedForeground}>Connect a trusted status provider</TextBlock></View>
-        <StatusPill label="Not connected" tone="amber" />
-      </Pressable>
-      <Pressable onPress={() => router.push('/(tabs)/ewbs')} style={[styles.serviceCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <View style={[styles.serviceIcon, { backgroundColor: colors.accent }]}><Feather name="truck" size={17} color={colors.primary} /></View>
-        <View style={{ flex: 1, gap: 4 }}><TextBlock size={13} weight="semibold">E-way bill provider</TextBlock><TextBlock size={11} color={colors.mutedForeground}>Generation stays locked until setup</TextBlock></View>
-        <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
-      </Pressable>
+      <SectionTitle title="GST returns" action="Details" onPress={() => router.push('/(tabs)/gst')} />
+      <Card onPress={() => router.push('/(tabs)/gst')} style={{ padding: 0, gap: 0 }} accessibilityLabel="GST return status">
+        {(['GSTR-1', 'GSTR-2B', 'GSTR-3B'] as const).map((type, index) => {
+          const snapshot = gstCached?.snapshots.find((item) => item.returnType === type);
+          const meta = snapshot ? GST_STATUS_META[snapshot.providerStatus] : null;
+          return (
+            <React.Fragment key={type}>
+              {index ? <Divider inset={16} /> : null}
+              <View style={styles.gstRow}>
+                <View style={{ flex: 1, gap: 2 }}>
+                  <TextBlock size={14} weight="semibold">{type}</TextBlock>
+                  <TextBlock size={11} color={colors.mutedForeground}>{periodLabel(gstPeriod)} · {snapshot ? `checked ${relativeTime(snapshot.checkedAt)}` : 'Not checked'}</TextBlock>
+                </View>
+                <StatusPill label={meta?.label ?? 'Not checked'} tone={meta?.tone ?? 'neutral'} />
+              </View>
+            </React.Fragment>
+          );
+        })}
+      </Card>
 
-      <SectionTitle title="Recent invoices" action="See all" onPress={() => router.push('/(tabs)/invoices')} />
-      {visibleInvoices.length ? (
+      <SectionTitle title="Recent activity" action={activity.length ? 'All invoices' : undefined} onPress={() => router.push('/(tabs)/invoices')} />
+      {activity.length ? (
         <View style={{ gap: 10 }}>
-          {visibleInvoices.slice(0, 3).map((invoice) => (
-            <InvoiceCard key={invoice.id} invoice={invoice} onPress={() => router.push(`/invoice/${invoice.id}`)} />
-          ))}
+          {activity.map((item) => item.kind === 'invoice'
+            ? <InvoiceCard key={`i-${item.invoice.id}`} invoice={item.invoice} onPress={() => router.push(`/invoice/${item.invoice.id}`)} />
+            : <EwbActivity key={`e-${item.ewb.id}`} ewb={item.ewb} />)}
         </View>
       ) : (
         <Card style={styles.emptyCard}>
-          <View style={[styles.emptyMark, { backgroundColor: colors.accent }]}><Feather name="file-text" size={21} color={colors.primary} /></View>
-          <View style={{ flex: 1, gap: 4 }}><TextBlock size={14} weight="semibold">Your first invoice starts here</TextBlock><TextBlock size={11} color={colors.mutedForeground}>Saved drafts and their totals appear here.</TextBlock></View>
-          <Feather name="arrow-right" size={16} color={colors.primary} />
+          <View style={[styles.emptyMark, { backgroundColor: colors.accent }]}><Feather name="zap" size={21} color={colors.primary} /></View>
+          <View style={{ flex: 1, gap: 4 }}>
+            <TextBlock size={15} weight="semibold">Create your first invoice</TextBlock>
+            <TextBlock size={12} color={colors.mutedForeground} style={{ lineHeight: 17 }}>Fill it once, review it, and generate the e-way bill from the same details.</TextBlock>
+          </View>
         </Card>
       )}
-      <TextBlock size={10} color={colors.mutedForeground} style={styles.footerNote}>Counts and totals are based on local drafts only.</TextBlock>
+
+      <SelectSheet
+        visible={gstinPicker}
+        onClose={() => setGstinPicker(false)}
+        title="Switch GST registration"
+        searchable={false}
+        value={store.activeGstin}
+        options={registrations.map((registration) => ({ value: registration.gstin, label: registration.displayName || registration.gstin, detail: `${registration.gstin} · ${registration.state || 'State not set'}` }))}
+        onSelect={(gstin) => void store.setActiveGstin(gstin)}
+      />
     </Page>
   );
 }
 
+function EwbActivity({ ewb }: { ewb: Parameters<typeof liveEwbStatus>[0] }) {
+  const colors = useColors();
+  const status = liveEwbStatus(ewb);
+  const meta = ewbStatusMeta(status);
+  const last = ewb.history[ewb.history.length - 1];
+  return (
+    <Card onPress={() => router.push(`/ewb/${ewb.id}`)} style={styles.ewbCard} accessibilityLabel={`E-way bill ${ewb.ewbNumber}, ${meta.label}`}>
+      <View style={[styles.ewbIcon, { backgroundColor: colors.warmAccentSoft }]}><Feather name="truck" size={17} color={colors.warningForeground} /></View>
+      <View style={{ flex: 1, gap: 3 }}>
+        <TextBlock size={14} weight="semibold">EWB {ewb.ewbNumber}</TextBlock>
+        <TextBlock size={12} color={colors.mutedForeground} numberOfLines={1}>{last?.action ?? 'Generated'} · {ewb.buyerName} · {relativeTime(last?.at ?? ewb.generatedAt)}</TextBlock>
+      </View>
+      <StatusPill label={meta.label} tone={meta.tone} />
+    </Card>
+  );
+}
+
 const styles = StyleSheet.create({
-  page: { gap: 15, paddingTop: 8 },
-  topline: { flexDirection: 'row', alignItems: 'center' },
-  businessSelector: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  gstinChoice: { minHeight: 49, padding: 10, borderWidth: 1, borderRadius: 12, flexDirection: 'row', alignItems: 'center' },
-  avatar: { width: 42, height: 42, borderRadius: 15, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
-  greeting: { flexDirection: 'row', alignItems: 'center' },
-  greetTitle: { letterSpacing: -0.8, marginTop: 1 },
-  monthCard: { borderRadius: 23, padding: 17, gap: 16 },
-  monthCardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  localBadge: { borderRadius: 99, paddingHorizontal: 8, paddingVertical: 5, flexDirection: 'row', alignItems: 'center', gap: 5 },
-  localDot: { width: 5, height: 5, borderRadius: 3 },
-  monthStats: { flexDirection: 'row', alignItems: 'center', gap: 15 },
-  monthSeparator: { width: 1, height: 45 },
-  monthLink: { paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(247, 236, 216, 0.24)', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
-  quickActions: { flexDirection: 'row', gap: 9 },
-  quickAction: { flex: 1, minHeight: 94, borderRadius: 18, borderWidth: 1, padding: 11, gap: 9, justifyContent: 'space-between' },
-  quickIcon: { width: 31, height: 31, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
-  serviceCard: { minHeight: 68, borderWidth: 1, borderRadius: 17, padding: 11, flexDirection: 'row', alignItems: 'center', gap: 10 },
-  serviceIcon: { width: 37, height: 37, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
-  emptyCard: { flexDirection: 'row', alignItems: 'center', gap: 11, padding: 13 },
-  emptyMark: { width: 40, height: 40, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
-  footerNote: { textAlign: 'center', paddingBottom: 2 },
+  page: { gap: 16 },
+  topline: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  gstinRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  syncRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  syncDot: { width: 7, height: 7, borderRadius: 4 },
+  hero: { borderRadius: 24, padding: 18, gap: 6, overflow: 'hidden' },
+  heroDecor: { position: 'absolute', right: -50, top: -60, width: 180, height: 180, borderRadius: 90, borderWidth: 26, borderColor: 'rgba(247, 236, 216, 0.06)' },
+  heroActions: { flexDirection: 'row', gap: 9, marginTop: 12 },
+  heroButton: { flex: 1, minHeight: 48, borderRadius: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingHorizontal: 10 },
+  heroGhost: { borderWidth: 1, borderColor: 'rgba(255, 253, 246, 0.28)', backgroundColor: 'rgba(255, 253, 246, 0.06)' },
+  stats: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  gstRow: { minHeight: 60, paddingHorizontal: 16, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  emptyCard: { flexDirection: 'row', alignItems: 'center', gap: 13 },
+  emptyMark: { width: 44, height: 44, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
+  ewbCard: { flexDirection: 'row', alignItems: 'center', gap: 11, padding: 14 },
+  ewbIcon: { width: 39, height: 39, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
 });
