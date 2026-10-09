@@ -41,6 +41,19 @@ const colors = {
     // Accent highlights (badges, selected items, focus rings)
     accent: '#e6efdf',
     accentForeground: '#275b39',
+    warmAccent: '#e2a04a',
+    warmAccentSoft: '#f7ecd8',
+    heroStart: '#164e3a',
+    heroEnd: '#103a2d',
+    heroText: '#fffdf6',
+    heroMuted: '#d2e0d5',
+    heroDecoration: 'rgba(247, 236, 216, 0.10)',
+    successBackground: '#e5f1e7',
+    successForeground: '#27603b',
+    warningBackground: '#fff4e8',
+    warningForeground: '#986319',
+    warningBorder: '#eed6b7',
+    infoBackground: '#eaf0e5',
 
     // Destructive actions (delete, error states)
     destructive: '#b83f32',

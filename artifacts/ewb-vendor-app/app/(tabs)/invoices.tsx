@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from 'react';
-import { Alert, Pressable, StyleSheet, TextInput, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
@@ -54,8 +54,8 @@ export default function InvoicesScreen() {
     <Page contentStyle={styles.page}>
       <View style={styles.head}>
         <Heading eyebrow="Your paperwork" title="Invoices" subtitle={`${invoices.length} saved ${invoices.length === 1 ? 'invoice' : 'invoices'}`} />
-        <Pressable style={[styles.add, { backgroundColor: colors.primary }]} onPress={() => setShowTemplates((current) => !current)} accessibilityLabel="New invoice">
-          <Feather name="plus" size={19} color="#fff" />
+        <Pressable style={[styles.add, { backgroundColor: colors.primary }]} onPress={() => setShowTemplates((current) => !current)} accessibilityRole="button" accessibilityLabel="New invoice">
+          <Feather name="plus" size={19} color={colors.primaryForeground} />
         </Pressable>
       </View>
       <View style={[styles.search, { borderColor: colors.input, backgroundColor: colors.card }]}>
@@ -75,20 +75,20 @@ export default function InvoicesScreen() {
           <Pressable onPress={() => { setDateFrom(''); setDateTo(''); setFilterGstin(''); setFilter('all'); setSearch(''); }}><TextBlock size={12} weight="semibold" color={colors.primary}>Clear all filters</TextBlock></Pressable>
         </Card>
       ) : null}
-      <View style={styles.chips}>
+      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.chips} accessibilityLabel="Invoice status filters">
         {filters.map((item) => {
           const selected = filter === item.value;
-          return <Pressable key={item.value} onPress={() => setFilter(item.value)} style={[styles.chip, { backgroundColor: selected ? colors.primary : colors.card, borderColor: selected ? colors.primary : colors.border }]}><TextBlock size={12} weight="semibold" color={selected ? '#fff' : colors.mutedForeground}>{item.label}</TextBlock></Pressable>;
+          return <Pressable key={item.value} onPress={() => setFilter(item.value)} accessibilityRole="button" accessibilityState={{ selected }} style={[styles.chip, { backgroundColor: selected ? colors.primary : colors.card, borderColor: selected ? colors.primary : colors.border }]}><TextBlock size={12} weight="semibold" color={selected ? colors.primaryForeground : colors.mutedForeground}>{item.label}</TextBlock></Pressable>;
         })}
-      </View>
+      </ScrollView>
       {showTemplates ? (
         <Card>
           <SectionTitle title="Choose a layout" action="Close" onPress={() => setShowTemplates(false)} />
           <TextBlock size={12} color={colors.mutedForeground}>Layouts change presentation only. They are not pre-approved legal formats.</TextBlock>
           <View style={styles.templateGrid}>
             {templates.map((template, index) => (
-              <Pressable key={template.id} onPress={() => router.push({ pathname: '/invoice/new', params: { templateId: template.id } })} style={[styles.template, { backgroundColor: colors.background, borderColor: colors.border }]}>
-                <View style={[styles.templateIcon, { backgroundColor: index % 2 === 0 ? colors.accent : '#f7eddc' }]}><Feather name={index === 4 ? 'truck' : 'file-text'} size={16} color={index % 2 === 0 ? colors.primary : '#8a6533'} /></View>
+              <Pressable key={template.id} onPress={() => router.push({ pathname: '/invoice/new', params: { templateId: template.id } })} style={[styles.template, { backgroundColor: colors.card, borderColor: colors.border }]} accessibilityRole="button">
+                <View style={[styles.templateIcon, { backgroundColor: index % 2 === 0 ? colors.accent : colors.warmAccentSoft }]}><Feather name={index === 4 ? 'truck' : 'file-text'} size={16} color={index % 2 === 0 ? colors.primary : colors.warningForeground} /></View>
                 <TextBlock size={13} weight="semibold">{template.name}</TextBlock>
                 <TextBlock size={10} color={colors.mutedForeground}>{template.note}</TextBlock>
               </Pressable>
@@ -128,11 +128,11 @@ const styles = StyleSheet.create({
   search: { borderWidth: 1, borderRadius: 15, height: 51, paddingHorizontal: 13, flexDirection: 'row', alignItems: 'center', gap: 9 },
   searchInput: { flex: 1, fontSize: 14, fontFamily: 'Inter_400Regular', paddingVertical: 10 },
   dateFields: { flexDirection: 'row', gap: 10 },
-  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 7 },
+  chips: { flexDirection: 'row', gap: 7, paddingRight: 4 },
   chip: { borderWidth: 1, paddingHorizontal: 12, paddingVertical: 9, borderRadius: 99 },
   quickActions: { gap: 9 },
   templateGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 9 },
-  template: { width: '48%', flexGrow: 1, borderWidth: 1, borderRadius: 15, padding: 12, gap: 6, minHeight: 98 },
+  template: { width: '48%', flexGrow: 1, borderWidth: 1, borderRadius: 17, padding: 12, gap: 6, minHeight: 105 },
   templateIcon: { width: 31, height: 31, borderRadius: 10, alignItems: 'center', justifyContent: 'center', marginBottom: 2 },
   deleteLink: { paddingVertical: 9, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-end', gap: 5 },
 });

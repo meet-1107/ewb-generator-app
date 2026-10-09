@@ -16,14 +16,17 @@ export default function InvoiceCard({ invoice, onPress }: { invoice: Invoice; on
         <View style={styles.top}>
           <View style={[styles.icon, { backgroundColor: colors.accent }]}><Feather name="file-text" size={17} color={colors.primary} /></View>
           <View style={{ flex: 1, gap: 4 }}>
-            <TextBlock weight="semibold">{invoice.invoiceNumber || 'Untitled invoice'}</TextBlock>
+            <TextBlock size={14} weight="semibold">{invoice.invoiceNumber || 'Untitled invoice'}</TextBlock>
             <TextBlock size={12} color={colors.mutedForeground}>{invoice.buyerName || 'Buyer not added'} · {invoice.invoiceDate || 'Date not set'}</TextBlock>
           </View>
-          <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
+          <Feather name="arrow-up-right" size={16} color={colors.mutedForeground} />
         </View>
         <View style={styles.bottom}>
           <StatusPill label={state} tone={tone} />
-          <TextBlock size={15} weight="semibold">{formatInr(total)}</TextBlock>
+          <View style={{ alignItems: 'flex-end', gap: 2 }}>
+            <TextBlock size={10} color={colors.mutedForeground}>TOTAL VALUE</TextBlock>
+            <TextBlock size={15} weight="bold">{formatInr(total)}</TextBlock>
+          </View>
         </View>
       </Card>
     </Pressable>
@@ -31,7 +34,7 @@ export default function InvoiceCard({ invoice, onPress }: { invoice: Invoice; on
 }
 
 const styles = StyleSheet.create({
-  card: { padding: 14, gap: 12 },
+  card: { padding: 15, gap: 13, borderRadius: 18 },
   top: { flexDirection: 'row', gap: 11, alignItems: 'center' },
   icon: { width: 39, height: 39, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   bottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 50 },

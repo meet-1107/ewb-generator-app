@@ -1,4 +1,4 @@
-import React, { type ReactNode } from 'react';
+import React, { useState, type ReactNode } from 'react';
 import {
   ActivityIndicator,
   Platform,
@@ -78,7 +78,7 @@ export function Heading({ eyebrow, title, subtitle }: { eyebrow?: string; title:
 
 export function Card({ children, style }: { children: ReactNode; style?: ViewStyle }) {
   const colors = useColors();
-  return <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }, style]}>{children}</View>;
+  return <View style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border, borderRadius: colors.radius + 2 }, style]}>{children}</View>;
 }
 
 export function SectionTitle({ title, action, onPress }: { title: string; action?: string; onPress?: () => void }) {
@@ -110,12 +110,13 @@ export function Field({
   right?: ReactNode;
 }) {
   const colors = useColors();
+  const [focused, setFocused] = useState(false);
   return (
     <View style={styles.fieldWrap}>
       <TextBlock size={13} weight="semibold" style={styles.fieldLabel}>{label}</TextBlock>
       <View style={[
         styles.inputShell,
-        { backgroundColor: colors.card, borderColor: error ? colors.destructive : colors.input },
+        { backgroundColor: colors.card, borderColor: error ? colors.destructive : focused ? colors.primary : colors.input },
         multiline && styles.multilineShell,
       ]}>
         <TextInput
@@ -128,6 +129,8 @@ export function Field({
           multiline={multiline}
           secureTextEntry={secureTextEntry}
           editable={editable}
+          onFocus={() => setFocused(true)}
+          onBlur={() => setFocused(false)}
           testID={testID}
           style={[
             styles.input,
@@ -195,9 +198,9 @@ export function StatusPill({ label, tone = 'neutral' }: { label: string; tone?: 
   const colors = useColors();
   const palette = {
     neutral: { bg: colors.muted, fg: colors.mutedForeground },
-    green: { bg: '#e5f1e7', fg: '#27603b' },
-    amber: { bg: '#f8efd9', fg: '#896318' },
-    red: { bg: '#f7e7e4', fg: colors.destructive },
+    green: { bg: colors.successBackground, fg: colors.successForeground },
+    amber: { bg: colors.warmAccentSoft, fg: colors.warningForeground },
+    red: { bg: colors.destructive, fg: colors.destructiveForeground },
   }[tone];
   return <View style={[styles.pill, { backgroundColor: palette.bg }]}><TextBlock size={11} weight="semibold" color={palette.fg}>{label}</TextBlock></View>;
 }
@@ -216,9 +219,9 @@ export function Notice({
   return (
     <View style={[
       styles.notice,
-      { backgroundColor: tone === 'warning' ? '#fff4e8' : colors.accent, borderColor: tone === 'warning' ? '#eed6b7' : colors.border },
+      { backgroundColor: tone === 'warning' ? colors.warningBackground : colors.infoBackground, borderColor: tone === 'warning' ? colors.warningBorder : colors.border },
     ]}>
-      <Feather name={icon} size={17} color={tone === 'warning' ? '#986319' : colors.primary} />
+      <Feather name={icon} size={17} color={tone === 'warning' ? colors.warningForeground : colors.primary} />
       <View style={{ flex: 1, gap: 3 }}>
         <TextBlock size={13} weight="semibold">{title}</TextBlock>
         <TextBlock size={12} color={colors.mutedForeground} style={{ lineHeight: 17 }}>{body}</TextBlock>
@@ -264,11 +267,11 @@ const styles = StyleSheet.create({
   sectionTitle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 2 },
   fieldWrap: { gap: 7 },
   fieldLabel: { marginLeft: 1 },
-  inputShell: { minHeight: 50, borderWidth: 1, borderRadius: 14, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14 },
+  inputShell: { minHeight: 52, borderWidth: 1, borderRadius: 14, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14 },
   input: { flex: 1, paddingVertical: 12, fontSize: 15, fontFamily: 'Inter_400Regular' },
   multilineShell: { minHeight: 90, alignItems: 'stretch' },
   multilineInput: { minHeight: 72, textAlignVertical: 'top' },
-  button: { height: 52, paddingHorizontal: 17, borderRadius: 15, borderWidth: 1, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 9 },
+  button: { height: 54, paddingHorizontal: 17, borderRadius: 15, borderWidth: 1, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 9 },
   disabled: { opacity: 0.47 },
   iconButton: { width: 42, height: 42, justifyContent: 'center', alignItems: 'center' },
   pill: { alignSelf: 'flex-start', paddingHorizontal: 10, paddingVertical: 6, borderRadius: 999 },

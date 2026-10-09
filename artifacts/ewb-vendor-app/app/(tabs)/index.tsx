@@ -2,11 +2,12 @@ import React, { useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
+import { LinearGradient } from 'expo-linear-gradient';
 import { useColors } from '@/hooks/useColors';
 import { useAppStore } from '@/state/app-store';
 import { useAuth } from '@/state/auth';
 import { formatInr, invoiceTotals } from '@/lib/domain';
-import { Button, Card, Heading, Notice, Page, SectionTitle, StatusPill, TextBlock } from '@/components/AppUI';
+import { Card, Heading, Notice, Page, SectionTitle, StatusPill, TextBlock } from '@/components/AppUI';
 import InvoiceCard from '@/components/InvoiceCard';
 
 export default function DashboardScreen() {
@@ -15,30 +16,23 @@ export default function DashboardScreen() {
   const auth = useAuth();
   const [showBusinesses, setShowBusinesses] = useState(false);
   const currentMonth = new Date().toISOString().slice(0, 7);
-  const monthInvoices = store.invoices.filter((invoice) =>
-    invoice.invoiceDate.startsWith(currentMonth) &&
-    (!store.activeGstin || invoice.sellerGstin.toUpperCase() === store.activeGstin.toUpperCase()),
+  const visibleInvoices = store.invoices.filter((invoice) =>
+    !store.activeGstin || invoice.sellerGstin.toUpperCase() === store.activeGstin.toUpperCase(),
   );
+  const monthInvoices = visibleInvoices.filter((invoice) => invoice.invoiceDate.startsWith(currentMonth));
   const monthTotal = monthInvoices.reduce((sum, invoice) => sum + invoiceTotals(invoice).total, 0);
-
-  const summary = [
-    { label: 'Invoices this period', value: String(monthInvoices.length), icon: 'file-text' as const, tab: '/(tabs)/invoices' },
-    { label: 'EWB generated', value: '—', icon: 'truck' as const, tab: '/(tabs)/ewbs' },
-    { label: 'Active EWB', value: '—', icon: 'check-circle' as const, tab: '/(tabs)/ewbs' },
-    { label: 'Expired EWB', value: '—', icon: 'clock' as const, tab: '/(tabs)/ewbs' },
-  ];
 
   return (
     <Page contentStyle={styles.page}>
       <View style={styles.topline}>
         <View style={{ flex: 1 }}>
-          <TextBlock size={12} weight="bold" color={colors.primary} style={{ letterSpacing: 1 }}>MARG / EWB DESK</TextBlock>
+          <TextBlock size={11} weight="bold" color={colors.primary} style={{ letterSpacing: 1 }}>MARG / EWB DESK</TextBlock>
           <Pressable onPress={() => setShowBusinesses((current) => !current)} style={styles.businessSelector}>
-            <TextBlock size={14} color={colors.mutedForeground} style={{ marginTop: 5 }}>{store.business?.name || 'Your business'}</TextBlock>
+            <TextBlock size={14} weight="semibold" color={colors.foreground} style={{ marginTop: 4 }}>{store.business?.name || 'Your business'}</TextBlock>
             {store.business?.gstRegistrations && store.business.gstRegistrations.length > 1 ? <Feather name="chevron-down" size={14} color={colors.mutedForeground} /> : null}
           </Pressable>
         </View>
-        <Pressable accessibilityRole="button" accessibilityLabel="Open account" onPress={() => router.push('/(tabs)/account')} style={[styles.avatar, { backgroundColor: colors.accent }]}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Open account" onPress={() => router.push('/(tabs)/account')} style={[styles.avatar, { borderColor: colors.border, backgroundColor: colors.card }]}>
           <Feather name="user" size={18} color={colors.primary} />
         </Pressable>
       </View>
@@ -58,96 +52,104 @@ export default function DashboardScreen() {
         </Card>
       ) : null}
       <View style={styles.greeting}>
-        <View style={{ flex: 1 }}>
+        <View style={{ flex: 1, gap: 3 }}>
           <TextBlock size={13} color={colors.mutedForeground}>{new Date().toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'long' })}</TextBlock>
-          <TextBlock size={27} weight="bold" style={styles.greetTitle}>Good to see you.</TextBlock>
+          <TextBlock size={25} weight="bold" style={styles.greetTitle}>Make today move.</TextBlock>
         </View>
-        <View style={[styles.syncDot, { backgroundColor: '#e9eee5' }]}><View style={styles.greenDot} /><TextBlock size={10} weight="semibold" color={colors.primary}>Local</TextBlock></View>
       </View>
       {auth.previewMode || store.previewOnly ? (
         <Notice title={auth.previewMode ? 'Local preview workspace' : 'Local draft storage'} body="Drafts are saved on this device only. Use test details until secure business sync is connected." tone="warning" />
       ) : null}
       {store.storageError ? <Notice title="Local storage problem" body={store.storageError} tone="warning" /> : null}
 
-      <View style={styles.stats}>
-        {summary.map((item, index) => (
-          <Pressable key={item.label} onPress={() => router.push(item.tab)} accessibilityRole="button" style={[styles.stat, { backgroundColor: index === 0 ? colors.primary : colors.card, borderColor: colors.border }]}>
-            <View style={[styles.statIcon, { backgroundColor: index === 0 ? 'rgba(255,255,255,0.14)' : colors.accent }]}><Feather name={item.icon} size={15} color={index === 0 ? '#fff' : colors.primary} /></View>
-            <TextBlock size={24} weight="bold" color={index === 0 ? '#fff' : colors.foreground}>{item.value}</TextBlock>
-            <TextBlock size={11} color={index === 0 ? '#deebe3' : colors.mutedForeground} style={{ lineHeight: 15 }}>{item.label}</TextBlock>
-          </Pressable>
-        ))}
-      </View>
-      {monthInvoices.length > 0 ? (
-        <Card style={styles.periodCard}>
-          <View style={{ flex: 1, gap: 3 }}>
-            <TextBlock size={12} color={colors.mutedForeground}>Draft invoice value this month</TextBlock>
-            <TextBlock size={20} weight="bold">{formatInr(monthTotal)}</TextBlock>
+      <LinearGradient colors={[colors.heroStart, colors.heroEnd]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.monthCard}>
+        <View style={styles.monthCardHeader}>
+          <TextBlock size={10} weight="bold" color={colors.heroMuted} style={{ letterSpacing: 1 }}>THIS MONTH · SAVED INVOICES</TextBlock>
+          <View style={[styles.localBadge, { backgroundColor: colors.heroDecoration }]}><View style={[styles.localDot, { backgroundColor: colors.warmAccent }]} /><TextBlock size={9} weight="bold" color={colors.heroMuted}>ON DEVICE</TextBlock></View>
+        </View>
+        <View style={styles.monthStats}>
+          <View style={{ flex: 1, gap: 2 }}>
+            <TextBlock size={38} weight="bold" color={colors.heroText}>{String(monthInvoices.length).padStart(2, '0')}</TextBlock>
+            <TextBlock size={12} color={colors.heroMuted}>{monthInvoices.length === 1 ? 'invoice saved' : 'invoices saved'}</TextBlock>
           </View>
-          <Feather name="trending-up" size={19} color={colors.primary} />
-        </Card>
-      ) : null}
+          <View style={[styles.monthSeparator, { backgroundColor: colors.heroDecoration }]} />
+          <View style={{ flex: 1, gap: 4 }}>
+            <TextBlock size={10} weight="semibold" color={colors.heroMuted}>TOTAL VALUE</TextBlock>
+            <TextBlock size={19} weight="bold" color={colors.heroText}>{formatInr(monthTotal)}</TextBlock>
+            <TextBlock size={9} color={colors.heroMuted}>Not filed or submitted</TextBlock>
+          </View>
+        </View>
+        <Pressable onPress={() => router.push('/(tabs)/invoices')} style={styles.monthLink}>
+          <TextBlock size={11} weight="semibold" color={colors.heroText}>View invoice library</TextBlock>
+          <Feather name="arrow-up-right" size={14} color={colors.warmAccent} />
+        </Pressable>
+      </LinearGradient>
 
-      <View style={styles.actions}>
-        <Button title="Create invoice" icon="plus" onPress={() => router.push('/invoice/new')} />
-        <Button title="Import invoice PDF" icon="upload" secondary onPress={() => router.push('/invoice/import')} />
+      <View style={styles.quickActions}>
+        <Pressable onPress={() => router.push('/invoice/new')} style={[styles.quickAction, { backgroundColor: colors.primary, borderColor: colors.primary }]} testID="dashboard-new-invoice">
+          <View style={[styles.quickIcon, { backgroundColor: colors.heroDecoration }]}><Feather name="plus" size={18} color={colors.warmAccent} /></View>
+          <View style={{ flex: 1, gap: 4 }}><TextBlock size={13} weight="semibold" color={colors.primaryForeground}>New invoice</TextBlock><TextBlock size={10} color={colors.heroMuted}>Start a clean draft</TextBlock></View>
+          <Feather name="arrow-up-right" size={15} color={colors.heroMuted} />
+        </Pressable>
+        <Pressable onPress={() => router.push('/invoice/import')} style={[styles.quickAction, { backgroundColor: colors.card, borderColor: colors.border }]} testID="dashboard-import-pdf">
+          <View style={[styles.quickIcon, { backgroundColor: colors.warmAccentSoft }]}><Feather name="file-plus" size={17} color={colors.warningForeground} /></View>
+          <View style={{ flex: 1, gap: 4 }}><TextBlock size={13} weight="semibold">Import a PDF</TextBlock><TextBlock size={10} color={colors.mutedForeground}>Enter details manually</TextBlock></View>
+          <Feather name="arrow-up-right" size={15} color={colors.mutedForeground} />
+        </Pressable>
       </View>
 
-      <View style={styles.gstHeading}>
-        <SectionTitle title="GST return status" action="View all" onPress={() => router.push('/(tabs)/gst')} />
-        <TextBlock size={12} color={colors.mutedForeground}>Status from a provider, not estimated</TextBlock>
-      </View>
-      <View style={styles.gstStrip}>
-        {['GSTR-1', 'GSTR-2', 'GSTR-3B'].map((item) => (
-          <Pressable key={item} onPress={() => router.push('/(tabs)/gst')} style={[styles.gstItem, { backgroundColor: colors.card, borderColor: colors.border }]}>
-            <TextBlock size={13} weight="semibold">{item}</TextBlock>
-            <StatusPill label="Not checked" />
-            <TextBlock size={10} color={colors.mutedForeground}>No source connected</TextBlock>
-          </Pressable>
-        ))}
-      </View>
-      <Notice title="GST status provider not configured" body="Return status needs an authorized provider. This app will not guess whether a return is filed." />
+      <SectionTitle title="Connected services" />
+      <Pressable onPress={() => router.push('/(tabs)/gst')} style={[styles.serviceCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <View style={[styles.serviceIcon, { backgroundColor: colors.warmAccentSoft }]}><Feather name="bar-chart-2" size={17} color={colors.warningForeground} /></View>
+        <View style={{ flex: 1, gap: 4 }}><TextBlock size={13} weight="semibold">GST returns</TextBlock><TextBlock size={11} color={colors.mutedForeground}>Connect a trusted status provider</TextBlock></View>
+        <StatusPill label="Not connected" tone="amber" />
+      </Pressable>
+      <Pressable onPress={() => router.push('/(tabs)/ewbs')} style={[styles.serviceCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <View style={[styles.serviceIcon, { backgroundColor: colors.accent }]}><Feather name="truck" size={17} color={colors.primary} /></View>
+        <View style={{ flex: 1, gap: 4 }}><TextBlock size={13} weight="semibold">E-way bill provider</TextBlock><TextBlock size={11} color={colors.mutedForeground}>Generation stays locked until setup</TextBlock></View>
+        <Feather name="chevron-right" size={16} color={colors.mutedForeground} />
+      </Pressable>
 
-      <SectionTitle title="Recent activity" action="All invoices" onPress={() => router.push('/(tabs)/invoices')} />
-      {store.invoices.length ? (
+      <SectionTitle title="Recent invoices" action="See all" onPress={() => router.push('/(tabs)/invoices')} />
+      {visibleInvoices.length ? (
         <View style={{ gap: 10 }}>
-          {store.invoices.slice(0, 3).map((invoice) => (
+          {visibleInvoices.slice(0, 3).map((invoice) => (
             <InvoiceCard key={invoice.id} invoice={invoice} onPress={() => router.push(`/invoice/${invoice.id}`)} />
           ))}
         </View>
       ) : (
-        <Card style={{ padding: 0 }}>
-          <View style={{ paddingHorizontal: 8 }}>
-            <View style={{ height: 3, backgroundColor: colors.accent, borderRadius: 2, width: 56 }} />
-          </View>
-          <View style={{ alignItems: 'center', padding: 20, gap: 9 }}>
-            <Feather name="inbox" size={23} color={colors.primary} />
-            <TextBlock weight="semibold">Nothing here yet</TextBlock>
-            <TextBlock size={13} color={colors.mutedForeground} style={{ textAlign: 'center', lineHeight: 19 }}>Create your first invoice to start preparing for an e-way bill.</TextBlock>
-          </View>
+        <Card style={styles.emptyCard}>
+          <View style={[styles.emptyMark, { backgroundColor: colors.accent }]}><Feather name="file-text" size={21} color={colors.primary} /></View>
+          <View style={{ flex: 1, gap: 4 }}><TextBlock size={14} weight="semibold">Your first invoice starts here</TextBlock><TextBlock size={11} color={colors.mutedForeground}>Saved drafts and their totals appear here.</TextBlock></View>
+          <Feather name="arrow-right" size={16} color={colors.primary} />
         </Card>
       )}
-      <TextBlock size={11} color={colors.mutedForeground}>Draft invoice value · {store.invoices.length} saved on this device</TextBlock>
+      <TextBlock size={10} color={colors.mutedForeground} style={styles.footerNote}>Counts and totals are based on local drafts only.</TextBlock>
     </Page>
   );
 }
 
 const styles = StyleSheet.create({
-  page: { gap: 19, paddingTop: 14 },
+  page: { gap: 15, paddingTop: 8 },
   topline: { flexDirection: 'row', alignItems: 'center' },
   businessSelector: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   gstinChoice: { minHeight: 49, padding: 10, borderWidth: 1, borderRadius: 12, flexDirection: 'row', alignItems: 'center' },
-  avatar: { width: 42, height: 42, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
-  greeting: { flexDirection: 'row', alignItems: 'flex-end', gap: 12 },
-  greetTitle: { letterSpacing: -0.8, marginTop: 4 },
-  syncDot: { borderRadius: 99, flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 9, paddingVertical: 6, marginBottom: 4 },
-  greenDot: { width: 6, height: 6, borderRadius: 3, backgroundColor: '#428252' },
-  stats: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  stat: { width: '48%', flexGrow: 1, minHeight: 117, borderRadius: 18, borderWidth: 1, padding: 13, justifyContent: 'space-between' },
-  statIcon: { width: 29, height: 29, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
-  periodCard: { flexDirection: 'row', alignItems: 'center' },
-  actions: { gap: 9 },
-  gstHeading: { gap: 8 },
-  gstStrip: { flexDirection: 'row', gap: 7 },
-  gstItem: { flex: 1, minWidth: 95, padding: 10, borderRadius: 14, borderWidth: 1, gap: 9 },
+  avatar: { width: 42, height: 42, borderRadius: 15, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  greeting: { flexDirection: 'row', alignItems: 'center' },
+  greetTitle: { letterSpacing: -0.8, marginTop: 1 },
+  monthCard: { borderRadius: 23, padding: 17, gap: 16 },
+  monthCardHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  localBadge: { borderRadius: 99, paddingHorizontal: 8, paddingVertical: 5, flexDirection: 'row', alignItems: 'center', gap: 5 },
+  localDot: { width: 5, height: 5, borderRadius: 3 },
+  monthStats: { flexDirection: 'row', alignItems: 'center', gap: 15 },
+  monthSeparator: { width: 1, height: 45 },
+  monthLink: { paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: 'rgba(247, 236, 216, 0.24)', flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
+  quickActions: { flexDirection: 'row', gap: 9 },
+  quickAction: { flex: 1, minHeight: 94, borderRadius: 18, borderWidth: 1, padding: 11, gap: 9, justifyContent: 'space-between' },
+  quickIcon: { width: 31, height: 31, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
+  serviceCard: { minHeight: 68, borderWidth: 1, borderRadius: 17, padding: 11, flexDirection: 'row', alignItems: 'center', gap: 10 },
+  serviceIcon: { width: 37, height: 37, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  emptyCard: { flexDirection: 'row', alignItems: 'center', gap: 11, padding: 13 },
+  emptyMark: { width: 40, height: 40, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  footerNote: { textAlign: 'center', paddingBottom: 2 },
 });
