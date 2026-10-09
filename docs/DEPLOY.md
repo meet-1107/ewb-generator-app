@@ -48,7 +48,7 @@ Firebase console steps:
 
 `google-services.json` (Android app `com.ewayeasy.app`) configures the Android build. Keep it at `artifacts/ewb-vendor-app/google-services.json` on your PC. It is git-ignored because this repository is public. EAS builds receive it as a secret file (Part 4).
 
-Each OTP SMS is billed to your Blaze plan. See the Firebase pricing page for the India rate, and keep the budget alert on.
+Each OTP SMS is billed to your Blaze plan: **India $0.07 per SMS sent (about ₹6)**. The first 10 SMS per day per project are free. Every **Resend code** is another SMS. Test numbers are free. Rates: https://cloud.google.com/identity-platform/pricing (checked October 2026). Keep the budget alert on.
 
 Web version only (Part 3): **Project settings → General → Your apps → Add app → Web (`</>`)**, then copy `apiKey`, `authDomain`, `projectId`, `storageBucket`, `messagingSenderId` and `appId`. The web version offers email sign-in only.
 
