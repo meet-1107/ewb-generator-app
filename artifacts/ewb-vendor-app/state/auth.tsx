@@ -9,23 +9,22 @@ import React, {
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { authClient } from '@/lib/auth-client';
-import type { AuthUser, OtpConfirmation } from '@/lib/auth-types';
+import type { AuthUser } from '@/lib/auth-types';
 
 const PREVIEW_KEY = 'ewb-vendor-v1:preview-session';
 const firebaseConfigured = Boolean(authClient);
 
 type AuthValue = {
   user: AuthUser | null;
-  /** Preview session, or a Firebase user whose mobile number or email is verified. */
+  /** Preview session, or a Firebase user with a verified email (Google or link). */
   signedIn: boolean;
   isLoading: boolean;
   previewMode: boolean;
   firebaseConfigured: boolean;
-  phoneSupported: boolean;
   enterPreview: () => void;
   exitPreview: () => void;
-  /** Sends an SMS code. A new number gets a new account once the code is confirmed. */
-  sendOtp: (phoneNumber: string, resend?: boolean) => Promise<OtpConfirmation>;
+  /** Signs in or creates an account with Google. Resolves false if the user cancels. */
+  signInWithGoogle: () => Promise<boolean>;
   signIn: (email: string, password: string) => Promise<void>;
   createAccount: (name: string, email: string, password: string) => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
@@ -79,11 +78,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isLoading,
       previewMode,
       firebaseConfigured,
-      phoneSupported: Boolean(authClient?.phoneSupported),
       enterPreview,
       exitPreview,
-      sendOtp(phoneNumber, resend = false) {
-        return requireClient().sendOtp(phoneNumber, resend);
+      signInWithGoogle() {
+        return requireClient().signInWithGoogle();
       },
       signIn(email, password) {
         return requireClient().signInWithEmail(email.trim(), password);

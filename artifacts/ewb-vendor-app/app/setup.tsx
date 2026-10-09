@@ -22,7 +22,7 @@ export default function BusinessSetupScreen() {
     state: '',
     address: '',
     pincode: '',
-    phone: auth.user?.phoneNumber?.startsWith('+91') ? auth.user.phoneNumber.slice(3) : '',
+    phone: '',
     email: auth.user?.email ?? '',
     timezone: 'Asia/Kolkata',
     invoicePrefix: financialYearPrefix(),

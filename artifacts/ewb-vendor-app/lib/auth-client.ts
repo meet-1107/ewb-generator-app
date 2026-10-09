@@ -4,11 +4,13 @@ import {
   createUserWithEmailAndPassword,
   getAuth,
   getIdToken,
+  GoogleAuthProvider,
   initializeAuth,
   onAuthStateChanged,
   sendEmailVerification,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
+  signInWithPopup,
   signOut,
   updateProfile,
   type Auth,
@@ -46,14 +48,20 @@ function load(): AuthClient | null {
   }
 
   return {
-    phoneSupported: false,
     onChange(listener) {
       return onAuthStateChanged(auth, (user) => {
         listener(user ? toAuthUser(user, () => getIdToken(user)) : null);
       });
     },
-    async sendOtp() {
-      throw new Error('Mobile number sign-in is available in the Android app. Use email here.');
+    async signInWithGoogle() {
+      try {
+        await signInWithPopup(auth, new GoogleAuthProvider());
+        return true;
+      } catch (error) {
+        const code = typeof error === 'object' && error !== null && 'code' in error ? error.code : null;
+        if (code === 'auth/popup-closed-by-user' || code === 'auth/cancelled-popup-request') return false;
+        throw error;
+      }
     },
     async signInWithEmail(email, password) {
       const result = await signInWithEmailAndPassword(auth, email, password);

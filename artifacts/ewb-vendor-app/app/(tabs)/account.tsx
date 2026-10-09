@@ -5,7 +5,6 @@ import Constants from 'expo-constants';
 import { useColors } from '@/hooks/useColors';
 import { useAppStore } from '@/state/app-store';
 import { useAuth } from '@/state/auth';
-import { formatPhone } from '@/lib/auth-types';
 import { setThemePreference, useThemePreference, type ThemePreference } from '@/state/theme';
 import { formatDate, gstinProblem, relativeTime, STATES, stateForGstin, templates, type Business } from '@/lib/domain';
 import { Button, Card, Divider, Field, Heading, ListRow, Notice, Page, Segmented, SectionTitle, SelectField, Sheet, StatusPill, TextBlock } from '@/components/AppUI';
@@ -31,8 +30,7 @@ export default function AccountScreen() {
 
   const business = store.business;
   const registrations = business?.gstRegistrations ?? [];
-  const phoneLabel = auth.user?.phoneNumber ? formatPhone(auth.user.phoneNumber) : null;
-  const name = auth.user?.displayName || (auth.previewMode ? 'Preview workspace' : auth.user?.email ?? phoneLabel) || 'Your account';
+  const name = auth.user?.displayName || (auth.previewMode ? 'Preview workspace' : auth.user?.email) || 'Your account';
   const initials = name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase();
   const sub = store.subscription;
   const usagePct = sub?.plan.ewbLimit ? Math.min(1, sub.subscription.usageCount / sub.plan.ewbLimit) : 0;
@@ -168,7 +166,7 @@ export default function AccountScreen() {
         <View style={[styles.avatar, { backgroundColor: colors.primary }]}><TextBlock size={18} weight="bold" color={colors.primaryForeground}>{initials || 'U'}</TextBlock></View>
         <View style={{ flex: 1, gap: 3 }}>
           <TextBlock size={16} weight="semibold" numberOfLines={1}>{name}</TextBlock>
-          <TextBlock size={12} color={colors.mutedForeground} numberOfLines={1}>{auth.user?.email ?? phoneLabel ?? 'Test data only · not signed in'}</TextBlock>
+          <TextBlock size={12} color={colors.mutedForeground} numberOfLines={1}>{auth.user?.email ?? 'Test data only · not signed in'}</TextBlock>
         </View>
         {auth.previewMode ? <StatusPill label="Preview" tone="amber" /> : <StatusPill label="Verified" tone="green" icon="check" />}
       </Card>

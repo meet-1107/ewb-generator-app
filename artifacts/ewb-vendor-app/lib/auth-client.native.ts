@@ -1,42 +1,55 @@
+import Constants from 'expo-constants';
 import type * as RNFirebaseAuth from '@react-native-firebase/auth';
-import { toAuthUser, type AuthClient, type OtpConfirmation } from '@/lib/auth-types';
+import type * as GoogleSignInModule from '@react-native-google-signin/google-signin';
+import { toAuthUser, type AuthClient } from '@/lib/auth-types';
 
 /**
  * Android / iOS: React Native Firebase, configured from google-services.json
- * at build time. Expo Go has no native Firebase module, so there the client is
- * null and the sign-in screen offers local preview instead.
+ * at build time, plus native Google Sign-In. Expo Go has neither native
+ * module, so there the client is null and the sign-in screen offers local
+ * preview instead.
  */
 
-type ConfirmationLike = { confirm: (code: string) => Promise<unknown> };
-type PhoneCapableAuth = {
-  // Instance method: unlike the modular wrapper, it forwards `forceResend`.
-  signInWithPhoneNumber: (phoneNumber: string, forceResend?: boolean) => Promise<ConfirmationLike>;
-};
+// Firebase's "Web client" OAuth ID; app.config.js reads it from google-services.json.
+const webClientId = (Constants.expoConfig?.extra as { googleWebClientId?: string } | undefined)?.googleWebClientId;
 
 function load(): AuthClient | null {
   let sdk: typeof RNFirebaseAuth;
+  let google: typeof GoogleSignInModule;
   let auth: RNFirebaseAuth.Auth;
   try {
     sdk = require('@react-native-firebase/auth') as typeof RNFirebaseAuth;
+    google = require('@react-native-google-signin/google-signin') as typeof GoogleSignInModule;
     auth = sdk.getAuth();
   } catch {
     return null;
   }
+  if (webClientId) google.GoogleSignin.configure({ webClientId });
 
   return {
-    phoneSupported: true,
     onChange(listener) {
       return sdk.onAuthStateChanged(auth, (user) => {
         listener(user ? toAuthUser(user, () => sdk.getIdToken(user)) : null);
       });
     },
-    async sendOtp(phoneNumber, resend): Promise<OtpConfirmation> {
-      const confirmation = await (auth as unknown as PhoneCapableAuth).signInWithPhoneNumber(phoneNumber, resend);
-      return {
-        async confirm(code) {
-          await confirmation.confirm(code);
-        },
-      };
+    async signInWithGoogle() {
+      if (!webClientId) {
+        throw new Error('Google sign-in is not set up yet. Enable Google in Firebase Authentication, then download google-services.json again.');
+      }
+      try {
+        await google.GoogleSignin.hasPlayServices({ showPlayServicesUpdateDialog: true });
+        const response = await google.GoogleSignin.signIn();
+        if (!google.isSuccessResponse(response)) return false;
+        const { idToken } = response.data;
+        if (!idToken) throw new Error('Google did not return a sign-in token. Try again.');
+        await sdk.signInWithCredential(auth, sdk.GoogleAuthProvider.credential(idToken));
+        return true;
+      } catch (error) {
+        if (google.isErrorWithCode(error) && (error.code === google.statusCodes.SIGN_IN_CANCELLED || error.code === google.statusCodes.IN_PROGRESS)) {
+          return false;
+        }
+        throw error;
+      }
     },
     async signInWithEmail(email, password) {
       const result = await sdk.signInWithEmailAndPassword(auth, email, password);
@@ -55,6 +68,8 @@ function load(): AuthClient | null {
       await sdk.sendPasswordResetEmail(auth, email);
     },
     async signOut() {
+      // Also clear the Google session so the account picker shows next time.
+      await google.GoogleSignin.signOut().catch(() => undefined);
       await sdk.signOut(auth);
     },
   };

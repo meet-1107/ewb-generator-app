@@ -23,7 +23,7 @@ Firebase Auth + Cloud Run + optional Firebase Hosting, and building/installing t
 
 | Area | Screens |
 |---|---|
-| Access | Mobile number + SMS OTP log in / sign up (Android), email sign in / create account / reset (Firebase), preview mode, business setup with GSTIN check-digit validation |
+| Access | Continue with Google, email sign in / create account / reset (Firebase), preview mode, business setup with GSTIN check-digit validation |
 | Dashboard | Month sales, 4 tappable stats (invoices, generated, active, expired), GST strip, expiring-soon alert, recent activity, pull to refresh, offline banner |
 | Invoices | Search, status chips, date filters, 6 layout templates, long-press duplicate/delete, pagination |
 | Invoice editor | Collapsible sections, saved buyer/product/transporter pickers, auto CGST+SGST vs IGST, qty × rate, inline errors, autosave, sticky total, locked after EWB |
@@ -42,8 +42,8 @@ Firebase Auth + Cloud Run + optional Firebase Hosting, and building/installing t
 
 | Variable | Where | Purpose |
 |---|---|---|
-| `google-services.json` (git-ignored; EAS file variable `GOOGLE_SERVICES_JSON`) | Android app | Enables mobile OTP + email sign-in via React Native Firebase |
-| `EXPO_PUBLIC_FIREBASE_API_KEY`, `_PROJECT_ID`, `_APP_ID`, `_AUTH_DOMAIN` | web app | Enables email sign-in on web (preview mode is hidden) |
+| `google-services.json` (git-ignored; EAS file variable `GOOGLE_SERVICES_JSON`) | Android app | Enables Google + email sign-in via React Native Firebase (Google web client ID is read from it) |
+| `EXPO_PUBLIC_FIREBASE_API_KEY`, `_PROJECT_ID`, `_APP_ID`, `_AUTH_DOMAIN` | web app | Enables Google + email sign-in on web (preview mode is hidden) |
 | `EXPO_PUBLIC_API_URL` | app | Backend URL |
 | `EXPO_PUBLIC_SUPPORT_EMAIL` | app | Support / deletion requests |
 | `FIREBASE_PROJECT_ID` | server | Requires and verifies Firebase ID tokens (otherwise sandbox workspace IDs are accepted) |

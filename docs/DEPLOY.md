@@ -4,7 +4,7 @@ What goes where:
 
 | Piece | Runs on | Why |
 |---|---|---|
-| Sign-in | **Firebase Authentication**: mobile number + SMS OTP (Android), email/password (Android + web) | `lib/auth-client.native.ts` (React Native Firebase), `lib/auth-client.ts` (web SDK) |
+| Sign-in | **Firebase Authentication**: Continue with Google + email/password (free, no SMS) | `lib/auth-client.native.ts` (React Native Firebase + Google Sign-In), `lib/auth-client.ts` (web SDK) |
 | API server (`artifacts/api-server`) | **Cloud Run** in the same Firebase project | Firebase Hosting serves only static files, so the Express server runs on Cloud Run (billed through your Blaze plan) |
 | Server data (`DATA_DIR`) | **Cloud Storage bucket** mounted into Cloud Run | The Cloud Run disk is wiped on every restart |
 | Android app | **APK** built by Expo EAS, installed on the phone | Firebase does not build or host APKs |
@@ -27,30 +27,26 @@ This project's values (from `google-services.json`):
 - An Android phone (Android 7+) and its USB cable or a browser on the phone
 - Recommended: a budget alert (Google Cloud console → Billing → Budgets & alerts), for example ₹500/month
 
-## Part 1: Firebase Authentication (mobile OTP + email)
+## Part 1: Firebase Authentication (Google + email)
 
-How sign-in works in the app:
+How sign-in works in the app (both methods are free; there are no SMS charges):
 
-- **Log in or sign up** screen: enter a mobile number → **Send OTP** → type the 6-digit SMS code → signed in. A number that has never signed in before gets a new account automatically, so there is no separate sign-up form. On many Android phones the SMS is read automatically and the code step is skipped.
-- **Use email instead**: email/password sign-in, account creation (with an email verification link) and password reset are still available.
-- Every signed-in user has a verified mobile number or a verified email. The server accepts their Firebase ID token.
+- **Continue with Google**: one tap, then pick a Google account. The first time, this also creates the account, so there is no separate sign-up form.
+- **Email and password**: sign in, **Create account** (an email verification link is sent), and **Forgot password?**.
+- Every signed-in user has a verified email (Google accounts count as verified). The server accepts their Firebase ID token.
 
 Firebase console steps:
 
 1. **Build → Authentication → Get started**.
 2. **Sign-in method** tab:
-   - **Phone** → Enable → Save.
+   - **Google** → Enable → choose a **support email** → Save. This also creates the "Web client" OAuth ID that Android Google Sign-In needs.
    - **Email/Password** → Enable → Save.
-3. **Settings → SMS region policy** → **Allow** → select **India** (plus any other countries you serve) → Save. This blocks SMS fraud from other countries, which you would otherwise pay for.
-4. Optional, for free testing: **Sign-in method → Phone → Phone numbers for testing**. Add `+91 99999 99999` with code `123456`. No real SMS is sent for that number.
-5. Google Cloud console (same project) → **APIs & Services → Library** → enable **Play Integrity API**. Android uses it to confirm the OTP request comes from your real app.
-6. You add the app's SHA fingerprints in Part 4, step 3. **Phone OTP fails until you do.**
+3. Add the app's SHA-1 and SHA-256 fingerprints (Part 4, step 2). **Google sign-in on Android fails with "not set up for this app build" until you do.**
+4. After steps 2 and 3, download a fresh `google-services.json`: **Project settings → General → Your apps → Android (com.ewayeasy.app) → google-services.json**. The old file has an empty `oauth_client` list; the new one contains the client IDs.
 
-`google-services.json` (Android app `com.ewayeasy.app`) configures the Android build. Keep it at `artifacts/ewb-vendor-app/google-services.json` on your PC. It is git-ignored because this repository is public. EAS builds receive it as a secret file (Part 4).
+`google-services.json` configures the Android build. Keep it at `artifacts/ewb-vendor-app/google-services.json` on your PC. It is git-ignored because this repository is public. EAS builds receive it as a secret file (Part 4). `app.config.js` reads the Google "Web client" ID from it automatically.
 
-Each OTP SMS is billed to your Blaze plan: **India $0.07 per SMS sent (about ₹6)**. The first 10 SMS per day per project are free. Every **Resend code** is another SMS. Test numbers are free. Rates: https://cloud.google.com/identity-platform/pricing (checked October 2026). Keep the budget alert on.
-
-Web version only (Part 3): **Project settings → General → Your apps → Add app → Web (`</>`)**, then copy `apiKey`, `authDomain`, `projectId`, `storageBucket`, `messagingSenderId` and `appId`. The web version offers email sign-in only.
+Web version only (Part 3): **Project settings → General → Your apps → Add app → Web (`</>`)**, then copy `apiKey`, `authDomain`, `projectId`, `storageBucket`, `messagingSenderId` and `appId`. Google sign-in on the web opens a Google pop-up. `ewb---generator.web.app` and `localhost` are already authorized domains.
 
 ## Part 2: API server on Cloud Run
 
@@ -124,13 +120,7 @@ On your PC:
    eas init            # links the app to your Expo account; commit the app.json change it makes
    ```
 
-2. Upload `google-services.json` as a secret file for both build environments:
-
-   ```bash
-   eas env:create --name GOOGLE_SERVICES_JSON --type file --value ./google-services.json --environment preview --environment production --visibility secret
-   ```
-
-3. Create the signing key now, so you can register its fingerprints before the first build:
+2. Create the signing key now, so you can register its fingerprints before the first build:
 
    ```bash
    eas credentials --platform android
@@ -138,9 +128,17 @@ On your PC:
 
    Choose the **preview** profile → **Keystore** → **Set up a new keystore** (generate). Afterwards it prints **SHA1 Fingerprint** and **SHA256 Fingerprint**. Copy both.
 
-   Firebase console → **Project settings → General → Your apps → Android (com.ewayeasy.app) → Add fingerprint**. Add the SHA-1, then add the SHA-256. You don't need to download `google-services.json` again for phone OTP.
+   Firebase console → **Project settings → General → Your apps → Android (com.ewayeasy.app) → Add fingerprint**. Add the SHA-1, then add the SHA-256.
 
    Expo stores this keystore. Every later APK must be signed with it, or it cannot update the installed app.
+
+3. Enable the Google provider if you haven't yet (Part 1, step 2). Then download the fresh `google-services.json` (Part 1, step 4) into `artifacts/ewb-vendor-app/`, and upload it as a secret file for both build environments:
+
+   ```bash
+   eas env:create --name GOOGLE_SERVICES_JSON --type file --value ./google-services.json --environment preview --environment production --visibility secret
+   ```
+
+   If you download the file again later, replace the stored copy with `eas env:update` (same flags), or delete and recreate the variable.
 
 4. Open `artifacts/ewb-vendor-app/eas.json` and set the `preview` → `env` block:
 
@@ -168,7 +166,7 @@ eas build --platform android --profile preview
 2. Open the downloaded `.apk` from the notification or the **Files → Downloads** folder.
 3. If Android says the source isn't allowed, tap **Settings**, turn on **Allow from this source** for Chrome (or Files), then press back.
 4. Tap **Install**. If **Play Protect** warns that the app is unknown, tap **More details → Install anyway**. The warning appears because the app isn't from the Play Store.
-5. Open **E-Way Easy**, enter your mobile number, tap **Send OTP**, and type the SMS code (or wait for it to fill in automatically). You may briefly see a browser "verifying you're not a robot" page. That is Firebase's reCAPTCHA check, used when the app isn't installed from the Play Store. The user then appears in Firebase console → Authentication → Users with your phone number.
+5. Open **E-Way Easy**, tap **Continue with Google**, and pick your account. The user then appears in Firebase console → Authentication → Users with provider Google.
 6. Check it works: create a business, save an invoice, pull to refresh. Then confirm a file appears in the `ewb---generator-ewb-data` bucket under `workspaces/`.
 
 Alternative (USB): download the `.apk` to your PC, enable **Developer options → USB debugging** on the phone, then run `adb install path/to/app.apk`.
@@ -185,11 +183,11 @@ Alternative (USB): download the `.apk` to your PC, enable **Developer options �
 |---|---|
 | App says "offline / service unreachable" | `EXPO_PUBLIC_API_URL` is wrong or not `https://`. Rebuild after fixing `eas.json`. |
 | "Sign in again to continue" on every screen | `FIREBASE_PROJECT_ID` on Cloud Run doesn't match the app's project ID. |
-| Sign-in screen shows **Open local preview** | Native Firebase is missing: you are in Expo Go (OTP needs a real build), or `GOOGLE_SERVICES_JSON` was not available to the build. |
-| "This app build is not registered in Firebase" when sending OTP | Add the keystore SHA-1 and SHA-256 (Part 4, step 3) and enable Play Integrity API. |
-| "This sign-in method is not enabled" | Enable **Phone** (or Email/Password) in Authentication → Sign-in method. |
-| OTP never arrives | Check the SMS region policy allows India, and try a test number first. Some DND numbers get SMS late, so wait 30 s, then tap **Resend code**. |
-| Build fails: `google-services.json` not found | Run the `eas env:create … GOOGLE_SERVICES_JSON` command from Part 4, step 2. |
+| Sign-in screen shows **Open local preview** | Native Firebase is missing: you are in Expo Go (Google sign-in needs a real build), or `GOOGLE_SERVICES_JSON` was not available to the build. |
+| "Google sign-in is not set up yet. Enable Google…" | The `google-services.json` used for the build has no Web client ID. Enable the Google provider, download the file again, update `GOOGLE_SERVICES_JSON`, and rebuild. |
+| "Google sign-in is not set up for this app build yet (SHA fingerprints…)" | The keystore's SHA-1/SHA-256 is not in Firebase (Part 4, step 2). Adding it doesn't need a rebuild. |
+| "This sign-in method is not enabled" | Enable **Google** (or Email/Password) in Authentication → Sign-in method. |
+| Build fails: `google-services.json` not found | Run the `eas env:create … GOOGLE_SERVICES_JSON` command from Part 4, step 3. |
 | EAS build fails at `pnpm install` with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH` | Keep `"pnpm": "9.15.9"` in `eas.json`. |
 | "App not installed" over an older APK | The new build was signed with a different keystore. Uninstall the old app first. |
 | Cloud Run deploy: permission denied on the bucket | Re-run the `add-iam-policy-binding` command with the right `396238368123`. |
