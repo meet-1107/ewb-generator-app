@@ -1,0 +1,1 @@
+- [Firebase Auth on Expo](firebase-auth-expo.md) — Keep the native persistence lookup narrow and fail explicitly instead of silently weakening persistence.

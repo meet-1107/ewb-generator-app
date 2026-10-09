@@ -1,0 +1,24 @@
+kind = "mobile"
+previewPath = "/"
+title = "EWB Vendor App"
+description = "An iOS and Android app for Indian vendors to prepare sales invoices, review e-way bill details, and access business GST and account information. Provider-dependent actions are explicitly gated until configured."
+version = "1.0.0"
+id = "artifacts/ewb-vendor-app"
+router = "expo-domain"
+
+[[services]]
+name = "expo"
+ensurePreviewReachable = "/status"
+paths = [ "/" ]
+localPort = 22602
+
+[services.development]
+run = "pnpm --filter @workspace/ewb-vendor-app run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/ewb-vendor-app", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/ewb-vendor-app", "run", "serve" ]
+
+[services.env]
+PORT = "22602"
+BASE_PATH = "/"
