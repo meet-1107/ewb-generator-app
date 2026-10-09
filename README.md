@@ -15,6 +15,10 @@ cd artifacts/ewb-vendor-app && npx expo start      # press w (web), a (Android),
 
 The web build talks to `http://localhost:5000` automatically. On a phone, set `EXPO_PUBLIC_API_URL=http://<your-LAN-IP>:5000`. Without Firebase env vars, the sign-in screen offers **Open local preview** (test data, sandbox providers).
 
+## Deploy
+
+Firebase Auth + Cloud Run + optional Firebase Hosting, and building/installing the Android APK: see [docs/DEPLOY.md](docs/DEPLOY.md).
+
 ## What's in the app
 
 | Area | Screens |

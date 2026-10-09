@@ -1,7 +1,11 @@
 {
   "cli": { "version": ">= 16.0.0", "appVersionSource": "local" },
   "build": {
+    "base": {
+      "pnpm": "9.15.9"
+    },
     "preview": {
+      "extends": "base",
       "distribution": "internal",
       "android": { "buildType": "apk" },
       "env": {
@@ -9,6 +13,7 @@
       }
     },
     "production": {
+      "extends": "base",
       "android": { "buildType": "app-bundle" }
     }
   }
