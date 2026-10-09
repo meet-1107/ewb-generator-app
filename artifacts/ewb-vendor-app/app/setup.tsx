@@ -22,7 +22,7 @@ export default function BusinessSetupScreen() {
     state: '',
     address: '',
     pincode: '',
-    phone: '',
+    phone: auth.user?.phoneNumber?.startsWith('+91') ? auth.user.phoneNumber.slice(3) : '',
     email: auth.user?.email ?? '',
     timezone: 'Asia/Kolkata',
     invoicePrefix: financialYearPrefix(),
@@ -31,8 +31,8 @@ export default function BusinessSetupScreen() {
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (!auth.previewMode && !auth.user?.emailVerified) router.replace('/');
-  }, [auth.previewMode, auth.user]);
+    if (!auth.signedIn) router.replace('/');
+  }, [auth.signedIn]);
 
   const change = (key: keyof Business) => (value: string) => {
     setForm((current) => {

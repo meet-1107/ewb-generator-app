@@ -7,28 +7,25 @@ import React, {
   useState,
   type ReactNode,
 } from 'react';
-import {
-  createUserWithEmailAndPassword,
-  onAuthStateChanged,
-  sendEmailVerification,
-  sendPasswordResetEmail,
-  signInWithEmailAndPassword,
-  signOut as firebaseSignOut,
-  updateProfile,
-  type User,
-} from 'firebase/auth';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { auth, firebaseConfigured } from '@/lib/firebase';
+import { authClient } from '@/lib/auth-client';
+import type { AuthUser, OtpConfirmation } from '@/lib/auth-types';
 
 const PREVIEW_KEY = 'ewb-vendor-v1:preview-session';
+const firebaseConfigured = Boolean(authClient);
 
 type AuthValue = {
-  user: User | null;
+  user: AuthUser | null;
+  /** Preview session, or a Firebase user whose mobile number or email is verified. */
+  signedIn: boolean;
   isLoading: boolean;
   previewMode: boolean;
   firebaseConfigured: boolean;
+  phoneSupported: boolean;
   enterPreview: () => void;
   exitPreview: () => void;
+  /** Sends an SMS code. A new number gets a new account once the code is confirmed. */
+  sendOtp: (phoneNumber: string, resend?: boolean) => Promise<OtpConfirmation>;
   signIn: (email: string, password: string) => Promise<void>;
   createAccount: (name: string, email: string, password: string) => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
@@ -37,19 +34,21 @@ type AuthValue = {
 
 const AuthContext = createContext<AuthValue | null>(null);
 
+function requireClient() {
+  if (!authClient) throw new Error('Firebase Authentication is not configured.');
+  return authClient;
+}
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<User | null>(null);
-  const [authLoading, setAuthLoading] = useState(Boolean(auth));
+  const [user, setUser] = useState<AuthUser | null>(null);
+  const [authLoading, setAuthLoading] = useState(firebaseConfigured);
   const [previewLoading, setPreviewLoading] = useState(!firebaseConfigured);
   const [previewMode, setPreviewMode] = useState(false);
   const isLoading = authLoading || previewLoading;
 
   useEffect(() => {
-    if (!auth) {
-      setAuthLoading(false);
-      return;
-    }
-    return onAuthStateChanged(auth, (nextUser) => {
+    if (!authClient) return;
+    return authClient.onChange((nextUser) => {
       setUser(nextUser);
       setAuthLoading(false);
     });
@@ -76,34 +75,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value = useMemo<AuthValue>(
     () => ({
       user,
+      signedIn: previewMode || Boolean(user?.verified),
       isLoading,
       previewMode,
       firebaseConfigured,
+      phoneSupported: Boolean(authClient?.phoneSupported),
       enterPreview,
       exitPreview,
-      async signIn(email, password) {
-        if (!auth) throw new Error('Firebase Authentication is not configured.');
-        const result = await signInWithEmailAndPassword(auth, email.trim(), password);
-        if (!result.user.emailVerified) {
-          await firebaseSignOut(auth);
-          throw new Error('Check your inbox and verify your email before signing in.');
-        }
+      sendOtp(phoneNumber, resend = false) {
+        return requireClient().sendOtp(phoneNumber, resend);
       },
-      async createAccount(name, email, password) {
-        if (!auth) throw new Error('Firebase Authentication is not configured.');
-        const result = await createUserWithEmailAndPassword(auth, email.trim(), password);
-        await updateProfile(result.user, { displayName: name.trim() });
-        await sendEmailVerification(result.user);
-        await firebaseSignOut(auth);
+      signIn(email, password) {
+        return requireClient().signInWithEmail(email.trim(), password);
       },
-      async resetPassword(email) {
-        if (!auth) throw new Error('Firebase Authentication is not configured.');
-        await sendPasswordResetEmail(auth, email.trim());
+      createAccount(name, email, password) {
+        return requireClient().createEmailAccount(name.trim(), email.trim(), password);
+      },
+      resetPassword(email) {
+        return requireClient().resetPassword(email.trim());
       },
       async signOut() {
         setPreviewMode(false);
         await AsyncStorage.removeItem(PREVIEW_KEY).catch(() => undefined);
-        if (auth) await firebaseSignOut(auth);
+        if (authClient) await authClient.signOut();
       },
     }),
     [user, isLoading, previewMode, enterPreview, exitPreview],

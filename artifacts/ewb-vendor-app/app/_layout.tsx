@@ -33,10 +33,10 @@ function useAuthGuard() {
   const first = segments[0] as string | undefined;
   useEffect(() => {
     if (auth.isLoading || !store.isHydrated) return;
-    const signedIn = auth.previewMode || Boolean(auth.user?.emailVerified);
+    const signedIn = auth.signedIn;
     if (!signedIn && first !== undefined && first !== 'index') router.replace('/');
     else if (signedIn && !store.business && first !== undefined && first !== 'setup' && first !== 'index') router.replace('/setup');
-  }, [auth.isLoading, auth.previewMode, auth.user, store.isHydrated, store.business, first]);
+  }, [auth.isLoading, auth.signedIn, store.isHydrated, store.business, first]);
 }
 
 function RootLayoutNav() {

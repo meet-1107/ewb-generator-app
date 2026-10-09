@@ -1,5 +1,8 @@
 {
-  "cli": { "version": ">= 16.0.0", "appVersionSource": "local" },
+  "cli": {
+    "version": ">= 16.0.0",
+    "appVersionSource": "local"
+  },
   "build": {
     "base": {
       "pnpm": "9.15.9"
@@ -7,14 +10,20 @@
     "preview": {
       "extends": "base",
       "distribution": "internal",
-      "android": { "buildType": "apk" },
+      "android": {
+        "buildType": "apk"
+      },
       "env": {
         "EXPO_PUBLIC_API_URL": "http://192.168.1.152:5000"
-      }
+      },
+      "environment": "preview"
     },
     "production": {
       "extends": "base",
-      "android": { "buildType": "app-bundle" }
+      "android": {
+        "buildType": "app-bundle"
+      },
+      "environment": "production"
     }
   }
 }
