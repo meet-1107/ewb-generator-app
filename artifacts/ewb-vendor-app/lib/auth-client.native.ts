@@ -1,7 +1,8 @@
 import Constants from 'expo-constants';
 import type * as RNFirebaseAuth from '@react-native-firebase/auth';
 import type * as GoogleSignInModule from '@react-native-google-signin/google-signin';
-import { toAuthUser, type AuthClient } from '@/lib/auth-types';
+import { api } from '@/lib/api';
+import { completeRegistration, PendingRegistrationError, toAuthUser, type AuthClient } from '@/lib/auth-types';
 
 /**
  * Android / iOS: React Native Firebase, configured from google-services.json
@@ -55,14 +56,22 @@ function load(): AuthClient | null {
       const result = await sdk.signInWithEmailAndPassword(auth, email, password);
       if (!result.user.emailVerified) {
         await sdk.signOut(auth);
-        throw new Error('Check your inbox and verify your email before signing in.');
+        throw new PendingRegistrationError();
       }
     },
-    async createEmailAccount(name, email, password) {
-      const result = await sdk.createUserWithEmailAndPassword(auth, email, password);
-      await sdk.updateProfile(result.user, { displayName: name });
-      await sdk.sendEmailVerification(result.user);
-      await sdk.signOut(auth);
+    async createVerifiedAccount(email, password, grant) {
+      await completeRegistration({
+        create: async () => {
+          const { user } = await sdk.createUserWithEmailAndPassword(auth, email, password);
+          return { getIdToken: () => sdk.getIdToken(user) };
+        },
+        signIn: async () => {
+          const { user } = await sdk.signInWithEmailAndPassword(auth, email, password);
+          return { getIdToken: () => sdk.getIdToken(user) };
+        },
+        finalize: (idToken) => api.finalizeRegistration(grant, idToken),
+        signOut: () => sdk.signOut(auth),
+      });
     },
     async resetPassword(email) {
       await sdk.sendPasswordResetEmail(auth, email);

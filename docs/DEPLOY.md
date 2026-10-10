@@ -27,26 +27,63 @@ This project's values (from `google-services.json`):
 - An Android phone (Android 7+) and its USB cable or a browser on the phone
 - Recommended: a budget alert (Google Cloud console → Billing → Budgets & alerts), for example ₹500/month
 
-## Part 1: Firebase Authentication (Google + email)
+## Part 1: Firebase Authentication (email OTP + Google)
 
-How sign-in works in the app (both methods are free; there are no SMS charges):
+How sign-in works:
 
-- **Continue with Google**: one tap, then pick a Google account. The first time, this also creates the account, so there is no separate sign-up form.
-- **Email and password**: sign in, **Create account** (an email verification link is sent), and **Forgot password?**.
-- Every signed-in user has a verified email (Google accounts count as verified). The server accepts their Firebase ID token.
+| User | Flow |
+|---|---|
+| New, email | **Create account** → email + password → **Send verification code** → enter the 6-digit code from the email → account created → back to **Sign in** |
+| Returning, email | Email + password → **Sign in** → dashboard |
+| Google | **Continue with Google** → dashboard. No code is needed; a Google email is already verified. |
+| Already signed in | The session is restored when the app opens; the dashboard appears without the login screen. |
+| Unfinished sign-up | Signing in says "Finish creating your account" → **Verify email** sends a new code. |
 
-Firebase console steps:
+The server decides who is verified, not the app:
+- `/auth/email-otp/verify` returns a single-use registration grant (15 minutes).
+- `/auth/register/finalize` checks the user's Firebase ID token, consumes the grant once, and marks the email verified with the Firebase Admin SDK.
+- Every data API refuses accounts whose email is not verified.
 
-1. **Build → Authentication → Get started**.
-2. **Sign-in method** tab:
-   - **Google** → Enable → choose a **support email** → Save. This also creates the "Web client" OAuth ID that Android Google Sign-In needs.
-   - **Email/Password** → Enable → Save.
-3. Add the app's SHA-1 and SHA-256 fingerprints (Part 4, step 2). **Google sign-in on Android fails with "not set up for this app build" until you do.**
-4. After steps 2 and 3, download a fresh `google-services.json`: **Project settings → General → Your apps → Android (com.ewayeasy.app) → google-services.json**. The old file has an empty `oauth_client` list; the new one contains the client IDs.
+The rules:
+- Codes are random, expire after **5 minutes**, and allow **5 attempts**.
+- Resending has a **60-second** cooldown, with at most **5 codes per email per hour**, plus per-IP limits.
+- Codes and grants are stored only as hashes and are never logged.
+- An email that already has an account gets an "account exists" email instead of a code, and the API answers the same way, so the app never reveals which emails are registered.
 
-`google-services.json` configures the Android build. Keep it at `artifacts/ewb-vendor-app/google-services.json` on your PC. It is git-ignored because this repository is public. EAS builds receive it as a secret file (Part 4). `app.config.js` reads the Google "Web client" ID from it automatically.
+### Firebase console
 
-Web version only (Part 3): **Project settings → General → Your apps → Add app → Web (`</>`)**, then copy `apiKey`, `authDomain`, `projectId`, `storageBucket`, `messagingSenderId` and `appId`. Google sign-in on the web opens a Google pop-up. `ewb---generator.web.app` and `localhost` are already authorized domains.
+1. **Build → Authentication → Sign-in method:** enable **Email/Password** and **Google** (choose a support email).
+2. **Add the SHA fingerprints.** Add the app's SHA-1 and SHA-256 fingerprints (Part 4, step 2), then download a fresh `google-services.json` (Project settings → Your apps → Android).
+
+### Email sending (Resend)
+
+1. Sign up at https://resend.com.
+2. Go to **Domains → Add domain**. Add the DNS records it shows, at your domain provider, and wait until the domain shows **Verified**.
+3. Go to **API keys → Create** (permission "Sending access").
+4. Put these on the server (`artifacts/api-server/.env` for testing; Cloud Run variables when live, Part 2b):
+   - `RESEND_API_KEY=re_…`
+   - `EMAIL_FROM=E-Way Easy <verify@yourdomain.com>`
+   - `OTP_PEPPER=` followed by 64 random characters (`openssl rand -hex 32`)
+   - `FIREBASE_PROJECT_ID=ewb---generator`
+
+To test before verifying a domain, use `EMAIL_FROM=E-Way Easy <onboarding@resend.dev>`. It only delivers to the email you signed up to Resend with.
+
+### Firebase Admin permission (server)
+
+The server marks accounts verified with the Firebase Admin SDK.
+- **On Cloud Run:** it uses the service's account automatically. Give that account the Firebase Authentication Admin role once:
+
+```bash
+gcloud projects add-iam-policy-binding ewb---generator \
+  --member=serviceAccount:396238368123-compute@developer.gserviceaccount.com \
+  --role=roles/firebaseauth.admin
+```
+
+- **On your PC:** go to Firebase console → Project settings → Service accounts → **Generate new private key**. Save the file outside the project folder and set `GOOGLE_APPLICATION_CREDENTIALS` in `.env` to its path. Never commit this file.
+
+### Web version only (Part 3)
+
+Go to **Project settings → General → Your apps → Add app → Web (`</>`)**, then copy `apiKey`, `authDomain`, `projectId`, `storageBucket`, `messagingSenderId` and `appId`.
 
 ## Part 2: API server on Cloud Run
 
@@ -117,7 +154,7 @@ All settings:
 Set them on Cloud Run. Run this as one line; `^@^` makes `@` the separator so the JSON's commas are kept:
 
 ```bash
-gcloud run services update ewb-api --region asia-south1 --update-env-vars "^@^EWB_PROVIDER=gstinapi@GSTINAPI_KEY=gak_xxx@GSTINAPI_TEST_MODE=true@EWB_CREDENTIALS_SECRET=$(openssl rand -hex 32)@WALLET_ADMIN_TOKEN=$(openssl rand -hex 24)@WALLET_START_CREDITS=0@RAZORPAY_KEY_ID=rzp_live_xxx@RAZORPAY_KEY_SECRET=xxx@RAZORPAY_WEBHOOK_SECRET=xxx"
+gcloud run services update ewb-api --region asia-south1 --update-env-vars "^@^EWB_PROVIDER=gstinapi@GSTINAPI_KEY=gak_xxx@GSTINAPI_TEST_MODE=true@EWB_CREDENTIALS_SECRET=$(openssl rand -hex 32)@WALLET_ADMIN_TOKEN=$(openssl rand -hex 24)@WALLET_START_CREDITS=0@RAZORPAY_KEY_ID=rzp_live_xxx@RAZORPAY_KEY_SECRET=xxx@RAZORPAY_WEBHOOK_SECRET=xxx@RESEND_API_KEY=re_xxx@EMAIL_FROM=E-Way Easy <verify@yourdomain.com>@OTP_PEPPER=$(openssl rand -hex 32)"
 ```
 
 ### gstinapi.in endpoints the server uses
@@ -268,6 +305,9 @@ Alternative (USB): download the `.apk` to your PC, enable **Developer options �
 | App says "offline / service unreachable" | `EXPO_PUBLIC_API_URL` is wrong or not `https://`. Rebuild after fixing `eas.json`. |
 | "Sign in again to continue" on every screen | `FIREBASE_PROJECT_ID` on Cloud Run doesn't match the app's project ID. |
 | Sign-in screen shows **Open local preview** | Native Firebase is missing: you are in Expo Go (Google sign-in needs a real build), or `GOOGLE_SERVICES_JSON` was not available to the build. |
+| "Email verification is not set up on the server yet" | Set `RESEND_API_KEY`, `EMAIL_FROM`, `OTP_PEPPER` and `FIREBASE_PROJECT_ID` on the server. |
+| "Could not start verification right now" / "Could not activate your account" | The server cannot reach Firebase Admin. Grant `roles/firebaseauth.admin` (Part 1), or set `GOOGLE_APPLICATION_CREDENTIALS` locally. |
+| Code email never arrives | Check Resend → Emails for bounces, that the sender domain is verified, and the spam folder. |
 | "Online payment is not set up yet" in the Wallet | Add `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` to the server (Part 2b). |
 | Paid, but credits did not arrive | Check the Razorpay webhook URL, its secret, and the event `payment_link.paid`. Re-opening the Wallet also re-checks pending payments. |
 | "Google sign-in is not set up yet. Enable Google…" | The `google-services.json` used for the build has no Web client ID. Enable the Google provider, download the file again, update `GOOGLE_SERVICES_JSON`, and rebuild. |

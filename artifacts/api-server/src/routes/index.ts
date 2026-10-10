@@ -5,6 +5,7 @@ import gstRouter from "./gst";
 import pdfRouter from "./pdf";
 import accountRouter from "./account";
 import gstinRouter from "./gstin";
+import authRouter from "./auth";
 import { adminRouter, walletRouter } from "./wallet";
 import { requireWorkspace } from "../lib/auth";
 
@@ -12,6 +13,7 @@ const router: IRouter = Router();
 
 router.use(healthRouter);
 router.use(adminRouter);
+router.use(authRouter);
 router.use(requireWorkspace);
 router.use(ewbRouter);
 router.use(gstRouter);

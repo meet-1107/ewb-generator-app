@@ -8,6 +8,7 @@ import React, {
   type ReactNode,
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { api } from '@/lib/api';
 import { authClient } from '@/lib/auth-client';
 import type { AuthUser } from '@/lib/auth-types';
 
@@ -26,7 +27,10 @@ type AuthValue = {
   /** Signs in or creates an account with Google. Resolves false if the user cancels. */
   signInWithGoogle: () => Promise<boolean>;
   signIn: (email: string, password: string) => Promise<void>;
-  createAccount: (name: string, email: string, password: string) => Promise<void>;
+  /** Request a 6-digit code for registration. Resolves the resend cooldown in seconds. */
+  sendRegistrationCode: (email: string) => Promise<number>;
+  /** Verify the code, create + activate the account, then sign out (the user logs in next). */
+  completeRegistration: (email: string, password: string, code: string) => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   signOut: () => Promise<void>;
 };
@@ -86,8 +90,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       signIn(email, password) {
         return requireClient().signInWithEmail(email.trim(), password);
       },
-      createAccount(name, email, password) {
-        return requireClient().createEmailAccount(name.trim(), email.trim(), password);
+      async sendRegistrationCode(email) {
+        requireClient();
+        const { cooldownSeconds } = await api.sendEmailOtp(email.trim());
+        return cooldownSeconds;
+      },
+      async completeRegistration(email, password, code) {
+        const client = requireClient();
+        const { grant } = await api.verifyEmailOtp(email.trim(), code.trim());
+        await client.createVerifiedAccount(email.trim().toLowerCase(), password, grant);
       },
       resetPassword(email) {
         return requireClient().resetPassword(email.trim());

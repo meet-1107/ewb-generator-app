@@ -24,7 +24,7 @@ Firebase Auth + Cloud Run + optional Firebase Hosting, and building/installing t
 
 | Area | Screens |
 |---|---|
-| Access | Continue with Google, email sign in / create account / reset (Firebase), preview mode, business setup with GSTIN check-digit validation |
+| Access | Email + password with 6-digit email OTP at sign-up (server-enforced), Continue with Google, password reset, session restore, preview mode, business setup with GSTIN check-digit validation |
 | Dashboard | Month sales, 4 tappable stats (invoices, generated, active, expired), GST strip, expiring-soon alert, recent activity, pull to refresh, offline banner |
 | Invoices | Search, status chips, date filters, 6 layout templates, long-press duplicate/delete, pagination |
 | Invoice editor | Collapsible sections, saved buyer/product/transporter pickers, auto CGST+SGST vs IGST, qty × rate, inline errors, autosave, sticky total, locked after EWB |
@@ -33,6 +33,10 @@ Firebase Auth + Cloud Run + optional Firebase Hosting, and building/installing t
 | GST status | Per GSTIN + period, refresh (rate-limited), return details with ARN |
 | Wallet | Credit balance, bills generated, cost per action, history; credits held and refunded on failure |
 | Account | Profile, multiple GST registrations, saved details, plan & usage, appearance (system/light/dark), cloud sync, data export, deletion request, sign out |
+
+## Tests
+
+`pnpm --filter @workspace/api-server test` runs the server unit tests: email OTP, registration grants, and the document store.
 
 ## Architecture
 
@@ -53,6 +57,7 @@ Firebase Auth + Cloud Run + optional Firebase Hosting, and building/installing t
 | `PLANS_JSON`, `BILLING_PROVIDER` | server | Real plans / billing (defaults are labelled samples) |
 | `DATA_DIR`, `PORT` | server | Storage directory, port (dev default 5000) |
 | `GSTINAPI_KEY`, `EWB_PROVIDER=gstinapi`, `GSTINAPI_TEST_MODE` | server | GSTIN verification (cached once per GSTIN) and e-way bills via gstinapi.in. Local: `artifacts/api-server/.env` (see `.env.example`) |
+| `RESEND_API_KEY`, `EMAIL_FROM`, `OTP_PEPPER`, `GOOGLE_APPLICATION_CREDENTIALS` (local only) | server | Email OTP registration: code delivery, code hashing, Firebase Admin to activate verified accounts |
 | `EWB_CREDENTIALS_SECRET` | server | Encrypts each GSTIN's e-way bill portal password |
 | `WALLET_START_CREDITS`, `CREDIT_COSTS_JSON`, `WALLET_ADMIN_TOKEN` | server | Credit wallet: starting credits (default 0), cost per action (generate 10; Part-B, consolidate, cancel, extend 5), admin top-up |
 | `CREDIT_PRICE_PAISE`, `CREDIT_PACKS_JSON`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | server | Buying credits (1 credit = ₹1) through Razorpay payment links |

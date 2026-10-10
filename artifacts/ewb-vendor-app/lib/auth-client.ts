@@ -7,15 +7,14 @@ import {
   GoogleAuthProvider,
   initializeAuth,
   onAuthStateChanged,
-  sendEmailVerification,
   sendPasswordResetEmail,
   signInWithEmailAndPassword,
   signInWithPopup,
   signOut,
-  updateProfile,
   type Auth,
 } from 'firebase/auth';
-import { toAuthUser, type AuthClient } from '@/lib/auth-types';
+import { api } from '@/lib/api';
+import { completeRegistration, PendingRegistrationError, toAuthUser, type AuthClient } from '@/lib/auth-types';
 
 /**
  * Web: Firebase JS SDK, configured from EXPO_PUBLIC_FIREBASE_* at build time.
@@ -67,14 +66,22 @@ function load(): AuthClient | null {
       const result = await signInWithEmailAndPassword(auth, email, password);
       if (!result.user.emailVerified) {
         await signOut(auth);
-        throw new Error('Check your inbox and verify your email before signing in.');
+        throw new PendingRegistrationError();
       }
     },
-    async createEmailAccount(name, email, password) {
-      const result = await createUserWithEmailAndPassword(auth, email, password);
-      await updateProfile(result.user, { displayName: name });
-      await sendEmailVerification(result.user);
-      await signOut(auth);
+    async createVerifiedAccount(email, password, grant) {
+      await completeRegistration({
+        create: async () => {
+          const { user } = await createUserWithEmailAndPassword(auth, email, password);
+          return { getIdToken: () => getIdToken(user) };
+        },
+        signIn: async () => {
+          const { user } = await signInWithEmailAndPassword(auth, email, password);
+          return { getIdToken: () => getIdToken(user) };
+        },
+        finalize: (idToken) => api.finalizeRegistration(grant, idToken),
+        signOut: () => signOut(auth),
+      });
     },
     async resetPassword(email) {
       await sendPasswordResetEmail(auth, email);

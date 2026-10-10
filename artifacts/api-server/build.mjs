@@ -66,7 +66,7 @@ async function buildAll() {
       "@google-cloud/*",
       "@google/*",
       "googleapis",
-      "firebase-admin",
+      // firebase-admin (app + auth only) is bundled: the runtime image has no node_modules.
       "@parcel/watcher",
       "@sentry/profiling-node",
       "@tree-sitter/*",

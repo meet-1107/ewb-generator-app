@@ -7,6 +7,7 @@ import { ewbProvider } from "../providers/ewb-provider";
 import { gstProvider } from "../providers/gst-provider";
 import { authMode } from "../lib/auth";
 import { gstinApiConfigured } from "../lib/gstinapi";
+import { mailer } from "../lib/mailer";
 import { creditCosts } from "../lib/wallet";
 
 const router: IRouter = Router();
@@ -19,6 +20,7 @@ router.get("/config", (_req, res) => {
     billingMode,
     pdfParser: "heuristic-1",
     gstinVerification: gstinApiConfigured,
+    emailOtp: authMode === "firebase" && (process.env["OTP_PEPPER"] ?? "").length >= 16 && mailer.configured,
     ewbCredentialsRequired: Boolean(ewbProvider?.needsCredentials),
     creditCosts,
   });

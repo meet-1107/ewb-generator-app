@@ -6,13 +6,15 @@ import type { NextFunction, Request, Response } from "express";
  *
  * - When FIREBASE_PROJECT_ID is set, a Firebase ID token is required
  *   (`Authorization: Bearer <token>`) and verified against Google's public
- *   certificates. The workspace is the verified uid.
+ *   certificates. The workspace is the verified uid. Accounts whose email is
+ *   not verified (a registration that never finished the email OTP) are
+ *   refused, whatever the app claims.
  * - Otherwise the server runs in sandbox mode and accepts an opaque
  *   `x-workspace-id` generated on the device. Sandbox mode must never be used
  *   with real business data.
  */
 
-const projectId = process.env["FIREBASE_PROJECT_ID"];
+export const projectId = process.env["FIREBASE_PROJECT_ID"];
 const CERT_URL = "https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com";
 let certs: { keys: Record<string, string>; expiresAt: number } | null = null;
 
@@ -41,7 +43,10 @@ function decodeSegment(segment: string) {
   return JSON.parse(Buffer.from(segment, "base64url").toString("utf8")) as Record<string, unknown>;
 }
 
-async function verifyFirebaseToken(token: string) {
+export type IdTokenClaims = { uid: string; email: string | null; emailVerified: boolean; provider: string | null };
+
+/** Verifies a Firebase ID token's signature, audience, issuer and lifetime. */
+export async function verifyIdToken(token: string): Promise<IdTokenClaims> {
   const [headerPart, payloadPart, signaturePart] = token.split(".");
   if (!headerPart || !payloadPart || !signaturePart) throw new Error("Malformed token");
   const header = decodeSegment(headerPart);
@@ -67,7 +72,13 @@ async function verifyFirebaseToken(token: string) {
   ) {
     throw new Error("Token rejected");
   }
-  return payload["sub"];
+  const firebase = (payload["firebase"] ?? {}) as Record<string, unknown>;
+  return {
+    uid: payload["sub"],
+    email: typeof payload["email"] === "string" ? payload["email"].toLowerCase() : null,
+    emailVerified: payload["email_verified"] === true,
+    provider: typeof firebase["sign_in_provider"] === "string" ? firebase["sign_in_provider"] : null,
+  };
 }
 
 export async function requireWorkspace(req: Request, res: Response, next: NextFunction) {
@@ -75,9 +86,12 @@ export async function requireWorkspace(req: Request, res: Response, next: NextFu
     if (projectId) {
       const token = /^Bearer (.+)$/.exec(req.header("authorization") ?? "")?.[1];
       if (!token) return res.status(401).json({ error: "auth_required", message: "Sign in again to continue." });
-      const uid = await verifyFirebaseToken(token);
-      req.workspaceId = uid.replace(/[^A-Za-z0-9_-]/g, "");
-      req.actor = uid;
+      const claims = await verifyIdToken(token);
+      if (!claims.emailVerified) {
+        return res.status(403).json({ error: "email_unverified", message: "Verify your email to finish creating your account." });
+      }
+      req.workspaceId = claims.uid.replace(/[^A-Za-z0-9_-]/g, "");
+      req.actor = claims.uid;
     } else {
       const id = req.header("x-workspace-id") ?? "";
       if (!/^[A-Za-z0-9_-]{12,64}$/.test(id)) {

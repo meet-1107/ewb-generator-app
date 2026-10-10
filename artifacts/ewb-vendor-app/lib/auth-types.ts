@@ -9,7 +9,7 @@ export type AuthUser = {
   uid: string;
   email: string | null;
   displayName: string | null;
-  /** Email confirmed by Google or by the verification link. */
+  /** Email confirmed by Google, or by the email OTP at registration (set by the server). */
   verified: boolean;
   getIdToken: () => Promise<string>;
 };
@@ -18,8 +18,14 @@ export type AuthClient = {
   onChange: (listener: (user: AuthUser | null) => void) => () => void;
   /** Resolves false when the user closes the Google account picker. */
   signInWithGoogle: () => Promise<boolean>;
+  /** Throws code `auth/pending-registration` for an account whose email OTP was never completed. */
   signInWithEmail: (email: string, password: string) => Promise<void>;
-  createEmailAccount: (name: string, email: string, password: string) => Promise<void>;
+  /**
+   * After the email OTP: creates the Firebase account (or signs in to an
+   * unfinished one), lets the server activate it with the single-use grant,
+   * then signs out so the user logs in normally.
+   */
+  createVerifiedAccount: (email: string, password: string, grant: string) => Promise<void>;
   resetPassword: (email: string) => Promise<void>;
   signOut: () => Promise<void>;
 };
@@ -41,6 +47,40 @@ export function toAuthUser(user: FirebaseLikeUser, getIdToken: () => Promise<str
   };
 }
 
+/** Firebase calls shared by both platforms' createVerifiedAccount. */
+export async function completeRegistration(steps: {
+  create: () => Promise<{ getIdToken: () => Promise<string> }>;
+  signIn: () => Promise<{ getIdToken: () => Promise<string> }>;
+  finalize: (idToken: string) => Promise<unknown>;
+  signOut: () => Promise<void>;
+}) {
+  let user;
+  try {
+    user = await steps.create();
+  } catch (error) {
+    const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : '';
+    if (code !== 'auth/email-already-in-use') throw error;
+    // An earlier, unfinished registration: continue it with the same password.
+    try {
+      user = await steps.signIn();
+    } catch {
+      throw Object.assign(new Error('An account already uses this email. Sign in, or use “Forgot password?”.'), { code: 'auth/email-already-in-use' });
+    }
+  }
+  try {
+    await steps.finalize(await user.getIdToken());
+  } finally {
+    await steps.signOut().catch(() => undefined);
+  }
+}
+
+export class PendingRegistrationError extends Error {
+  readonly code = 'auth/pending-registration';
+  constructor() {
+    super('Finish creating your account: verify your email with the 6-digit code.');
+  }
+}
+
 const MESSAGES: Record<string, string> = {
   'auth/too-many-requests': 'Too many attempts. Wait a few minutes and try again.',
   'auth/operation-not-allowed': 'This sign-in method is not enabled in Firebase yet.',
@@ -57,6 +97,8 @@ const MESSAGES: Record<string, string> = {
   'auth/invalid-email': 'That email address is not valid.',
   'auth/email-already-in-use': 'An account already uses this email. Sign in instead.',
   'auth/weak-password': 'Choose a stronger password (at least 8 characters).',
+  'auth/password-does-not-meet-requirements': 'Choose a stronger password: at least 8 characters with letters and numbers.',
+  'auth/pending-registration': 'Finish creating your account: verify your email with the 6-digit code.',
   'auth/user-disabled': 'This account has been disabled. Contact support.',
 };
 

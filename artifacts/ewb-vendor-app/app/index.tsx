@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Image,
   Keyboard,
@@ -15,11 +15,13 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { Button, Card, Field, Notice, TextBlock } from '@/components/AppUI';
 import { useAuth } from '@/state/auth';
+import { ApiError } from '@/lib/api';
 import { authErrorMessage } from '@/lib/auth-types';
 import { useAppStore } from '@/state/app-store';
 import { useColors } from '@/hooks/useColors';
 
-type Mode = 'sign-in' | 'create' | 'reset';
+type Mode = 'sign-in' | 'register' | 'code' | 'reset';
+const CODE_PATTERN = /^\d{6}$/;
 
 export default function LoginScreen() {
   const colors = useColors();
@@ -27,13 +29,17 @@ export default function LoginScreen() {
   const auth = useAuth();
   const store = useAppStore();
   const [mode, setMode] = useState<Mode>('sign-in');
-  const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [code, setCode] = useState('');
+  const [resendIn, setResendIn] = useState(0);
   const [busy, setBusy] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState<{ text: string; tone: 'info' | 'warning' | 'success' } | null>(null);
+  const [pending, setPending] = useState(false);
+  const submitting = useRef(false);
 
+  // Session-aware routing: a restored or new verified session goes straight to the app.
   useEffect(() => {
     if (auth.isLoading || !store.isHydrated) return;
     if (auth.signedIn) {
@@ -41,53 +47,103 @@ export default function LoginScreen() {
     }
   }, [auth.isLoading, auth.signedIn, store.business, store.isHydrated]);
 
-  // Google sign-in also creates the account on first use; the effect above then navigates.
+  useEffect(() => {
+    if (resendIn <= 0) return;
+    const timer = setTimeout(() => setResendIn((value) => value - 1), 1000);
+    return () => clearTimeout(timer);
+  }, [resendIn]);
+
+  const go = (next: Mode, note: typeof message = null) => {
+    setMode(next);
+    setMessage(note);
+    setPending(false);
+    if (next !== 'code') setCode('');
+  };
+  const warn = (text: string) => setMessage({ text, tone: 'warning' });
+
+  /** Runs one auth step at a time; extra taps while it runs are ignored. */
+  const run = async (step: () => Promise<void>) => {
+    if (submitting.current) return;
+    submitting.current = true;
+    Keyboard.dismiss();
+    setBusy(true);
+    setMessage(null);
+    try {
+      await step();
+    } catch (error) {
+      const codeName = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : '';
+      if (codeName === 'auth/pending-registration') setPending(true);
+      warn(error instanceof ApiError ? error.message : authErrorMessage(error));
+    } finally {
+      submitting.current = false;
+      setBusy(false);
+    }
+  };
+
+  // Google sign-in also creates the account on first use; the routing effect then opens the app.
   const continueWithGoogle = async () => {
     Keyboard.dismiss();
     setGoogleBusy(true);
-    setMessage('');
+    setMessage(null);
     try {
       await auth.signInWithGoogle();
     } catch (error) {
-      setMessage(authErrorMessage(error));
+      warn(authErrorMessage(error));
     } finally {
       setGoogleBusy(false);
     }
   };
 
-  const submit = async () => {
-    Keyboard.dismiss();
-    if (!email.trim()) return setMessage('Enter the email address for your account.');
-    if (mode === 'create' && !name.trim()) return setMessage('Enter your name to create an account.');
-    if (mode !== 'reset' && password.length < 8) return setMessage('Enter a password with at least 8 characters.');
-    setBusy(true);
-    setMessage('');
-    try {
-      if (mode === 'sign-in') {
-        await auth.signIn(email, password);
-      } else if (mode === 'create') {
-        await auth.createAccount(name, email, password);
-        setMessage('Account created. Check your inbox to verify your email, then sign in.');
-        setMode('sign-in');
-        setPassword('');
-      } else {
-        await auth.resetPassword(email);
-        setMessage('If an account exists for this email, a password reset link has been sent.');
-        setMode('sign-in');
-      }
-    } catch (error) {
-      setMessage(authErrorMessage(error));
-    } finally {
-      setBusy(false);
-    }
+  const validEmail = () => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim());
+
+  const signIn = () => run(async () => {
+    if (!validEmail()) return warn('Enter the email address for your account.');
+    if (!password) return warn('Enter your password.');
+    await auth.signIn(email, password);
+  });
+
+  const sendCode = (resend = false) => run(async () => {
+    if (!validEmail()) return warn('Enter a valid email address.');
+    if (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) return warn('Use at least 8 characters with letters and numbers.');
+    const cooldown = await auth.sendRegistrationCode(email);
+    setResendIn(cooldown);
+    setMode('code');
+    setMessage({ text: resend ? 'A new code is on its way.' : `We sent a 6-digit code to ${email.trim().toLowerCase()}. It expires in 5 minutes.`, tone: 'info' });
+  });
+
+  const verifyCode = () => run(async () => {
+    if (!CODE_PATTERN.test(code.trim())) return warn('Enter the 6-digit code from the email.');
+    await auth.completeRegistration(email, password, code);
+    setPassword('');
+    go('sign-in', { text: 'Account created and email verified. Sign in to continue.', tone: 'success' });
+  });
+
+  const reset = () => run(async () => {
+    if (!validEmail()) return warn('Enter the email address for your account.');
+    await auth.resetPassword(email);
+    go('sign-in', { text: 'If an account exists for this email, a password reset link has been sent.', tone: 'info' });
+  });
+
+  // An unfinished registration (signed in but unverified) is sent back to the code step.
+  const finishPending = async () => {
+    if (auth.user?.email) setEmail(auth.user.email);
+    await auth.signOut().catch(() => undefined);
+    go('register', { text: 'Enter your password again and we will email you a new code.', tone: 'info' });
   };
 
   if (auth.isLoading) {
     return <View style={[styles.loading, { backgroundColor: colors.background }]}><ActivityIndicator color={colors.primary} /></View>;
   }
 
-  const title = mode === 'create' ? 'Create your account' : mode === 'reset' ? 'Reset your password' : 'Welcome back';
-  const action = mode === 'create' ? 'Create account' : mode === 'reset' ? 'Send reset link' : 'Sign in';
+  const title = { 'sign-in': 'Welcome back', register: 'Create your account', code: 'Verify your email', reset: 'Reset your password' }[mode];
+  const subtitle = {
+    'sign-in': 'Sign in to continue to your account',
+    register: "Enter your email and choose a password. We'll email you a 6-digit code.",
+    code: `Enter the code we sent to ${email.trim().toLowerCase()}`,
+    reset: "We'll email you a link to choose a new password.",
+  }[mode];
+  const action = { 'sign-in': 'Sign in', register: 'Send verification code', code: 'Verify and create account', reset: 'Send reset link' }[mode];
+  const primary = () => (mode === 'sign-in' ? signIn() : mode === 'register' ? sendCode() : mode === 'code' ? verifyCode() : reset());
   const localPreview = !auth.firebaseConfigured && __DEV__;
 
   return (
@@ -125,8 +181,8 @@ export default function LoginScreen() {
           ))}
         </View>
       </LinearGradient>
-      {auth.user && !auth.user.verified ? (
-        <Notice title="Verify your email" body="Open the verification email we sent before signing in." />
+      {auth.user && !auth.user.verified && mode === 'sign-in' ? (
+        <Notice title="Finish creating your account" body="This account's email is not verified yet." action="Verify email" onAction={() => void finishPending()} tone="warning" />
       ) : null}
       {localPreview ? (
         <>
@@ -153,36 +209,57 @@ export default function LoginScreen() {
         <Card style={styles.authCard}>
           {!auth.firebaseConfigured ? <Notice title="Firebase setup required" body="Connect this app to your Firebase project to enable sign-in." tone="warning" /> : null}
           <View style={styles.authTitle}>
-            <TextBlock size={19} weight="bold">{title}</TextBlock>
-            <TextBlock size={12} color={colors.mutedForeground}>{mode === 'reset' ? "We'll email you a link to choose a new password." : 'Use your Google account, or your email and password.'}</TextBlock>
+            <TextBlock size={20} weight="bold">{title}</TextBlock>
+            <TextBlock size={12} color={colors.mutedForeground}>{subtitle}</TextBlock>
           </View>
-          {mode !== 'reset' ? (
+          <View style={styles.form}>
+            {mode === 'code' ? (
+              <Field label="6-digit code" value={code} onChangeText={(value) => setCode(value.replace(/\D/g, '').slice(0, 6))} placeholder="••••••" keyboardType="number-pad" maxLength={6} autoComplete="one-time-code" textContentType="oneTimeCode" returnKeyType="done" onSubmitEditing={() => void verifyCode()} testID="auth-code" />
+            ) : (
+              <Field label="Email address" value={email} onChangeText={setEmail} placeholder="you@business.com" keyboardType="email-address" autoCapitalize="none" autoComplete="email" textContentType="emailAddress" returnKeyType="next" testID="auth-email" />
+            )}
+            {mode === 'sign-in' || mode === 'register' ? (
+              <Field label="Password" value={password} onChangeText={setPassword} placeholder={mode === 'register' ? 'At least 8 characters, letters and numbers' : 'Your password'} secureTextEntry autoComplete={mode === 'register' ? 'new-password' : 'current-password'} textContentType={mode === 'register' ? 'newPassword' : 'password'} returnKeyType="go" onSubmitEditing={() => void (mode === 'sign-in' ? signIn() : sendCode())} testID="auth-password" />
+            ) : null}
+            {mode === 'sign-in' ? (
+              <Pressable onPress={() => go('reset')} style={styles.forgot} accessibilityRole="link"><TextBlock size={13} color={colors.primary} weight="semibold">Forgot password?</TextBlock></Pressable>
+            ) : null}
+            {message ? <Notice title={message.tone === 'success' ? 'Done' : message.tone === 'warning' ? 'Check this' : 'Next step'} body={message.text} tone={message.tone} action={pending ? 'Verify email' : undefined} onAction={pending ? () => go('register', { text: 'Enter your password and we will email you a new code.', tone: 'info' }) : undefined} /> : null}
+            <Button title={action} onPress={() => void primary()} loading={busy} disabled={!auth.firebaseConfigured || googleBusy} testID="auth-submit" />
+            {mode === 'code' ? (
+              <View style={styles.links}>
+                <Pressable onPress={() => go('register')}><TextBlock color={colors.primary} weight="semibold">Change email</TextBlock></Pressable>
+                <Pressable onPress={() => void sendCode(true)} disabled={busy || resendIn > 0} testID="auth-resend">
+                  <TextBlock color={resendIn > 0 ? colors.mutedForeground : colors.primary} weight="semibold">{resendIn > 0 ? `Resend code in ${resendIn}s` : 'Resend code'}</TextBlock>
+                </Pressable>
+              </View>
+            ) : null}
+          </View>
+          {mode === 'sign-in' || mode === 'register' ? (
             <>
-              <Button title="Continue with Google" icon="log-in" variant="outline" onPress={() => void continueWithGoogle()} loading={googleBusy} disabled={!auth.firebaseConfigured || busy} testID="auth-google" />
               <View style={styles.divider}>
                 <View style={[styles.rule, { backgroundColor: colors.border }]} />
-                <TextBlock size={11} weight="medium" color={colors.mutedForeground}>OR WITH EMAIL</TextBlock>
+                <TextBlock size={11} weight="medium" color={colors.mutedForeground}>or</TextBlock>
                 <View style={[styles.rule, { backgroundColor: colors.border }]} />
               </View>
+              <Button title="Continue with Google" icon="log-in" variant="outline" onPress={() => void continueWithGoogle()} loading={googleBusy} disabled={!auth.firebaseConfigured || busy} testID="auth-google" />
             </>
           ) : null}
-          <View style={styles.form}>
-            {mode === 'create' ? <Field label="Your name" value={name} onChangeText={setName} placeholder="Full name" autoCapitalize="words" /> : null}
-            <Field label="Email address" value={email} onChangeText={setEmail} placeholder="you@business.com" keyboardType="email-address" autoCapitalize="none" />
-            {mode !== 'reset' ? <Field label="Password" value={password} onChangeText={setPassword} placeholder="At least 8 characters" secureTextEntry /> : null}
-            {message ? <Notice title="A note about your request" body={message} tone={/could not|enter|incorrect|not valid|too many|offline|not enabled|not set up|blocked|missing|disabled|already/i.test(message) ? 'warning' : 'info'} /> : null}
-            <Button title={action} onPress={submit} loading={busy} disabled={!auth.firebaseConfigured || googleBusy} testID="auth-submit" />
-          </View>
-          {auth.firebaseConfigured ? <View style={styles.links}>
-            {mode === 'sign-in' ? (
-              <>
-                <Pressable onPress={() => { setMode('reset'); setMessage(''); }}><TextBlock color={colors.primary} weight="semibold">Forgot password?</TextBlock></Pressable>
-                <Pressable onPress={() => { setMode('create'); setMessage(''); }}><TextBlock color={colors.primary} weight="semibold">Create account</TextBlock></Pressable>
-              </>
-            ) : (
-              <Pressable onPress={() => { setMode('sign-in'); setMessage(''); }}><TextBlock color={colors.primary} weight="semibold">Back to sign in</TextBlock></Pressable>
-            )}
-          </View> : null}
+          {auth.firebaseConfigured ? (
+            <View style={styles.switchRow}>
+              {mode === 'sign-in' ? (
+                <>
+                  <TextBlock size={13} color={colors.mutedForeground}>Don't have an account?</TextBlock>
+                  <Pressable onPress={() => go('register')} testID="auth-create"><TextBlock size={13} color={colors.primary} weight="semibold">Create account</TextBlock></Pressable>
+                </>
+              ) : (
+                <>
+                  <TextBlock size={13} color={colors.mutedForeground}>{mode === 'reset' ? 'Remembered it?' : 'Already have an account?'}</TextBlock>
+                  <Pressable onPress={() => go('sign-in')} testID="auth-back"><TextBlock size={13} color={colors.primary} weight="semibold">Sign in</TextBlock></Pressable>
+                </>
+              )}
+            </View>
+          ) : null}
         </Card>
       )}
       <View style={styles.footer}>
@@ -217,5 +294,7 @@ const styles = StyleSheet.create({
   links: { flexDirection: 'row', justifyContent: 'space-between', minHeight: 24 },
   divider: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   rule: { flex: 1, height: StyleSheet.hairlineWidth },
+  forgot: { alignSelf: 'flex-end', marginTop: -4 },
+  switchRow: { flexDirection: 'row', justifyContent: 'center', gap: 6, flexWrap: 'wrap' },
   footer: { marginTop: 'auto', paddingTop: 4 },
 });

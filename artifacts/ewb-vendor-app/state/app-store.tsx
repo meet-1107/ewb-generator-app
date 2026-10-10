@@ -133,7 +133,9 @@ function linkInvoices(invoices: Invoice[], ewbs: EwbRecord[]) {
 
 export function AppStoreProvider({ children }: { children: ReactNode }) {
   const { user, previewMode } = useAuth();
-  const scope = previewMode ? 'preview' : user?.uid ?? null;
+  // A pending registration (email not yet verified) never sees workspace data.
+  const verifiedUser = user?.verified ? user : null;
+  const scope = previewMode ? 'preview' : verifiedUser?.uid ?? null;
   const [data, setData] = useState<Persisted>(EMPTY);
   const [hydratedScope, setHydratedScope] = useState<string | null>(null);
   const [storageError, setStorageError] = useState('');
@@ -158,15 +160,15 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       return;
     }
     (async () => {
-      const id = user ? user.uid : await deviceWorkspaceId();
+      const id = verifiedUser ? verifiedUser.uid : await deviceWorkspaceId();
       if (!active) return;
       setWorkspaceId(id);
-      setApiIdentity({ workspaceId: id, getToken: user ? () => user.getIdToken() : null });
+      setApiIdentity({ workspaceId: id, getToken: verifiedUser ? () => verifiedUser.getIdToken() : null });
     })().catch(() => setStorageError('Could not prepare this device workspace.'));
     return () => {
       active = false;
     };
-  }, [scope, user]);
+  }, [scope, verifiedUser]);
 
   // Hydrate from device storage whenever the signed-in scope changes.
   useEffect(() => {

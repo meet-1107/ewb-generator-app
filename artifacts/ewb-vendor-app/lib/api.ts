@@ -42,11 +42,12 @@ export function setApiIdentity(next: Identity) {
   identity = next;
 }
 
-async function request<T>(path: string, init: { method?: string; body?: unknown; timeoutMs?: number } = {}): Promise<T> {
+async function request<T>(path: string, init: { method?: string; body?: unknown; timeoutMs?: number; idToken?: string } = {}): Promise<T> {
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (init.body !== undefined) headers['Content-Type'] = 'application/json';
   if (identity.workspaceId) headers['x-workspace-id'] = identity.workspaceId;
-  const token = identity.getToken ? await identity.getToken().catch(() => null) : null;
+  // An explicit token (registration finalize) wins over the signed-in session's token.
+  const token = init.idToken ?? (identity.getToken ? await identity.getToken().catch(() => null) : null);
   if (token) headers.Authorization = `Bearer ${token}`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), init.timeoutMs ?? 20_000);
@@ -87,6 +88,7 @@ export type ServiceConfig = {
   billingMode: string;
   pdfParser: string;
   gstinVerification?: boolean;
+  emailOtp?: boolean;
   ewbCredentialsRequired?: boolean;
   creditCosts?: CreditCosts;
 };
@@ -173,6 +175,9 @@ export const api = {
   deleteEwbCredential: (gstin: string) => request<{ ok: true }>(`/ewb-credentials/${encodeURIComponent(gstin)}`, { method: 'DELETE' }),
   verifyGstin: (gstin: string) => request<{ gstin: VerifiedGstin; cached: boolean }>('/gstin/verify', { body: { gstin }, timeoutMs: 30_000 }),
   wallet: () => request<WalletSummary>('/wallet'),
+  sendEmailOtp: (email: string) => request<{ message: string; cooldownSeconds: number }>('/auth/email-otp/send', { body: { email }, timeoutMs: 30_000 }),
+  verifyEmailOtp: (email: string, code: string) => request<{ grant: string; expiresInSeconds: number }>('/auth/email-otp/verify', { body: { email, code } }),
+  finalizeRegistration: (grant: string, idToken: string) => request<{ activated: boolean }>('/auth/register/finalize', { body: { grant }, idToken, timeoutMs: 30_000 }),
   buyCredits: (credits: number) => request<{ purchase: CreditPurchase; balance?: number }>('/wallet/purchase', { body: { credits }, timeoutMs: 30_000 }),
   purchaseStatus: (id: string) => request<{ purchase: CreditPurchase; balance: number }>(`/wallet/purchase/${encodeURIComponent(id)}`, { timeoutMs: 30_000 }),
   gstStatus: (gstin: string, period: string) => request<{ snapshots: GstSnapshot[]; provider: ProviderInfo }>(`/gst/status?gstin=${encodeURIComponent(gstin)}&period=${encodeURIComponent(period)}`),

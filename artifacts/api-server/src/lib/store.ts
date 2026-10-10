@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { EwbInput } from "./validation";
 
@@ -222,6 +222,43 @@ export function withWorkspace<T>(id: string, fn: (workspace: Workspace) => T | P
   });
   queues.set(id, next);
   return next;
+}
+
+const docQueues = new Map<string, Promise<unknown>>();
+
+/**
+ * Small shared documents (e.g. OTP challenges) with exclusive access per
+ * document: `fn` gets the current value (or null) and returns the next one,
+ * `null` to delete it. Serialized per document so concurrent requests cannot
+ * double-spend a code or grant. Use Redis when running several instances.
+ */
+export function withDoc<T, R>(collection: string, id: string, fn: (current: T | null) => { next: T | null; result: R } | Promise<{ next: T | null; result: R }>): Promise<R> {
+  const file = path.join(dataDir, collection, `${id}.json`);
+  const previous = docQueues.get(file) ?? Promise.resolve();
+  const run = previous.catch(() => undefined).then(async () => {
+    let current: T | null = null;
+    try {
+      current = JSON.parse(await readFile(file, "utf8")) as T;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    const { next, result } = await fn(current);
+    if (next === null) {
+      if (current !== null) await rm(file, { force: true });
+    } else {
+      await mkdir(path.dirname(file), { recursive: true });
+      const temp = `${file}.${process.pid}.tmp`;
+      await writeFile(temp, JSON.stringify(next));
+      await rename(temp, file);
+    }
+    return result;
+  });
+  // The queue entry swallows the outcome; the caller still receives `run`'s rejection.
+  const settled: Promise<void> = run.then(() => undefined, () => undefined).finally(() => {
+    if (docQueues.get(file) === settled) docQueues.delete(file);
+  });
+  docQueues.set(file, settled);
+  return run;
 }
 
 /** Shared (not per-workspace) JSON documents, e.g. the verified-GSTIN registry. */
