@@ -92,7 +92,7 @@ export default function EwbRegisterScreen() {
     <Page contentStyle={styles.page} onRefresh={refresh} refreshing={refreshing}>
       <Heading eyebrow="Movement" title="E-way bills" subtitle={store.ewbsFetchedAt ? `${ewbs.length} bills · updated ${relativeTime(store.ewbsFetchedAt)}` : 'Bills confirmed by your provider appear here.'} />
       <ActionGrid>
-        <ActionCard icon="plus-circle" title="New e-way bill" detail={`From an invoice · ${credits.costs.generate} credits`} onPress={() => router.push('/invoice/new')} testID="quick-new" />
+        <ActionCard icon="plus-circle" title="New e-way bill" detail={`From an invoice · ${credits.costs.generate} credits`} onPress={() => router.push({ pathname: '/(tabs)/invoices', params: { for: 'ewb' } })} testID="quick-new" />
         <ActionCard icon="truck" title="Part-B" detail={`Update vehicle · ${credits.costs.part_b} credits`} disabled={!partBBills.length} onPress={() => setPicker('part_b')} testID="quick-partb" />
         <ActionCard icon="layers" title="Consolidate" detail={`Several bills, one vehicle · ${credits.costs.consolidate} credits`} disabled={!partBBills.length} onPress={() => router.push('/ewb/consolidate')} testID="open-consolidate" />
         <ActionCard icon="x-octagon" title="Cancel" danger detail={`Within 24 h · ${credits.costs.cancel} credits`} disabled={!cancellable.length} onPress={() => setPicker('cancel')} testID="quick-cancel" />

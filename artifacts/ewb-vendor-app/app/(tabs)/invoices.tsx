@@ -5,7 +5,7 @@ import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { type Invoice } from '@/lib/domain';
 import { useAppStore, useScopedRecords } from '@/state/app-store';
-import { Button, Card, Chip, ChipRow, EmptyState, Field, Heading, IconButton, Page, SearchBar, SectionTitle, Sheet, TextBlock } from '@/components/AppUI';
+import { Button, Card, Chip, ChipRow, EmptyState, Field, Heading, IconButton, Notice, Page, SearchBar, SectionTitle, Sheet, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
 import InvoiceCard from '@/components/InvoiceCard';
 
@@ -13,7 +13,8 @@ const PAGE = 20;
 
 export default function InvoicesScreen() {
   const colors = useColors();
-  const params = useLocalSearchParams<{ period?: string; from?: string; to?: string }>();
+  // for=ewb: opened from "New e-way bill" on the E-way bills tab.
+  const params = useLocalSearchParams<{ period?: string; from?: string; to?: string; for?: string }>();
   const store = useAppStore();
   const dialog = useDialog();
   const { invoices } = useScopedRecords();
@@ -80,6 +81,17 @@ export default function InvoicesScreen() {
         subtitle={`${invoices.length} invoice${invoices.length === 1 ? '' : 's'}${pending ? ` · ${pending} e-way bill${pending === 1 ? '' : 's'} pending` : ''}`}
         right={<IconButton icon="upload" accessibilityLabel="Import invoice PDF" onPress={() => router.push('/invoice/import')} filled />}
       />
+      {params.for === 'ewb' ? (
+        <Notice
+          tone="info"
+          title="Choose the invoice for the e-way bill"
+          body={pending
+            ? `${pending} invoice${pending === 1 ? ' has' : 's have'} an e-way bill pending: open one and tap Generate EWB. For a new sale, create an invoice or import its PDF.`
+            : 'Open a saved invoice and tap Generate EWB, or create a new invoice / import its PDF first.'}
+          action="Got it"
+          onAction={() => router.setParams({ for: undefined })}
+        />
+      ) : null}
       <SearchBar
         value={search}
         onChangeText={(value) => { setSearch(value); setLimit(PAGE); }}
