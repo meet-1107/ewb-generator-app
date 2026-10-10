@@ -3,9 +3,9 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
-import { type Invoice } from '@/lib/domain';
+import { formatInr, invoiceTotals, type Invoice } from '@/lib/domain';
 import { useAppStore, useScopedRecords } from '@/state/app-store';
-import { Button, Card, Chip, ChipRow, EmptyState, Field, Heading, Notice, Page, SearchBar, SectionTitle, Sheet, TextBlock } from '@/components/AppUI';
+import { Button, Card, Chip, ChipRow, EmptyState, Field, Heading, Notice, Page, SearchBar, SectionTitle, SelectSheet, Sheet, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
 import InvoiceCard from '@/components/InvoiceCard';
 import { AccountButton } from '@/components/Brand';
@@ -22,6 +22,9 @@ export default function InvoicesScreen() {
   const [search, setSearch] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
+  /** Buyer name to show invoices for ('' = every party). */
+  const [party, setParty] = useState('');
+  const [partyPicker, setPartyPicker] = useState(false);
   const [sheet, setSheet] = useState(false);
   const [limit, setLimit] = useState(PAGE);
 
@@ -38,17 +41,33 @@ export default function InvoicesScreen() {
 
   const pending = useMemo(() => invoices.filter((item) => item.status === 'ready' && item.ewbRequired !== false).length, [invoices]);
 
+  // Parties that have invoices, with how many each.
+  const parties = useMemo(() => {
+    const byName = new Map<string, { name: string; count: number; total: number }>();
+    for (const invoice of invoices) {
+      const name = invoice.buyerName.trim();
+      if (!name) continue;
+      const key = name.toLowerCase();
+      const entry = byName.get(key) ?? { name, count: 0, total: 0 };
+      entry.count += 1;
+      entry.total += invoiceTotals(invoice).total;
+      byName.set(key, entry);
+    }
+    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
+  }, [invoices]);
+
   // Every invoice, newest first.
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
     return [...invoices].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).filter((invoice) => {
+      if (party && invoice.buyerName.trim().toLowerCase() !== party.toLowerCase()) return false;
       if (dateFrom && invoice.invoiceDate < dateFrom) return false;
       if (dateTo && invoice.invoiceDate > dateTo) return false;
       if (!query) return true;
       return [invoice.invoiceNumber, invoice.buyerName, invoice.buyerGstin, invoice.sellerGstin, invoice.invoiceDate, invoice.ewbNumber ?? '']
         .some((value) => value.toLowerCase().includes(query));
     });
-  }, [invoices, search, dateFrom, dateTo]);
+  }, [invoices, search, dateFrom, dateTo, party]);
 
   const dateFiltered = Boolean(dateFrom || dateTo);
 
@@ -104,10 +123,19 @@ export default function InvoicesScreen() {
           </Pressable>
         }
       />
-      {dateFiltered ? (
-        <ChipRow>
-          <Chip label={`${dateFrom || '…'} → ${dateTo || '…'}`} icon="x" selected={false} onPress={() => { setDateFrom(''); setDateTo(''); }} />
-        </ChipRow>
+      <ChipRow>
+        <Chip label={party || 'Filter by party'} icon="users" selected={Boolean(party)} onPress={() => setPartyPicker(true)} />
+        {party ? <Chip label="All parties" icon="x" selected={false} onPress={() => setParty('')} /> : null}
+        {dateFiltered ? <Chip label={`${dateFrom || '…'} → ${dateTo || '…'}`} icon="x" selected={false} onPress={() => { setDateFrom(''); setDateTo(''); }} /> : null}
+      </ChipRow>
+      {party ? (
+        <Card style={styles.partySummary}>
+          <View style={{ flex: 1, gap: 2 }}>
+            <TextBlock size={15} weight="bold" numberOfLines={1}>{party}</TextBlock>
+            <TextBlock size={12} color={colors.mutedForeground}>{filtered.length} invoice{filtered.length === 1 ? '' : 's'} · {formatInr(filtered.reduce((sum, invoice) => sum + invoiceTotals(invoice).total, 0))}</TextBlock>
+          </View>
+          <Button title="Change" size="sm" variant="outline" onPress={() => setPartyPicker(true)} />
+        </Card>
       ) : null}
 
       <View style={styles.quickActions}>
@@ -115,7 +143,7 @@ export default function InvoicesScreen() {
         <Button title="Import PDF" icon="upload" variant="outline" onPress={() => router.push('/invoice/import')} style={{ flex: 1 }} />
       </View>
 
-      <SectionTitle title={search || dateFiltered ? 'Matching invoices' : 'All invoices'} count={filtered.length} />
+      <SectionTitle title={party ? `Invoices of ${party}` : search || dateFiltered || party ? 'Matching invoices' : 'All invoices'} count={filtered.length} />
       {filtered.length ? (
         <View style={{ gap: 10 }}>
           {filtered.slice(0, limit).map((invoice) => (
@@ -127,15 +155,25 @@ export default function InvoicesScreen() {
       ) : (
         <Card>
           <EmptyState
-            icon={search || dateFiltered ? 'search' : 'file-plus'}
-            title={search || dateFiltered ? 'No matching invoices' : 'No invoices yet'}
-            body={search || dateFiltered ? 'Try a different search or clear the filters.' : 'Create your first invoice, or import a PDF to start without typing.'}
-            action={search || dateFiltered
-              ? <Button title="Clear filters" variant="outline" onPress={() => { setSearch(''); setDateFrom(''); setDateTo(''); }} />
+            icon={search || dateFiltered || party ? 'search' : 'file-plus'}
+            title={search || dateFiltered || party ? 'No matching invoices' : 'No invoices yet'}
+            body={search || dateFiltered || party ? 'Try a different search or clear the filters.' : 'Create your first invoice, or import a PDF to start without typing.'}
+            action={search || dateFiltered || party
+              ? <Button title="Clear filters" variant="outline" onPress={() => { setSearch(''); setDateFrom(''); setDateTo(''); setParty(''); }} />
               : <Button title="Create invoice" icon="plus" onPress={() => router.push({ pathname: '/invoice/new', params: { templateId: store.business?.defaultTemplateId ?? 'classic' } })} />}
           />
         </Card>
       )}
+
+      <SelectSheet
+        visible={partyPicker}
+        onClose={() => setPartyPicker(false)}
+        title="Invoices of which party?"
+        value={party}
+        emptyText="No invoices with a buyer yet."
+        options={[{ value: '', label: 'All parties', detail: `${invoices.length} invoices` }, ...parties.map((item) => ({ value: item.name, label: item.name, detail: `${item.count} invoice${item.count === 1 ? '' : 's'} · ${formatInr(item.total)}` }))]}
+        onSelect={(value) => { setParty(value); setLimit(PAGE); setPartyPicker(false); }}
+      />
 
       <Sheet visible={sheet} onClose={() => setSheet(false)} title="Filter invoices" subtitle="Filters apply together with search."
         footer={<View style={{ flexDirection: 'row', gap: 10 }}>
@@ -169,4 +207,5 @@ export default function InvoicesScreen() {
 const styles = StyleSheet.create({
   page: { gap: 16 },
   quickActions: { flexDirection: 'row', gap: 10 },
+  partySummary: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14 },
 });

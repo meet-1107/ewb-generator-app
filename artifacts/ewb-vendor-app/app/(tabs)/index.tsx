@@ -5,7 +5,6 @@ import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useColors } from '@/hooks/useColors';
 import { useAppStore, useScopedRecords } from '@/state/app-store';
-import { useAuth } from '@/state/auth';
 import {
   ewbStatusMeta,
   financialYear,
@@ -24,7 +23,6 @@ import { AccountButton, BrandBar } from '@/components/Brand';
 export default function DashboardScreen() {
   const colors = useColors();
   const store = useAppStore();
-  const auth = useAuth();
   const { invoices, ewbs } = useScopedRecords();
   const [refreshing, setRefreshing] = useState(false);
   const [gstinPicker, setGstinPicker] = useState(false);
@@ -70,9 +68,6 @@ export default function DashboardScreen() {
     return items.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 6);
   }, [invoices, ewbs]);
 
-  const hour = Number(new Date().toLocaleString('en-IN', { hour: 'numeric', hour12: false, timeZone: 'Asia/Kolkata' }));
-  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-  const firstName = (auth.user?.displayName ?? '').split(' ')[0];
   const sandbox = store.config?.ewbProvider?.sandbox;
   const lastSync = store.lastSyncAt ?? store.ewbsFetchedAt;
 
@@ -98,7 +93,6 @@ export default function DashboardScreen() {
       </View>
 
       <View style={{ gap: 3 }}>
-        <TextBlock size={24} weight="bold" style={{ letterSpacing: -0.7 }}>{greeting}{firstName ? `, ${firstName}` : ''}</TextBlock>
         <View style={styles.syncRow}>
           <View style={[styles.syncDot, { backgroundColor: store.online === false ? colors.warmAccent : store.syncState === 'error' ? colors.destructive : colors.primary }]} />
           <TextBlock size={12} color={colors.mutedForeground}>
@@ -107,31 +101,23 @@ export default function DashboardScreen() {
         </View>
       </View>
 
-      <LinearGradient colors={[colors.heroEnd, colors.heroStart]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero} testID="dashboard-wallet">
-        <View style={styles.heroDecor} />
-        <View style={styles.walletTop}>
-          <View style={{ flex: 1, gap: 6 }}>
-            <TextBlock size={11} weight="bold" color={colors.heroMuted} style={{ letterSpacing: 1 }}>WALLET · CREDITS</TextBlock>
-            <TextBlock size={32} weight="bold" color={colors.heroText} style={{ letterSpacing: -1 }}>{wallet ? `${wallet.balance}` : '—'}<TextBlock size={16} weight="semibold" color={colors.heroMuted}> credits</TextBlock></TextBlock>
-          </View>
-          <View style={[styles.walletIcon, { backgroundColor: 'rgba(255, 253, 246, 0.1)' }]}><Feather name="credit-card" size={20} color={colors.heroText} /></View>
-        </View>
-        <TextBlock size={12} color={lowCredits ? colors.warmAccent : colors.heroMuted}>
-          {wallet
-            ? `${lowCredits ? 'Low balance · ' : ''}E-way bill ${wallet.costs.generate} · Part-B ${wallet.costs.part_b} · Cancel ${wallet.costs.cancel} credits · 1 credit = ₹1`
-            : store.online === false ? 'Offline · balance shows when you are back online' : 'Loading your balance…'}
-        </TextBlock>
-        <View style={styles.heroActions}>
-          <Pressable onPress={() => router.push('/wallet')} style={({ pressed }) => [styles.heroButton, { backgroundColor: colors.warmAccent, opacity: pressed ? 0.85 : 1 }]} accessibilityRole="button" testID="dashboard-add-credits">
-            <Feather name="plus" size={17} color="#1b1206" />
-            <TextBlock size={14} weight="bold" color="#1b1206">Add credits</TextBlock>
-          </Pressable>
-          <Pressable onPress={() => router.push('/wallet')} style={({ pressed }) => [styles.heroButton, styles.heroGhost, { opacity: pressed ? 0.8 : 1 }]} accessibilityRole="button" testID="dashboard-wallet-history">
-            <Feather name="list" size={16} color={colors.heroText} />
-            <TextBlock size={14} weight="semibold" color={colors.heroText}>Wallet history</TextBlock>
-          </Pressable>
-        </View>
-      </LinearGradient>
+      <Pressable onPress={() => router.push('/wallet')} accessibilityRole="button" accessibilityLabel={`Wallet: ${wallet ? `${wallet.balance} credits` : 'balance loading'}. Open wallet`} testID="dashboard-wallet">
+        {({ pressed }) => (
+          <LinearGradient colors={[colors.heroEnd, colors.heroStart]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={[styles.wallet, pressed && { opacity: 0.92 }]}>
+            <View style={[styles.walletIcon, { backgroundColor: 'rgba(255, 253, 246, 0.12)' }]}><Feather name="credit-card" size={19} color={colors.warmAccent} /></View>
+            <View style={{ flex: 1, gap: 1 }}>
+              <TextBlock size={11} weight="bold" color={colors.heroMuted} style={{ letterSpacing: 1 }}>WALLET</TextBlock>
+              <TextBlock size={20} weight="bold" color={colors.heroText} numberOfLines={1}>
+                {wallet ? wallet.balance : '—'}<TextBlock size={13} weight="semibold" color={lowCredits ? colors.warmAccent : colors.heroMuted}> credits{lowCredits ? ' · low' : ''}</TextBlock>
+              </TextBlock>
+            </View>
+            <Pressable onPress={() => router.push('/wallet')} style={({ pressed: on }) => [styles.walletButton, { backgroundColor: colors.warmAccent, opacity: on ? 0.85 : 1 }]} accessibilityRole="button" testID="dashboard-add-credits">
+              <Feather name="plus" size={15} color="#1b1206" />
+              <TextBlock size={13} weight="bold" color="#1b1206">Add credits</TextBlock>
+            </Pressable>
+          </LinearGradient>
+        )}
+      </Pressable>
 
       <LinearGradient colors={[colors.heroStart, colors.heroEnd]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
         <View style={styles.heroDecor} />
@@ -223,8 +209,9 @@ const styles = StyleSheet.create({
   syncDot: { width: 7, height: 7, borderRadius: 4 },
   hero: { borderRadius: 24, padding: 18, gap: 6, overflow: 'hidden' },
   heroDecor: { position: 'absolute', right: -50, top: -60, width: 180, height: 180, borderRadius: 90, borderWidth: 26, borderColor: 'rgba(247, 236, 216, 0.06)' },
-  walletTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
-  walletIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
+  wallet: { borderRadius: 20, paddingVertical: 12, paddingHorizontal: 14, flexDirection: 'row', alignItems: 'center', gap: 12 },
+  walletIcon: { width: 40, height: 40, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
+  walletButton: { minHeight: 38, borderRadius: 12, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 5 },
   heroActions: { flexDirection: 'row', gap: 9, marginTop: 12 },
   heroButton: { flex: 1, minHeight: 48, borderRadius: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingHorizontal: 10 },
   heroGhost: { borderWidth: 1, borderColor: 'rgba(255, 253, 246, 0.28)', backgroundColor: 'rgba(255, 253, 246, 0.06)' },

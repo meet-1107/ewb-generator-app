@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
-import { Linking, Share, StyleSheet, View } from 'react-native';
+import { Linking, Pressable, Share, StyleSheet, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import Constants from 'expo-constants';
 import { useColors } from '@/hooks/useColors';
@@ -7,7 +8,7 @@ import { useAppStore } from '@/state/app-store';
 import { useAuth } from '@/state/auth';
 import { setThemePreference, useThemePreference, type ThemePreference } from '@/state/theme';
 import { defaultBank, gstinProblem, relativeTime, STATES, stateForGstin, templates, type Business } from '@/lib/domain';
-import { Button, Card, Divider, Field, Heading, IconButton, ListRow, Notice, Page, Segmented, SectionTitle, SelectField, Sheet, StatusPill, TextBlock } from '@/components/AppUI';
+import { Button, Card, Divider, Field, Heading, ListRow, Notice, Page, Segmented, SectionTitle, SelectField, Sheet, StatusPill, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
 import { BrandBar } from '@/components/Brand';
 import { SUPPORT_EMAIL } from '@/lib/api';
@@ -159,11 +160,18 @@ export default function AccountScreen() {
 
   return (
     <Page contentStyle={styles.page} tab={false}>
+      <Pressable
+        onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)'))}
+        accessibilityRole="button"
+        accessibilityLabel="Back"
+        testID="account-back"
+        style={({ pressed }) => [styles.back, { backgroundColor: colors.accent, opacity: pressed ? 0.8 : 1 }]}
+      >
+        <Feather name="arrow-left" size={18} color={colors.primary} />
+        <TextBlock size={14} weight="bold" color={colors.primary}>Back</TextBlock>
+      </Pressable>
       <BrandBar />
-      <View style={styles.titleRow}>
-        <IconButton icon="arrow-left" accessibilityLabel="Go back" onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)'))} />
-        <View style={{ flex: 1 }}><Heading eyebrow="Settings" title="Account" /></View>
-      </View>
+      <Heading eyebrow="Settings" title="Account" />
 
       <Card style={styles.profile}>
         <View style={[styles.avatar, { backgroundColor: colors.primary }]}><TextBlock size={18} weight="bold" color={colors.primaryForeground}>{initials || 'U'}</TextBlock></View>
@@ -283,7 +291,7 @@ export default function AccountScreen() {
 }
 
 const styles = StyleSheet.create({
-  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  back: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, borderRadius: 99, paddingHorizontal: 14, paddingVertical: 8, marginBottom: -4 },
   page: { gap: 14 },
   profile: { flexDirection: 'row', alignItems: 'center', gap: 13 },
   avatar: { width: 50, height: 50, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },

@@ -41,6 +41,8 @@ import {
   TRANSPORT_MODES,
   VEHICLE_PATTERN,
   invoiceBank,
+  businessNameOf,
+  transporterIdProblem,
   hasDispatch,
   hasShipTo,
   routePins,
@@ -72,7 +74,7 @@ export default function InvoiceEditorScreen() {
   const [previewing, setPreviewing] = useState(false);
   /** Preview of a saved invoice opened from the list: no Save (it is saved), only Generate EWB. */
   const [viewOnly, setViewOnly] = useState(false);
-  const [newTransporter, setNewTransporter] = useState<{ name: string; transporterId: string; vehicleNumber: string } | null>(null);
+  const [newTransporter, setNewTransporter] = useState<{ name: string; transporterId: string; phone: string; vehicleNumber: string } | null>(null);
   const [transporterError, setTransporterError] = useState<Record<string, string>>({});
   const [showDispatch, setShowDispatch] = useState(false);
   const [showShipTo, setShowShipTo] = useState(false);
@@ -85,6 +87,8 @@ export default function InvoiceEditorScreen() {
     loaded.current = true;
     if (found) {
       setInvoice(found);
+      // Opening an invoice never re-checks the GSTIN it already has.
+      autoVerifiedBuyer.current = found.buyerGstin;
       setShowDispatch(hasDispatch(found));
       setShowShipTo(hasShipTo(found));
       if (view && found.status !== 'draft') {
@@ -206,12 +210,23 @@ export default function InvoiceEditorScreen() {
 
   const { verify, verifying } = useGstinVerify();
   const canVerify = store.config?.gstinVerification !== false;
+  // A full, valid buyer GSTIN fills the buyer's details straight away (once per GSTIN).
+  const autoVerifiedBuyer = useRef('');
+  const buyerGstinNow = invoice?.buyerGstin ?? '';
+  useEffect(() => {
+    if (!canVerify || locked || buyerGstinNow.length !== 15 || gstinProblem(buyerGstinNow) || autoVerifiedBuyer.current === buyerGstinNow) return;
+    autoVerifiedBuyer.current = buyerGstinNow;
+    if (store.parties.some((party) => party.gstin === buyerGstinNow && party.verified)) return;
+    void verifyBuyer();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [buyerGstinNow, canVerify]);
+
   const verifyBuyer = async () => {
     if (!invoice) return;
     const details = await verify(invoice.buyerGstin);
     if (!details) return;
     patch({
-      buyerName: details.legalName || invoice.buyerName,
+      buyerName: businessNameOf(details) || invoice.buyerName,
       buyerAddress: details.address || invoice.buyerAddress,
       buyerPincode: details.pincode || invoice.buyerPincode,
       buyerState: details.state || invoice.buyerState,
@@ -220,7 +235,7 @@ export default function InvoiceEditorScreen() {
     const existing = store.parties.find((party) => party.gstin === details.gstin);
     await store.saveParty({
       ...(existing ?? { phone: '' }),
-      name: details.legalName,
+      name: businessNameOf(details),
       gstin: details.gstin,
       address: details.address,
       state: details.state,
@@ -264,11 +279,13 @@ export default function InvoiceEditorScreen() {
     if (!newTransporter) return;
     const problems: Record<string, string> = {};
     if (!newTransporter.name.trim()) problems.name = 'Transporter name is required.';
-    if (newTransporter.transporterId && gstinProblem(newTransporter.transporterId)) problems.transporterId = gstinProblem(newTransporter.transporterId)!;
+    const idProblem = transporterIdProblem(newTransporter.transporterId);
+    if (idProblem) problems.transporterId = idProblem;
+    if (newTransporter.phone && !/^[6-9]\d{9}$/.test(newTransporter.phone.replace(/\D/g, '').slice(-10))) problems.phone = 'Enter a 10-digit mobile number.';
     if (newTransporter.vehicleNumber && !VEHICLE_PATTERN.test(newTransporter.vehicleNumber)) problems.vehicleNumber = 'Format looks wrong (e.g. MH12AB1234).';
     setTransporterError(problems);
     if (Object.keys(problems).length) return;
-    await store.saveTransporter({ name: newTransporter.name.trim(), transporterId: newTransporter.transporterId, vehicleNumber: newTransporter.vehicleNumber } as never);
+    await store.saveTransporter({ name: newTransporter.name.trim(), transporterId: newTransporter.transporterId, phone: newTransporter.phone.trim() || undefined, vehicleNumber: newTransporter.vehicleNumber } as never);
     patch({ transporterName: newTransporter.name.trim(), transporterId: newTransporter.transporterId, ...(newTransporter.vehicleNumber && !invoice?.vehicleNumber ? { vehicleNumber: newTransporter.vehicleNumber } : {}) });
     setNewTransporter(null);
     dialog.toast('Transporter saved', 'success');
@@ -601,7 +618,7 @@ export default function InvoiceEditorScreen() {
         onClose={() => setPicker(null)}
         title="Choose transporter"
         emptyText="No transporters saved yet."
-        footer={<Button title="Add new transporter" icon="plus" variant="outline" onPress={() => { setPicker(null); setTransporterError({}); setTimeout(() => setNewTransporter({ name: '', transporterId: '', vehicleNumber: '' }), 250); }} testID="new-transporter" />}
+        footer={<Button title="Add new transporter" icon="plus" variant="outline" onPress={() => { setPicker(null); setTransporterError({}); setTimeout(() => setNewTransporter({ name: '', transporterId: '', phone: '', vehicleNumber: '' }), 250); }} testID="new-transporter" />}
         options={store.transporters.map((item) => ({ value: item.id, label: item.name, detail: [item.transporterId, item.vehicleNumber].filter(Boolean).join(' · ') || 'No ID saved' }))}
         onSelect={(transporterId) => {
           const item = store.transporters.find((candidate) => candidate.id === transporterId);
@@ -618,7 +635,8 @@ export default function InvoiceEditorScreen() {
         {newTransporter ? (
           <View style={{ paddingHorizontal: 18, gap: 12 }}>
             <Field label="Transporter name" required value={newTransporter.name} onChangeText={(name) => setNewTransporter({ ...newTransporter, name })} error={transporterError.name} autoCapitalize="words" testID="transporter-name" />
-            <Field label="Transporter ID / GSTIN" value={newTransporter.transporterId} onChangeText={(value) => setNewTransporter({ ...newTransporter, transporterId: value.toUpperCase().replace(/\s/g, '') })} error={transporterError.transporterId} autoCapitalize="characters" maxLength={15} placeholder="Optional" testID="transporter-id" />
+            <Field label="Transporter ID / GSTIN" required value={newTransporter.transporterId} onChangeText={(value) => setNewTransporter({ ...newTransporter, transporterId: value.toUpperCase().replace(/\s/g, '') })} error={transporterError.transporterId} autoCapitalize="characters" maxLength={15} placeholder="15-character ID" testID="transporter-id" />
+            <Field label="Phone number" value={newTransporter.phone} onChangeText={(phone) => setNewTransporter({ ...newTransporter, phone })} error={transporterError.phone} keyboardType="phone-pad" maxLength={14} placeholder="Optional" />
             <Field label="Usual vehicle number" value={newTransporter.vehicleNumber} onChangeText={(value) => setNewTransporter({ ...newTransporter, vehicleNumber: value.toUpperCase().replace(/[\s-]/g, '') })} error={transporterError.vehicleNumber} autoCapitalize="characters" maxLength={12} placeholder="Optional" />
           </View>
         ) : null}

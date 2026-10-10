@@ -166,7 +166,20 @@ export function defaultBank(business: Business | null | undefined) {
 export type GstinVerification = { legalName: string; tradeName: string; status: string; verifiedAt: string; city?: string };
 export type Party = { id: string; name: string; gstin: string; address: string; state: string; pincode: string; phone: string; updatedAt: string; verified?: GstinVerification };
 export type Product = { id: string; name: string; hsn: string; unit: string; taxRate: number; unitPricePaise: number; updatedAt: string };
-export type Transporter = { id: string; name: string; transporterId: string; vehicleNumber: string; updatedAt: string };
+export type Transporter = { id: string; name: string; transporterId: string; vehicleNumber: string; phone?: string; updatedAt: string };
+
+/** Transporter ID: a GSTIN or a 15-character TRANSIN from the e-way bill portal. */
+export function transporterIdProblem(raw: string) {
+  const id = raw.trim().toUpperCase();
+  if (!id) return 'Transporter ID is required.';
+  if (!/^\d{2}[A-Z0-9]{13}$/.test(id)) return 'Transporter ID is 15 characters (GSTIN or TRANSIN).';
+  return null;
+}
+
+/** The name to use for a verified GSTIN: the business (trade) name, not the owner's legal name. */
+export function businessNameOf(details: { legalName: string; tradeName: string }) {
+  return details.tradeName.trim() || details.legalName.trim();
+}
 
 export type EwbStatus = 'active' | 'expired' | 'cancelled' | 'part_b_pending';
 export type EwbRecord = {

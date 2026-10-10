@@ -1,11 +1,12 @@
-import React, { useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Card, Divider, EmptyState, Field, IconButton, ListRow, MoneyField, ScreenHeader, SearchBar, SelectField, Sheet, StatusPill, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
 import { useColors } from '@/hooks/useColors';
 import { useGstinVerify } from '@/hooks/useGstinVerify';
-import { formatInr, GST_RATES, gstinProblem, STATES, stateForGstin, UNITS, VEHICLE_PATTERN, type Party, type Product, type Transporter } from '@/lib/domain';
+import { businessNameOf, formatInr, GST_RATES, gstinProblem, STATES, stateForGstin, transporterIdProblem, UNITS, VEHICLE_PATTERN, type Party, type Product, type Transporter } from '@/lib/domain';
 import { useAppStore } from '@/state/app-store';
 import { AccountButton } from '@/components/Brand';
 
@@ -39,7 +40,7 @@ export default function SavedDetails({ kind, tab = false }: { kind: Kind; tab?: 
     if (!details) return;
     setDraft((current) => current ? {
       ...current,
-      name: details.legalName || current.name,
+      name: businessNameOf(details) || current.name,
       address: details.address || current.address,
       pincode: details.pincode || current.pincode,
       state: details.state || current.state,
@@ -47,6 +48,16 @@ export default function SavedDetails({ kind, tab = false }: { kind: Kind; tab?: 
     } : current);
     setErrors({});
   };
+
+  // A full, valid GSTIN fills the buyer's details straight away (once per GSTIN).
+  const autoVerified = useRef('');
+  const draftGstin = kind === 'parties' && draft ? String(draft.gstin ?? '') : '';
+  useEffect(() => {
+    if (!canVerify || draftGstin.length !== 15 || gstinProblem(draftGstin) || autoVerified.current === draftGstin || draft?.verified) return;
+    autoVerified.current = draftGstin;
+    void verifyParty();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftGstin, canVerify]);
 
   const items = (kind === 'parties' ? store.parties : kind === 'products' ? store.products : store.transporters) as (Party | Product | Transporter)[];
   const filtered = useMemo(() => {
@@ -56,7 +67,7 @@ export default function SavedDetails({ kind, tab = false }: { kind: Kind; tab?: 
 
   const blank = (): Draft => (kind === 'parties'
     ? { name: '', gstin: '', address: '', state: '', pincode: '', phone: '' }
-    : kind === 'products' ? { name: '', hsn: '', unit: 'Nos', taxRate: 18, unitPricePaise: 0 } : { name: '', transporterId: '', vehicleNumber: '' });
+    : kind === 'products' ? { name: '', hsn: '', unit: 'Nos', taxRate: 18, unitPricePaise: 0 } : { name: '', transporterId: '', phone: '', vehicleNumber: '' });
 
   const save = async () => {
     if (!draft) return;
@@ -69,7 +80,9 @@ export default function SavedDetails({ kind, tab = false }: { kind: Kind; tab?: 
     }
     if (kind === 'products' && !/^\d{4}(\d{2})?(\d{2})?$/.test(String(draft.hsn))) next.hsn = 'HSN/SAC must be 4, 6 or 8 digits.';
     if (kind === 'transporters') {
-      if (draft.transporterId && gstinProblem(String(draft.transporterId))) next.transporterId = gstinProblem(String(draft.transporterId))!;
+      const idProblem = transporterIdProblem(String(draft.transporterId ?? ''));
+      if (idProblem) next.transporterId = idProblem;
+      if (draft.phone && !/^[6-9]\d{9}$/.test(String(draft.phone).replace(/\D/g, '').slice(-10))) next.phone = 'Enter a 10-digit mobile number.';
       if (draft.vehicleNumber && !VEHICLE_PATTERN.test(String(draft.vehicleNumber))) next.vehicleNumber = 'Format looks wrong (e.g. MH12AB1234).';
     }
     setErrors(next);
@@ -98,8 +111,8 @@ export default function SavedDetails({ kind, tab = false }: { kind: Kind; tab?: 
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <ScreenHeader back={!tab} title={meta.title} subtitle={`${items.length} saved · synced to your account`} right={<View style={{ flexDirection: 'row', gap: 4 }}><IconButton icon="plus" accessibilityLabel={`Add ${meta.singular}`} onPress={() => { setErrors({}); setDraft(blank()); }} />{tab ? <AccountButton /> : null}</View>} />
-      <ScrollView contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + (tab ? 110 : 30) }]} keyboardShouldPersistTaps="handled">
+      <ScreenHeader back={!tab} title={meta.title} subtitle={`${items.length} saved · synced to your account`} right={tab ? <AccountButton /> : undefined} />
+      <ScrollView contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + (tab ? 180 : 100) }]} keyboardShouldPersistTaps="handled">
         {items.length > 5 ? <SearchBar value={query} onChangeText={setQuery} placeholder={`Search ${meta.title.toLowerCase()}`} /> : null}
         {filtered.length ? (
           <Card style={{ padding: 0, gap: 0 }}>
@@ -109,7 +122,7 @@ export default function SavedDetails({ kind, tab = false }: { kind: Kind; tab?: 
                 <ListRow
                   icon={meta.icon}
                   title={item.name}
-                  detail={'gstin' in item ? `${item.gstin || 'Unregistered'} · ${item.state || 'State not set'}` : 'hsn' in item ? `HSN ${item.hsn} · ${item.taxRate}% · ${item.unitPricePaise ? `${formatInr(item.unitPricePaise)}/${item.unit}` : item.unit}` : [item.transporterId, item.vehicleNumber].filter(Boolean).join(' · ') || 'No ID saved'}
+                  detail={'gstin' in item ? `${item.gstin || 'Unregistered'} · ${item.state || 'State not set'}` : 'hsn' in item ? `HSN ${item.hsn} · ${item.taxRate}% · ${item.unitPricePaise ? `${formatInr(item.unitPricePaise)}/${item.unit}` : item.unit}` : [item.transporterId, (item as Transporter).phone, item.vehicleNumber].filter(Boolean).join(' · ') || 'No ID saved'}
                   onPress={() => { setErrors({}); setDraft({ ...(item as unknown as Draft) }); }}
                 />
               </React.Fragment>
@@ -120,6 +133,17 @@ export default function SavedDetails({ kind, tab = false }: { kind: Kind; tab?: 
         )}
       </ScrollView>
 
+      <Pressable
+        onPress={() => { autoVerified.current = ''; setErrors({}); setDraft(blank()); }}
+        accessibilityRole="button"
+        accessibilityLabel={`Add ${meta.singular}`}
+        testID={`add-${meta.singular}`}
+        style={({ pressed }) => [styles.fab, { bottom: insets.bottom + (tab ? 84 : 24), backgroundColor: colors.primary, opacity: pressed ? 0.9 : 1, transform: [{ scale: pressed ? 0.97 : 1 }] }]}
+      >
+        <Feather name="plus" size={20} color={colors.primaryForeground} />
+        <TextBlock size={15} weight="bold" color={colors.primaryForeground}>Add {meta.singular}</TextBlock>
+      </Pressable>
+
       <Sheet visible={Boolean(draft)} onClose={() => setDraft(null)} title={draft?.id ? `Edit ${meta.singular}` : `New ${meta.singular}`}
         footer={<View style={{ flexDirection: 'row', gap: 10 }}>
           {draft?.id ? <Button title="Delete" variant="danger" onPress={() => void remove()} style={{ flex: 1 }} /> : null}
@@ -127,16 +151,20 @@ export default function SavedDetails({ kind, tab = false }: { kind: Kind; tab?: 
         </View>}>
         {draft ? (
           <View style={{ paddingHorizontal: 18, gap: 12 }}>
-            <Field label="Name" required {...field('name')} autoCapitalize="words" />
+            {kind !== 'parties' ? <Field label={kind === 'transporters' ? 'Transporter name' : 'Product name'} required {...field('name')} autoCapitalize="words" testID="saved-name" /> : null}
             {kind === 'parties' ? <>
               <Field label="GSTIN" {...field('gstin')} onChangeText={(value) => {
                 const gstin = value.toUpperCase().replace(/\s/g, '');
                 setDraft((current) => current ? { ...current, gstin, ...(gstin !== current.gstin ? { verified: undefined } : {}), ...(gstin.length === 15 && !gstinProblem(gstin) ? { state: stateForGstin(gstin)?.name ?? current.state } : {}) } : current);
-              }} autoCapitalize="characters" maxLength={15} placeholder="Leave empty if unregistered"
-                right={canVerify && String(draft.gstin ?? '').length === 15 && !draft.verified ? <Button title="Verify" size="sm" variant="outline" onPress={() => void verifyParty()} loading={verifying} testID="party-verify" /> : undefined} />
+              }} autoCapitalize="characters" maxLength={15} placeholder="Enter GSTIN to fill the details"
+                hint={canVerify ? (verifying ? 'Getting details from the GST network…' : 'Name, address, state and PIN fill in automatically. Leave empty if unregistered.') : 'Leave empty if unregistered.'}
+                right={canVerify && String(draft.gstin ?? '').length === 15 && !draft.verified ? <Button title="Verify" size="sm" variant="outline" onPress={() => void verifyParty()} loading={verifying} testID="party-verify" /> : undefined} testID="party-gstin" />
               {draft.verified ? (
                 <StatusPill label={`Verified · ${(draft.verified as { status: string }).status}`} tone={(draft.verified as { status: string }).status.toLowerCase() === 'active' ? 'green' : 'red'} icon="check" />
               ) : null}
+              <Field label="Business name" required {...field('name')} autoCapitalize="words" testID="saved-name" />
+              {draft.verified && (draft.verified as { legalName: string }).legalName && (draft.verified as { legalName: string }).legalName !== draft.name
+                ? <TextBlock size={11} color={colors.mutedForeground}>Owner / legal name: {(draft.verified as { legalName: string }).legalName}</TextBlock> : null}
               <Field label="Address" {...field('address')} multiline />
               <View style={{ flexDirection: 'row', gap: 10 }}>
                 <View style={{ flex: 1.3 }}><SelectField label="State" value={String(draft.state ?? '')} placeholder="Choose" options={stateOptions} onSelect={(value) => setDraft({ ...draft, state: value })} /></View>
@@ -153,7 +181,8 @@ export default function SavedDetails({ kind, tab = false }: { kind: Kind; tab?: 
               <SelectField label="GST rate" value={String(draft.taxRate)} placeholder="18%" options={GST_RATES.map((rate) => ({ value: String(rate), label: `${rate}%` }))} onSelect={(value) => setDraft({ ...draft, taxRate: Number(value) })} />
             </> : null}
             {kind === 'transporters' ? <>
-              <Field label="Transporter ID / GSTIN" {...field('transporterId')} onChangeText={(value) => setDraft({ ...draft, transporterId: value.toUpperCase().replace(/\s/g, '') })} autoCapitalize="characters" maxLength={15} />
+              <Field label="Transporter ID / GSTIN" required {...field('transporterId')} onChangeText={(value) => { setDraft({ ...draft, transporterId: value.toUpperCase().replace(/\s/g, '') }); setErrors((current) => ({ ...current, transporterId: '' })); }} autoCapitalize="characters" maxLength={15} placeholder="15-character ID" testID="saved-transporter-id" />
+              <Field label="Phone number" {...field('phone')} keyboardType="phone-pad" maxLength={14} placeholder="Optional" />
               <Field label="Usual vehicle number" {...field('vehicleNumber')} onChangeText={(value) => setDraft({ ...draft, vehicleNumber: value.toUpperCase().replace(/[\s-]/g, '') })} autoCapitalize="characters" maxLength={12} />
             </> : null}
             <TextBlock size={11} color={colors.mutedForeground}>Editing saved details never changes invoices or bills you already created.</TextBlock>
@@ -165,5 +194,6 @@ export default function SavedDetails({ kind, tab = false }: { kind: Kind; tab?: 
 }
 
 const styles = StyleSheet.create({
+  fab: { position: 'absolute', right: 18, height: 52, borderRadius: 26, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', gap: 8, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 6 },
   body: { padding: 16, gap: 14, maxWidth: 720, width: '100%', alignSelf: 'center' },
 });
