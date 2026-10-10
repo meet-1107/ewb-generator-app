@@ -19,9 +19,10 @@ const functionsDir = path.resolve(artifactDir, "../../functions");
 const envFile = path.join(functionsDir, ".env");
 const rel = (file) => path.relative(process.cwd(), file) || file;
 
+// Exit code 2: on Windows the Firebase CLI misreports exit code 1 from a predeploy hook as "spawn … ENOENT".
 function stop(message) {
   console.error(`\n${message}\n`);
-  process.exit(1);
+  process.exit(2);
 }
 
 /* 1. functions/.env */

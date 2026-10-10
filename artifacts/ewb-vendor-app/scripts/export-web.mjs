@@ -13,9 +13,10 @@ import { fileURLToPath } from "node:url";
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const repoDir = path.resolve(appDir, "../..");
 
+// Exit code 2: on Windows the Firebase CLI misreports exit code 1 from a predeploy hook as "spawn … ENOENT".
 function stop(message) {
   console.error(`\n${message}\n`);
-  process.exit(1);
+  process.exit(2);
 }
 
 function readEnvFile(file) {
