@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
@@ -19,6 +19,7 @@ import {
 } from '@/lib/domain';
 import { Card, IconButton, Notice, Page, SectionTitle, StatCard, StatusPill, TextBlock, SelectSheet } from '@/components/AppUI';
 import InvoiceCard from '@/components/InvoiceCard';
+import { AccountButton, BrandBar } from '@/components/Brand';
 
 export default function DashboardScreen() {
   const colors = useColors();
@@ -48,9 +49,16 @@ export default function DashboardScreen() {
     };
   }, [invoices, ewbs, fy.from, fy.to]);
 
+  useEffect(() => {
+    void store.refreshWallet();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [store.workspaceId]);
+  const wallet = store.wallet;
+  const lowCredits = Boolean(wallet && wallet.balance < wallet.costs.generate);
+
   const refresh = async () => {
     setRefreshing(true);
-    await Promise.allSettled([store.refreshEwbs(), store.syncNow(), store.refreshServices()]);
+    await Promise.allSettled([store.refreshEwbs(), store.syncNow(), store.refreshServices(), store.refreshWallet()]);
     setRefreshing(false);
   };
 
@@ -70,6 +78,10 @@ export default function DashboardScreen() {
 
   return (
     <Page contentStyle={styles.page} onRefresh={refresh} refreshing={refreshing}>
+      <BrandBar right={<>
+        <IconButton icon="help-circle" accessibilityLabel="Help and support" onPress={() => router.push('/help')} filled />
+        <AccountButton />
+      </>} />
       <View style={styles.topline}>
         <Pressable
           onPress={() => registrations.length > 1 && setGstinPicker(true)}
@@ -83,8 +95,6 @@ export default function DashboardScreen() {
             {registrations.length > 1 ? <Feather name="chevron-down" size={14} color={colors.mutedForeground} /> : null}
           </View>
         </Pressable>
-        <IconButton icon="help-circle" accessibilityLabel="Help and support" onPress={() => router.push('/help')} filled />
-        <IconButton icon="user" accessibilityLabel="Open account" onPress={() => router.push('/account')} filled color={colors.primary} />
       </View>
 
       <View style={{ gap: 3 }}>
@@ -96,6 +106,32 @@ export default function DashboardScreen() {
           </TextBlock>
         </View>
       </View>
+
+      <LinearGradient colors={[colors.heroEnd, colors.heroStart]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero} testID="dashboard-wallet">
+        <View style={styles.heroDecor} />
+        <View style={styles.walletTop}>
+          <View style={{ flex: 1, gap: 6 }}>
+            <TextBlock size={11} weight="bold" color={colors.heroMuted} style={{ letterSpacing: 1 }}>WALLET · CREDITS</TextBlock>
+            <TextBlock size={32} weight="bold" color={colors.heroText} style={{ letterSpacing: -1 }}>{wallet ? `${wallet.balance}` : '—'}<TextBlock size={16} weight="semibold" color={colors.heroMuted}> credits</TextBlock></TextBlock>
+          </View>
+          <View style={[styles.walletIcon, { backgroundColor: 'rgba(255, 253, 246, 0.1)' }]}><Feather name="credit-card" size={20} color={colors.heroText} /></View>
+        </View>
+        <TextBlock size={12} color={lowCredits ? colors.warmAccent : colors.heroMuted}>
+          {wallet
+            ? `${lowCredits ? 'Low balance · ' : ''}E-way bill ${wallet.costs.generate} · Part-B ${wallet.costs.part_b} · Cancel ${wallet.costs.cancel} credits · 1 credit = ₹1`
+            : store.online === false ? 'Offline · balance shows when you are back online' : 'Loading your balance…'}
+        </TextBlock>
+        <View style={styles.heroActions}>
+          <Pressable onPress={() => router.push('/wallet')} style={({ pressed }) => [styles.heroButton, { backgroundColor: colors.warmAccent, opacity: pressed ? 0.85 : 1 }]} accessibilityRole="button" testID="dashboard-add-credits">
+            <Feather name="plus" size={17} color="#1b1206" />
+            <TextBlock size={14} weight="bold" color="#1b1206">Add credits</TextBlock>
+          </Pressable>
+          <Pressable onPress={() => router.push('/wallet')} style={({ pressed }) => [styles.heroButton, styles.heroGhost, { opacity: pressed ? 0.8 : 1 }]} accessibilityRole="button" testID="dashboard-wallet-history">
+            <Feather name="list" size={16} color={colors.heroText} />
+            <TextBlock size={14} weight="semibold" color={colors.heroText}>Wallet history</TextBlock>
+          </Pressable>
+        </View>
+      </LinearGradient>
 
       <LinearGradient colors={[colors.heroStart, colors.heroEnd]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
         <View style={styles.heroDecor} />
@@ -187,6 +223,8 @@ const styles = StyleSheet.create({
   syncDot: { width: 7, height: 7, borderRadius: 4 },
   hero: { borderRadius: 24, padding: 18, gap: 6, overflow: 'hidden' },
   heroDecor: { position: 'absolute', right: -50, top: -60, width: 180, height: 180, borderRadius: 90, borderWidth: 26, borderColor: 'rgba(247, 236, 216, 0.06)' },
+  walletTop: { flexDirection: 'row', alignItems: 'flex-start', gap: 10 },
+  walletIcon: { width: 42, height: 42, borderRadius: 14, alignItems: 'center', justifyContent: 'center' },
   heroActions: { flexDirection: 'row', gap: 9, marginTop: 12 },
   heroButton: { flex: 1, minHeight: 48, borderRadius: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingHorizontal: 10 },
   heroGhost: { borderWidth: 1, borderColor: 'rgba(255, 253, 246, 0.28)', backgroundColor: 'rgba(255, 253, 246, 0.06)' },

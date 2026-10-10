@@ -9,6 +9,7 @@ import { setThemePreference, useThemePreference, type ThemePreference } from '@/
 import { defaultBank, gstinProblem, relativeTime, STATES, stateForGstin, templates, type Business } from '@/lib/domain';
 import { Button, Card, Divider, Field, Heading, IconButton, ListRow, Notice, Page, Segmented, SectionTitle, SelectField, Sheet, StatusPill, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
+import { BrandBar } from '@/components/Brand';
 import { SUPPORT_EMAIL } from '@/lib/api';
 
 const stateOptions = STATES.map((state) => ({ value: state.name, label: state.name }));
@@ -158,6 +159,7 @@ export default function AccountScreen() {
 
   return (
     <Page contentStyle={styles.page} tab={false}>
+      <BrandBar />
       <View style={styles.titleRow}>
         <IconButton icon="arrow-left" accessibilityLabel="Go back" onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)'))} />
         <View style={{ flex: 1 }}><Heading eyebrow="Settings" title="Account" /></View>

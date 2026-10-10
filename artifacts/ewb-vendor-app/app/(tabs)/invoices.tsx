@@ -5,9 +5,10 @@ import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { type Invoice } from '@/lib/domain';
 import { useAppStore, useScopedRecords } from '@/state/app-store';
-import { Button, Card, Chip, ChipRow, EmptyState, Field, Heading, IconButton, Notice, Page, SearchBar, SectionTitle, Sheet, TextBlock } from '@/components/AppUI';
+import { Button, Card, Chip, ChipRow, EmptyState, Field, Heading, Notice, Page, SearchBar, SectionTitle, Sheet, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
 import InvoiceCard from '@/components/InvoiceCard';
+import { AccountButton } from '@/components/Brand';
 
 const PAGE = 20;
 
@@ -79,7 +80,7 @@ export default function InvoicesScreen() {
         eyebrow="Sales"
         title="Invoices"
         subtitle={`${invoices.length} invoice${invoices.length === 1 ? '' : 's'}${pending ? ` · ${pending} e-way bill${pending === 1 ? '' : 's'} pending` : ''}`}
-        right={<IconButton icon="upload" accessibilityLabel="Import invoice PDF" onPress={() => router.push('/invoice/import')} filled />}
+        right={<AccountButton />}
       />
       {params.for === 'ewb' ? (
         <Notice

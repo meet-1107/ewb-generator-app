@@ -7,6 +7,7 @@ import { useAppStore, useScopedRecords } from '@/state/app-store';
 import { ewbStatusMeta, formatDate, formatInr, liveEwbStatus, relativeTime, type EwbRecord } from '@/lib/domain';
 import { Button, Card, Chip, ChipRow, EmptyState, Field, Heading, Notice, Page, SearchBar, SectionTitle, SelectSheet, Sheet, Skeleton, StatusPill, TextBlock } from '@/components/AppUI';
 import { ActionCard, ActionGrid } from '@/components/ActionCard';
+import { AccountButton } from '@/components/Brand';
 import { useCredits } from '@/hooks/useCredits';
 import { useDialog } from '@/components/Dialog';
 
@@ -90,7 +91,7 @@ export default function EwbRegisterScreen() {
 
   return (
     <Page contentStyle={styles.page} onRefresh={refresh} refreshing={refreshing}>
-      <Heading eyebrow="Movement" title="E-way bills" subtitle={store.ewbsFetchedAt ? `${ewbs.length} bills · updated ${relativeTime(store.ewbsFetchedAt)}` : 'Bills confirmed by your provider appear here.'} />
+      <Heading eyebrow="Movement" title="E-way bills" subtitle={store.ewbsFetchedAt ? `${ewbs.length} bills · updated ${relativeTime(store.ewbsFetchedAt)}` : 'Bills confirmed by your provider appear here.'} right={<AccountButton />} />
       <ActionGrid>
         <ActionCard icon="plus-circle" title="New e-way bill" detail={`From an invoice · ${credits.costs.generate} credits`} onPress={() => router.push({ pathname: '/(tabs)/invoices', params: { for: 'ewb' } })} testID="quick-new" />
         <ActionCard icon="truck" title="Part-B" detail={`Update vehicle · ${credits.costs.part_b} credits`} disabled={!partBBills.length} onPress={() => setPicker('part_b')} testID="quick-partb" />

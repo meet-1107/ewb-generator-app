@@ -7,6 +7,7 @@ import { useColors } from '@/hooks/useColors';
 import { useGstinVerify } from '@/hooks/useGstinVerify';
 import { formatInr, GST_RATES, gstinProblem, STATES, stateForGstin, UNITS, VEHICLE_PATTERN, type Party, type Product, type Transporter } from '@/lib/domain';
 import { useAppStore } from '@/state/app-store';
+import { AccountButton } from '@/components/Brand';
 
 export type SavedKind = 'parties' | 'products' | 'transporters';
 type Kind = SavedKind;
@@ -97,7 +98,7 @@ export default function SavedDetails({ kind, tab = false }: { kind: Kind; tab?: 
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <ScreenHeader back={!tab} title={meta.title} subtitle={`${items.length} saved · synced to your account`} right={<IconButton icon="plus" accessibilityLabel={`Add ${meta.singular}`} onPress={() => { setErrors({}); setDraft(blank()); }} />} />
+      <ScreenHeader back={!tab} title={meta.title} subtitle={`${items.length} saved · synced to your account`} right={<View style={{ flexDirection: 'row', gap: 4 }}><IconButton icon="plus" accessibilityLabel={`Add ${meta.singular}`} onPress={() => { setErrors({}); setDraft(blank()); }} />{tab ? <AccountButton /> : null}</View>} />
       <ScrollView contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + (tab ? 110 : 30) }]} keyboardShouldPersistTaps="handled">
         {items.length > 5 ? <SearchBar value={query} onChangeText={setQuery} placeholder={`Search ${meta.title.toLowerCase()}`} /> : null}
         {filtered.length ? (
