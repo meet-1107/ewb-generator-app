@@ -38,6 +38,12 @@
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "googleWebClientId": "108144323141-jcse80gnobvegctv3io04bg22b7p9scd.apps.googleusercontent.com",
+      "eas": {
+        "projectId": "cdf49fb9-aeb4-425b-9b5c-9175ff536277"
+      }
     }
   }
 }
