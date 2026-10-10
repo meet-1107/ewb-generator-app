@@ -60,3 +60,5 @@ artifacts/ewb-vendor-app/GoogleService-Info.plist
 # Server secrets
 artifacts/api-server/.env
 dist-test
+deploy/env.yaml
+deploy/secrets.env

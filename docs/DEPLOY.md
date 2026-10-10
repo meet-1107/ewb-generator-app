@@ -87,6 +87,9 @@ Go to **Project settings → General → Your apps → Add app → Web (`</>`)**
 
 ## Part 2: API server on Cloud Run
 
+**Quick way:** in Google Cloud Shell, run `cp deploy/env.example.yaml deploy/env.yaml`, fill in your keys (`cloudshell edit deploy/env.yaml`), then `bash deploy/cloudrun.sh`. The script does every step below, including the permissions and secrets, and prints the server URL. Re-run it to redeploy.
+
+
 Easiest: run these in **Google Cloud Shell** (console.cloud.google.com → the `>_` icon, top right). It already has `gcloud` and `firebase`. Upload the project zip (⋮ → Upload) and `unzip` it, or `git clone` the repo. Then `cd` into the project folder.
 
 ```bash

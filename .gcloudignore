@@ -9,3 +9,5 @@ attached_assets
 .conversation
 .agents
 **/.env
+deploy/env.yaml
+deploy/secrets.env
