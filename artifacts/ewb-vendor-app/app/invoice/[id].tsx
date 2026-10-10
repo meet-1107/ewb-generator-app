@@ -8,8 +8,6 @@ import {
   Button,
   Card,
   Checkbox,
-  Chip,
-  ChipRow,
   Field,
   IconButton,
   KeyValue,
@@ -19,10 +17,12 @@ import {
   Segmented,
   SelectField,
   SelectSheet,
+  Sheet,
   StatusPill,
   TextBlock,
 } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
+import { DateField } from '@/components/DateField';
 import { InvoicePreview } from '@/components/InvoicePreview';
 import { InvoiceProducts } from '@/components/InvoiceProducts';
 import { api } from '@/lib/api';
@@ -34,20 +34,17 @@ import {
   formatInr,
   invoiceIssues,
   invoiceTotals,
-  newInvoice,
   STATES,
   stateForGstin,
   gstinProblem,
-  today,
   transportIssues,
   TRANSPORT_MODES,
-  uid,
+  VEHICLE_PATTERN,
   invoiceBank,
   hasDispatch,
   hasShipTo,
   routePins,
   invoiceSeriesProblem,
-  nextInvoiceNumber,
   releasedInvoiceIds,
   type Invoice,
   type Section,
@@ -60,7 +57,8 @@ const sectionOrder = (templateId: string): Section[] =>
   templateId === 'dispatch' ? ['transport', 'seller', 'buyer', 'invoice', 'items'] : ['seller', 'buyer', 'invoice', 'items', 'transport'];
 
 export default function InvoiceEditorScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  // view=1: opened from the invoice list, so show the saved invoice as a preview first.
+  const { id, view } = useLocalSearchParams<{ id: string; view?: string }>();
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const store = useAppStore();
@@ -72,6 +70,10 @@ export default function InvoiceEditorScreen() {
   const [saveState, setSaveState] = useState<'saved' | 'saving' | 'idle'>('saved');
   const [picker, setPicker] = useState<null | 'buyer' | 'transporter'>(null);
   const [previewing, setPreviewing] = useState(false);
+  /** Preview of a saved invoice opened from the list: no Save (it is saved), only Generate EWB. */
+  const [viewOnly, setViewOnly] = useState(false);
+  const [newTransporter, setNewTransporter] = useState<{ name: string; transporterId: string; vehicleNumber: string } | null>(null);
+  const [transporterError, setTransporterError] = useState<Record<string, string>>({});
   const [showDispatch, setShowDispatch] = useState(false);
   const [showShipTo, setShowShipTo] = useState(false);
   const [distanceState, setDistanceState] = useState<'idle' | 'loading' | 'error'>('idle');
@@ -85,6 +87,10 @@ export default function InvoiceEditorScreen() {
       setInvoice(found);
       setShowDispatch(hasDispatch(found));
       setShowShipTo(hasShipTo(found));
+      if (view && found.status !== 'draft') {
+        setViewOnly(true);
+        setPreviewing(true);
+      }
       if (found.templateId === 'dispatch') setOpen((current) => ({ ...current, transport: true }));
       if (!found.sellerGstin || !found.sellerName) setOpen((current) => ({ ...current, seller: true }));
     } else {
@@ -150,10 +156,11 @@ export default function InvoiceEditorScreen() {
     setInvoice((current) => {
       if (!current) return current;
       const next = { ...current, ...changes, updatedAt: new Date().toISOString() };
-      if ('sellerState' in changes || 'buyerState' in changes) {
+      if ('sellerState' in changes || 'buyerState' in changes || 'placeOfSupply' in changes) {
+        if ('buyerState' in changes && (!current.placeOfSupply || current.placeOfSupply === current.buyerState)) next.placeOfSupply = next.buyerState;
+        // Same state as the supplier → CGST + SGST; another state → IGST.
         const expected = expectedSupplyType(next);
         if (expected) next.supplyType = expected;
-        if ('buyerState' in changes && (!current.placeOfSupply || current.placeOfSupply === current.buyerState)) next.placeOfSupply = next.buyerState;
       }
       // Any edit to a ready invoice sends it back to draft until reviewed again.
       if (current.status === 'ready' && !('status' in changes)) next.status = 'draft';
@@ -226,6 +233,20 @@ export default function InvoiceEditorScreen() {
     return { ...base, invoiceNumber: series.next };
   };
 
+  const saveNewTransporter = async () => {
+    if (!newTransporter) return;
+    const problems: Record<string, string> = {};
+    if (!newTransporter.name.trim()) problems.name = 'Transporter name is required.';
+    if (newTransporter.transporterId && gstinProblem(newTransporter.transporterId)) problems.transporterId = gstinProblem(newTransporter.transporterId)!;
+    if (newTransporter.vehicleNumber && !VEHICLE_PATTERN.test(newTransporter.vehicleNumber)) problems.vehicleNumber = 'Format looks wrong (e.g. MH12AB1234).';
+    setTransporterError(problems);
+    if (Object.keys(problems).length) return;
+    await store.saveTransporter({ name: newTransporter.name.trim(), transporterId: newTransporter.transporterId, vehicleNumber: newTransporter.vehicleNumber } as never);
+    patch({ transporterName: newTransporter.name.trim(), transporterId: newTransporter.transporterId, ...(newTransporter.vehicleNumber && !invoice?.vehicleNumber ? { vehicleNumber: newTransporter.vehicleNumber } : {}) });
+    setNewTransporter(null);
+    dialog.toast('Transporter saved', 'success');
+  };
+
   /** Remember new buyers and transporters for next time. */
   const rememberDetails = async (saved: Invoice) => {
     const knownBuyer = store.parties.some((party) => (saved.buyerGstin && party.gstin === saved.buyerGstin) || party.name.toLowerCase() === saved.buyerName.trim().toLowerCase());
@@ -264,13 +285,14 @@ export default function InvoiceEditorScreen() {
     const answer = await dialog.prompt({
       title: 'Invoice saved. Do you need an e-way bill?',
       message: 'Usually needed when goods worth more than ₹50,000 move. You can also generate it later from this invoice.',
-      choices: ['Yes, generate e-way bill', 'No, e-way bill not required'],
+      choices: ['Yes, generate e-way bill now', 'Yes, but generate it later', 'No, e-way bill not required'],
       confirmLabel: 'Continue',
     });
     if (!answer) return;
-    if (answer.choice.startsWith('No')) {
-      await store.saveInvoice({ ...saved, ewbRequired: false });
-      dialog.toast('Invoice saved', 'success');
+    if (!answer.choice.endsWith('now')) {
+      const later = answer.choice.includes('later');
+      await store.saveInvoice({ ...saved, ewbRequired: later });
+      dialog.toast(later ? 'Invoice saved · e-way bill pending' : 'Invoice saved', 'success');
       router.replace('/(tabs)/invoices');
       return;
     }
@@ -300,7 +322,7 @@ export default function InvoiceEditorScreen() {
 
   const moreActions = async () => {
     if (!invoice) return;
-    const choices = ['Print invoice', 'Share as PDF', 'Duplicate as new draft', ...(invoice.status !== 'ewb_generated' ? ['Delete draft'] : [])];
+    const choices = ['Print invoice', 'Share as PDF', ...(invoice.status === 'draft' ? ['Delete draft'] : [])];
     const result = await dialog.prompt({ title: 'Invoice actions', choices, confirmLabel: 'Continue' });
     if (!result) return;
     try {
@@ -308,14 +330,6 @@ export default function InvoiceEditorScreen() {
       if (result.choice === 'Share as PDF') await shareHtmlAsPdf(invoiceHtml(invoice), invoice.invoiceNumber || 'Invoice');
     } catch (error) {
       dialog.toast((error as Error).message || 'Could not open the document', 'danger');
-    }
-    if (result.choice === 'Duplicate as new draft') {
-      const fresh = newInvoice(invoice.templateId);
-      const { revisionHistory: _h, ...rest } = invoice;
-      const copy: Invoice = { ...rest, id: fresh.id, createdAt: fresh.createdAt, updatedAt: fresh.updatedAt, invoiceDate: today(), invoiceNumber: nextInvoiceNumber(store.invoices.filter((other) => other.sellerGstin === invoice.sellerGstin), released), status: 'draft', ewbRequired: undefined, ewbId: undefined, ewbNumber: undefined, idempotencyKey: undefined, extraction: undefined, sourceFileName: undefined, revisionHistory: [], lines: invoice.lines.map((line) => ({ ...line, id: uid('l') })) };
-      await store.saveInvoice(copy);
-      dialog.toast('Copied as a new draft', 'success');
-      router.replace(`/invoice/${copy.id}`);
     }
     if (result.choice === 'Delete draft') {
       const ok = await dialog.confirm({ title: 'Delete this draft?', message: 'It will be removed from all your devices. This cannot be undone.', confirmLabel: 'Delete', cancelLabel: 'Keep', tone: 'danger', icon: 'trash-2' });
@@ -345,19 +359,9 @@ export default function InvoiceEditorScreen() {
         {header}
         <KeyboardAwareScrollViewCompat contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 30 }]}>
           <ProgressSteps steps={['Invoice', 'Review EWB', 'Generated']} current={2} />
-          <Notice tone="success" title={`E-way bill ${invoice.ewbNumber} is linked`} body="Generated bills keep the invoice exactly as submitted. To change details, duplicate it as a new draft." action="Open e-way bill" onAction={() => router.push(`/ewb/${invoice.ewbId}`)} />
-          <Card>
-            <KeyValue label="Invoice date" value={formatDate(invoice.invoiceDate)} />
-            <KeyValue label="Seller" value={`${invoice.sellerName}\n${invoice.sellerGstin}`} />
-            <KeyValue label="Receiver" value={`${invoice.buyerName}\n${invoice.buyerGstin || 'Unregistered'}`} />
-            <KeyValue label="Route" value={`${invoice.sellerState} → ${invoice.buyerState}`} />
-            <KeyValue label="Items" value={`${invoice.lines.filter((line) => line.description).length}`} />
-            <KeyValue label="Taxable value" value={formatInr(totals.taxable)} />
-            <KeyValue label={invoice.supplyType === 'intra' ? 'CGST + SGST' : 'IGST'} value={formatInr(totals.tax)} />
-            <KeyValue label="Invoice total" value={formatInr(totals.total)} strong />
-          </Card>
+          <Notice tone="success" title={`E-way bill ${invoice.ewbNumber} is generated`} body="Generated bills keep the invoice exactly as submitted." action="Open e-way bill" onAction={() => router.push(`/ewb/${invoice.ewbId}`)} />
+          <InvoicePreview invoice={invoice} />
           <Button title="Share invoice PDF" icon="share" onPress={() => void shareHtmlAsPdf(invoiceHtml(invoice), invoice.invoiceNumber).catch((error: Error) => dialog.toast(error.message, 'danger'))} />
-          <Button title="Duplicate as new draft" icon="copy" variant="outline" onPress={() => void moreActions()} />
         </KeyboardAwareScrollViewCompat>
       </View>
     );
@@ -420,16 +424,16 @@ export default function InvoiceEditorScreen() {
       <EditorSection key="invoice" title="Invoice details" icon="hash" open={open.invoice} onToggle={() => setOpen((c) => ({ ...c, invoice: !c.invoice }))} errors={sectionErrors('invoice')} summary={`${invoice.invoiceNumber || 'No number'} · ${formatDate(invoice.invoiceDate)}`}>
         <View style={styles.row}>
           <View style={{ flex: 1.2 }}><Field label="Invoice number" required value={invoice.invoiceNumber} onChangeText={(value) => patch({ invoiceNumber: value.replace(/\s/g, '') })} placeholder="e.g. INV-001 or GR-1" autoCapitalize="none" maxLength={16} onBlur={() => void checkNumberNow()} error={errorFor('invoiceNumber')} confidence={fromPdf('invoiceNumber')} hint={firstInvoice ? 'Your first invoice: enter its number. Next invoices continue from it.' : undefined} /></View>
-          <View style={{ flex: 1 }}><Field label="Date" required value={invoice.invoiceDate} onChangeText={set('invoiceDate')} placeholder="YYYY-MM-DD" maxLength={10} error={errorFor('invoiceDate')} confidence={fromPdf('invoiceDate')} /></View>
+          <View style={{ flex: 1 }}><DateField label="Date" required value={invoice.invoiceDate} onChange={set('invoiceDate')} error={errorFor('invoiceDate')} testID="invoice-date" /></View>
         </View>
-        <ChipRow>
-          {['Tax invoice', 'Bill of supply', 'Delivery challan', 'Credit note'].map((item) => <Chip key={item} label={item} selected={invoice.documentType === item} onPress={() => patch({ documentType: item })} />)}
-        </ChipRow>
+        <SelectField label="Document type" value={invoice.documentType} placeholder="Tax invoice" title="Document type" options={DOCUMENT_TYPES.map((item) => ({ value: item, label: item }))} onSelect={set('documentType')} testID="document-type" />
         <SelectField label="Place of supply" value={invoice.placeOfSupply} placeholder="Usually the buyer's state" options={stateOptions} onSelect={set('placeOfSupply')} />
         <View style={{ gap: 7 }}>
           <TextBlock size={13} weight="semibold">Supply type</TextBlock>
-          <Segmented options={[{ label: 'Within state', value: 'intra' }, { label: 'Inter-state', value: 'inter' }]} value={invoice.supplyType} onChange={(value) => patch({ supplyType: value })} error={errorFor('supplyType')} />
-          <TextBlock size={11} color={colors.mutedForeground}>{invoice.supplyType === 'intra' ? 'CGST + SGST are charged.' : 'IGST is charged.'} Set automatically from the two states.</TextBlock>
+          <View style={[styles.supply, { backgroundColor: colors.muted }]}>
+            <TextBlock size={14} weight="semibold">{invoice.supplyType === 'intra' ? 'Within state · CGST + SGST' : 'Inter-state · IGST'}</TextBlock>
+            <TextBlock size={11} color={colors.mutedForeground}>Set automatically: supplier in {invoice.sellerState || '—'}, place of supply {invoice.placeOfSupply || invoice.buyerState || '—'}.</TextBlock>
+          </View>
         </View>
       </EditorSection>
     ),
@@ -453,18 +457,28 @@ export default function InvoiceEditorScreen() {
     ),
     transport: (
       <EditorSection key="transport" title="Transport (for e-way bill)" icon="truck" open={open.transport} onToggle={() => setOpen((c) => ({ ...c, transport: !c.transport }))} errors={sectionErrors('transport')} summary={`${invoice.transportMode} · ${invoice.vehicleNumber || 'No vehicle'} · ${invoice.distanceKm ? `${invoice.distanceKm} km` : 'Distance not set'}`}>
-        {store.transporters.length
-          ? <Button title={invoice.transporterName ? `Transporter: ${invoice.transporterName} · change` : 'Choose transporter from list'} icon="truck" variant="outline" size="sm" onPress={() => setPicker('transporter')} testID="pick-transporter" />
-          : <TextBlock size={12} color={colors.mutedForeground}>Save transporters in Account → Transporters to pick them here.</TextBlock>}
         <Segmented options={TRANSPORT_MODES.map((mode) => ({ label: mode, value: mode }))} value={invoice.transportMode} onChange={set('transportMode')} />
-        {invoice.transportMode === 'Road' ? (
-          <Field label="Vehicle number" value={invoice.vehicleNumber} onChangeText={(value) => patch({ vehicleNumber: value.toUpperCase().replace(/[\s-]/g, '') })} placeholder="MH12AB1234" autoCapitalize="characters" maxLength={12} error={errorFor('vehicleNumber')} hint="Leave empty if the transporter will add the vehicle later (Part-B)." testID="vehicle" />
-        ) : (
+        <View style={{ gap: 7 }}>
+          <TextBlock size={13} weight="semibold">Transporter</TextBlock>
+          <Pressable onPress={() => setPicker('transporter')} accessibilityRole="button" accessibilityLabel={invoice.transporterName ? `Transporter ${invoice.transporterName}. Change` : 'Choose transporter'} testID="pick-transporter"
+            style={({ pressed }) => [styles.pickRow, { borderColor: errorFor('transporterId') ? colors.destructive : colors.input, backgroundColor: colors.card, opacity: pressed ? 0.85 : 1 }]}>
+            <Feather name="truck" size={17} color={colors.primary} />
+            <View style={{ flex: 1, gap: 1 }}>
+              <TextBlock size={15} weight={invoice.transporterName ? 'semibold' : 'regular'} color={invoice.transporterName ? undefined : colors.mutedForeground}>{invoice.transporterName || 'Choose from transporter list'}</TextBlock>
+              {invoice.transporterName ? <TextBlock size={12} color={colors.mutedForeground}>{invoice.transporterId ? `ID ${invoice.transporterId}` : 'No transporter ID'}</TextBlock> : null}
+            </View>
+            {invoice.transporterName
+              ? <Pressable onPress={() => patch({ transporterName: '', transporterId: '' })} hitSlop={10} accessibilityRole="button" accessibilityLabel="Remove transporter"><Feather name="x" size={18} color={colors.mutedForeground} /></Pressable>
+              : <Feather name="chevron-down" size={18} color={colors.mutedForeground} />}
+          </Pressable>
+          {errorFor('transporterId') ? <TextBlock size={12} color={colors.destructive}>{errorFor('transporterId')}</TextBlock> : <TextBlock size={11} color={colors.mutedForeground}>Optional. Not in the list? Add it from the list.</TextBlock>}
+        </View>
+        {invoice.transportMode !== 'Road' ? (
           <View style={styles.row}>
             <View style={{ flex: 1 }}><Field label={`${invoice.transportMode} doc no.`} required value={invoice.transportDocNo} onChangeText={set('transportDocNo')} placeholder="RR / AWB / BL no." error={errorFor('transportDocNo')} /></View>
-            <View style={{ flex: 1 }}><Field label="Doc date" required value={invoice.transportDocDate} onChangeText={set('transportDocDate')} placeholder="YYYY-MM-DD" maxLength={10} error={errorFor('transportDocDate')} /></View>
+            <View style={{ flex: 1 }}><DateField label="Doc date" required value={invoice.transportDocDate} onChange={set('transportDocDate')} error={errorFor('transportDocDate')} /></View>
           </View>
-        )}
+        ) : null}
         <View style={styles.row}>
           <View style={{ flex: 1 }}><Field label="Distance (km)" required value={invoice.distanceKm} onChangeText={(value) => patch({ distanceKm: value.replace(/\D/g, '').slice(0, 4) })} placeholder={distanceState === 'loading' ? 'Getting…' : 'e.g. 840'} keyboardType="number-pad" error={errorFor('distanceKm')} testID="distance"
             hint={distanceState === 'loading' ? 'Getting road distance from Google…' : distanceAuto ? `From Google maps: ${pins!.from} → ${pins!.to}. You can change it.` : distanceState === 'error' ? 'Could not get the distance. Enter it manually.' : pinKey ? undefined : 'Filled automatically from the PIN codes.'} /></View>
@@ -473,8 +487,9 @@ export default function InvoiceEditorScreen() {
             <Segmented options={[{ label: 'Regular', value: 'regular' }, { label: 'ODC', value: 'odc' }]} value={invoice.vehicleType} onChange={set('vehicleType')} />
           </View>
         </View>
-        <Field label="Transporter name" value={invoice.transporterName} onChangeText={set('transporterName')} placeholder="Transport company (optional)" autoCapitalize="words" />
-        <Field label="Transporter ID / GSTIN" value={invoice.transporterId} onChangeText={(value) => patch({ transporterId: value.toUpperCase().replace(/\s/g, '') })} placeholder="Optional" autoCapitalize="characters" maxLength={15} error={errorFor('transporterId')} />
+        {invoice.transportMode === 'Road' ? (
+          <Field label="Vehicle number" value={invoice.vehicleNumber} onChangeText={(value) => patch({ vehicleNumber: value.toUpperCase().replace(/[\s-]/g, '') })} placeholder="MH12AB1234" autoCapitalize="characters" maxLength={12} error={errorFor('vehicleNumber')} hint="Leave empty if the transporter will add the vehicle later (Part-B)." testID="vehicle" />
+        ) : null}
         <TextBlock size={11} color={colors.mutedForeground} style={{ lineHeight: 16 }}>Validity: 1 day per 200 km (20 km for over-dimensional cargo). The provider re-checks every value before generating.</TextBlock>
       </EditorSection>
     ),
@@ -520,19 +535,22 @@ export default function InvoiceEditorScreen() {
           <TextBlock size={10} weight="semibold" color={colors.mutedForeground} style={{ letterSpacing: 0.8 }}>TOTAL</TextBlock>
           <TextBlock size={19} weight="bold" numberOfLines={1}>{formatInr(totals.total)}</TextBlock>
         </View>
-        <Button title="Preview invoice" icon="eye" size="sm" onPress={() => { Keyboard.dismiss(); setPreviewing(true); }} testID="preview-invoice" />
+        <Button title="Preview invoice" icon="eye" size="sm" onPress={() => { Keyboard.dismiss(); setViewOnly(false); setPreviewing(true); }} testID="preview-invoice" />
       </View>
 
-      <Modal visible={previewing} animationType="slide" onRequestClose={() => setPreviewing(false)}>
+      <Modal visible={previewing} animationType={viewOnly ? 'none' : 'slide'} onRequestClose={() => (viewOnly ? router.back() : setPreviewing(false))}>
         <View style={{ flex: 1, backgroundColor: colors.background }}>
-          <ScreenHeader title="Invoice preview" subtitle="Check everything before saving" onBack={() => setPreviewing(false)}
-            right={<Button title="Edit" icon="edit-2" variant="outline" size="sm" onPress={() => setPreviewing(false)} testID="preview-edit" />} />
+          <ScreenHeader
+            title={viewOnly ? invoice.invoiceNumber || 'Invoice' : 'Invoice preview'}
+            subtitle={viewOnly ? `${invoice.buyerName || 'No buyer'} · ${invoice.ewbRequired === false ? 'E-way bill not required' : 'E-way bill pending'}` : 'Check everything before saving'}
+            onBack={() => { if (viewOnly) { setPreviewing(false); router.back(); } else setPreviewing(false); }}
+            right={<Button title="Edit" icon="edit-2" variant="outline" size="sm" onPress={() => { setViewOnly(false); setPreviewing(false); }} testID="preview-edit" />} />
           <ScrollView contentContainerStyle={[styles.body, { paddingBottom: 24 }]}>
             <InvoicePreview invoice={invoice} />
           </ScrollView>
           <View style={[styles.sticky, { backgroundColor: colors.card, borderColor: colors.border, paddingBottom: (Platform.OS === 'web' ? 12 : insets.bottom) + 10 }]}>
-            <Button title="Generate EWB" icon="truck" variant="outline" onPress={() => void continueToReview()} style={{ flex: 1 }} testID="continue-to-ewb" />
-            <Button title="Save invoice" icon="check" onPress={() => void finishInvoice()} style={{ flex: 1 }} testID="save-invoice" />
+            <Button title="Generate EWB" icon="truck" variant={viewOnly ? 'primary' : 'outline'} onPress={() => void continueToReview()} style={{ flex: 1 }} testID="continue-to-ewb" />
+            {viewOnly ? null : <Button title="Save invoice" icon="check" onPress={() => void finishInvoice()} style={{ flex: 1 }} testID="save-invoice" />}
           </View>
         </View>
       </Modal>
@@ -550,13 +568,30 @@ export default function InvoiceEditorScreen() {
       <SelectSheet
         visible={picker === 'transporter'}
         onClose={() => setPicker(null)}
-        title="Saved transporters"
-        options={store.transporters.map((item) => ({ value: item.id, label: item.name, detail: [item.transporterId, item.vehicleNumber].filter(Boolean).join(' · ') }))}
+        title="Choose transporter"
+        emptyText="No transporters saved yet."
+        footer={<Button title="Add new transporter" icon="plus" variant="outline" onPress={() => { setPicker(null); setTransporterError({}); setTimeout(() => setNewTransporter({ name: '', transporterId: '', vehicleNumber: '' }), 250); }} testID="new-transporter" />}
+        options={store.transporters.map((item) => ({ value: item.id, label: item.name, detail: [item.transporterId, item.vehicleNumber].filter(Boolean).join(' · ') || 'No ID saved' }))}
         onSelect={(transporterId) => {
           const item = store.transporters.find((candidate) => candidate.id === transporterId);
           if (item) patch({ transporterName: item.name, transporterId: item.transporterId, vehicleNumber: item.vehicleNumber || invoice.vehicleNumber });
         }}
       />
+      <Sheet
+        visible={Boolean(newTransporter)}
+        onClose={() => setNewTransporter(null)}
+        title="New transporter"
+        subtitle="Saved to your transporter list"
+        footer={<Button title="Save and use" icon="check" onPress={() => void saveNewTransporter()} testID="save-transporter" />}
+      >
+        {newTransporter ? (
+          <View style={{ paddingHorizontal: 18, gap: 12 }}>
+            <Field label="Transporter name" required value={newTransporter.name} onChangeText={(name) => setNewTransporter({ ...newTransporter, name })} error={transporterError.name} autoCapitalize="words" testID="transporter-name" />
+            <Field label="Transporter ID / GSTIN" value={newTransporter.transporterId} onChangeText={(value) => setNewTransporter({ ...newTransporter, transporterId: value.toUpperCase().replace(/\s/g, '') })} error={transporterError.transporterId} autoCapitalize="characters" maxLength={15} placeholder="Optional" testID="transporter-id" />
+            <Field label="Usual vehicle number" value={newTransporter.vehicleNumber} onChangeText={(value) => setNewTransporter({ ...newTransporter, vehicleNumber: value.toUpperCase().replace(/[\s-]/g, '') })} error={transporterError.vehicleNumber} autoCapitalize="characters" maxLength={12} placeholder="Optional" />
+          </View>
+        ) : null}
+      </Sheet>
     </View>
   );
 }
@@ -581,9 +616,12 @@ function EditorSection({ title, icon, open, onToggle, errors, summary, children 
 
 
 const NO_BANK = 'none';
+const DOCUMENT_TYPES = ['Tax invoice', 'Bill of supply', 'Delivery challan', 'Credit note'];
 
 const styles = StyleSheet.create({
   bankEmpty: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  supply: { borderRadius: 12, padding: 12, gap: 3 },
+  pickRow: { minHeight: 56, borderWidth: 1, borderRadius: 14, paddingHorizontal: 14, paddingVertical: 9, flexDirection: 'row', alignItems: 'center', gap: 11 },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   body: { padding: 16, paddingBottom: 30, gap: 14, maxWidth: 720, width: '100%', alignSelf: 'center' },
   row: { flexDirection: 'row', gap: 10, alignItems: 'flex-start' },

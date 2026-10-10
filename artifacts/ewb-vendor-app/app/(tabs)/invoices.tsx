@@ -3,7 +3,7 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
-import { newInvoice, nextInvoiceNumber, releasedInvoiceIds, uid, type Invoice } from '@/lib/domain';
+import { type Invoice } from '@/lib/domain';
 import { useAppStore, useScopedRecords } from '@/state/app-store';
 import { Button, Card, Chip, ChipRow, EmptyState, Field, Heading, IconButton, Page, SearchBar, SectionTitle, Sheet, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
@@ -50,24 +50,19 @@ export default function InvoicesScreen() {
 
   const dateFiltered = Boolean(dateFrom || dateTo);
 
+  // Saved invoices open as a preview (only Generate EWB there); drafts open in the editor.
+  const openInvoice = (invoice: Invoice) => router.push({ pathname: '/invoice/[id]', params: { id: invoice.id, view: '1' } });
+
   const actions = async (invoice: Invoice) => {
     const choice = await dialog.prompt({
       title: invoice.invoiceNumber || 'Untitled invoice',
       message: 'Choose an action for this invoice.',
-      choices: invoice.status === 'draft' ? ['Open', 'Duplicate as new draft', 'Delete draft'] : ['Open', 'Duplicate as new draft'],
+      choices: invoice.status === 'draft' ? ['Open', 'Delete draft'] : ['Open', 'Edit invoice'],
       confirmLabel: 'Continue',
     });
     if (!choice) return;
-    if (choice.choice === 'Open') router.push(`/invoice/${invoice.id}`);
-    if (choice.choice === 'Duplicate as new draft') {
-      const fresh = newInvoice(invoice.templateId);
-      const { revisionHistory: _h, ...rest } = invoice;
-      const sameSeller = store.invoices.filter((other) => other.sellerGstin === invoice.sellerGstin);
-      const copy: Invoice = { ...rest, ...{ id: fresh.id, createdAt: fresh.createdAt, updatedAt: fresh.updatedAt, invoiceDate: fresh.invoiceDate }, invoiceNumber: nextInvoiceNumber(sameSeller, releasedInvoiceIds(sameSeller, store.ewbs)), status: 'draft', ewbRequired: undefined, ewbId: undefined, ewbNumber: undefined, idempotencyKey: undefined, extraction: undefined, sourceFileName: undefined, revisionHistory: [], lines: invoice.lines.map((line) => ({ ...line, id: uid('l') })) };
-      await store.saveInvoice(copy);
-      dialog.toast('Copied as a new draft', 'success');
-      router.push(`/invoice/${copy.id}`);
-    }
+    if (choice.choice === 'Open') openInvoice(invoice);
+    if (choice.choice === 'Edit invoice') router.push(`/invoice/${invoice.id}`);
     if (choice.choice === 'Delete draft') {
       const ok = await dialog.confirm({ title: 'Delete this draft?', message: 'This removes the unsubmitted draft from all your devices. This cannot be undone.', confirmLabel: 'Delete draft', cancelLabel: 'Keep it', tone: 'danger', icon: 'trash-2' });
       if (ok) {
@@ -111,10 +106,10 @@ export default function InvoicesScreen() {
       {filtered.length ? (
         <View style={{ gap: 10 }}>
           {filtered.slice(0, limit).map((invoice) => (
-            <InvoiceCard key={invoice.id} invoice={invoice} onPress={() => router.push(`/invoice/${invoice.id}`)} onLongPress={() => void actions(invoice)} />
+            <InvoiceCard key={invoice.id} invoice={invoice} onPress={() => openInvoice(invoice)} onLongPress={() => void actions(invoice)} />
           ))}
           {filtered.length > limit ? <Button title={`Show more (${filtered.length - limit})`} variant="outline" onPress={() => setLimit((current) => current + PAGE)} /> : null}
-          <TextBlock size={11} color={colors.mutedForeground} style={{ textAlign: 'center' }}>Tip: long-press an invoice to duplicate or delete it.</TextBlock>
+          <TextBlock size={11} color={colors.mutedForeground} style={{ textAlign: 'center' }}>Tip: long-press an invoice to edit it or delete a draft.</TextBlock>
         </View>
       ) : (
         <Card>

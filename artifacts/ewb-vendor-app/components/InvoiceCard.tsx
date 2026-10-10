@@ -21,7 +21,12 @@ export default function InvoiceCard({ invoice, onPress, onLongPress }: { invoice
             </View>
             <View style={{ flex: 1, gap: 3 }}>
               <TextBlock size={15} weight="semibold" numberOfLines={1}>{invoice.buyerName || 'Buyer not added'}</TextBlock>
-              <TextBlock size={12} color={colors.mutedForeground} numberOfLines={1}>{invoice.invoiceNumber || 'No number'} · {formatDate(invoice.invoiceDate)}</TextBlock>
+              <View style={styles.numberRow}>
+                <View style={[styles.number, { backgroundColor: colors.accent }]}>
+                  <TextBlock size={12} weight="bold" color={colors.primary} numberOfLines={1}>{invoice.invoiceNumber || 'No number'}</TextBlock>
+                </View>
+                <TextBlock size={12} color={colors.mutedForeground} numberOfLines={1}>{formatDate(invoice.invoiceDate)}</TextBlock>
+              </View>
             </View>
             <View style={{ alignItems: 'flex-end', gap: 2 }}>
               <TextBlock size={15} weight="bold">{formatInr(total)}</TextBlock>
@@ -49,5 +54,7 @@ const styles = StyleSheet.create({
   top: { flexDirection: 'row', gap: 11, alignItems: 'center' },
   icon: { width: 40, height: 40, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
   bottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 51 },
+  numberRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+  number: { borderRadius: 7, paddingHorizontal: 7, paddingVertical: 2, flexShrink: 1 },
   ewbLink: { flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 28 },
 });

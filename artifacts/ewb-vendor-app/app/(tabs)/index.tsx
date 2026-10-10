@@ -136,7 +136,7 @@ export default function DashboardScreen() {
       {activity.length ? (
         <View style={{ gap: 10 }}>
           {activity.map((item) => item.kind === 'invoice'
-            ? <InvoiceCard key={`i-${item.invoice.id}`} invoice={item.invoice} onPress={() => router.push(`/invoice/${item.invoice.id}`)} />
+            ? <InvoiceCard key={`i-${item.invoice.id}`} invoice={item.invoice} onPress={() => router.push({ pathname: '/invoice/[id]', params: { id: item.invoice.id, view: '1' } })} />
             : <EwbActivity key={`e-${item.ewb.id}`} ewb={item.ewb} />)}
         </View>
       ) : (
