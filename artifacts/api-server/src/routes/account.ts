@@ -9,6 +9,7 @@ import { authMode } from "../lib/auth";
 import { gstinApiConfigured } from "../lib/gstinapi";
 import { mailer } from "../lib/mailer";
 import { creditCosts } from "../lib/wallet";
+import { distanceConfigured } from "../lib/distance";
 
 const router: IRouter = Router();
 
@@ -23,6 +24,7 @@ router.get("/config", (_req, res) => {
     emailOtp: authMode === "firebase" && (process.env["OTP_PEPPER"] ?? "").length >= 16 && mailer.configured,
     ewbCredentialsRequired: Boolean(ewbProvider?.needsCredentials),
     creditCosts,
+    distanceLookup: distanceConfigured,
   });
 });
 

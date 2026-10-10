@@ -5,6 +5,8 @@ import {
   amountInWords,
   formatDate,
   formatInr,
+  hasDispatch,
+  hasShipTo,
   invoiceTotals,
   lineTax,
   templates,
@@ -45,6 +47,7 @@ export function invoiceHtml(invoice: Invoice) {
   const accent = minimal ? '#3c4a43' : template.accent;
   const totals = invoiceTotals(invoice);
   const lines = invoice.lines.filter((line) => line.description.trim() || line.taxablePaise);
+  const discounted = lines.some((line) => line.discountPaise);
   const party = (title: string, name: string, gstin: string, address: string, state: string, pin: string) => `
     <div class="col box"><div class="label">${title}</div><strong>${esc(name) || '—'}</strong>
     <div class="muted">${esc(address)}</div><div class="muted">${esc(state)} ${esc(pin)}</div>
@@ -78,18 +81,21 @@ export function invoiceHtml(invoice: Invoice) {
 
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(invoice.invoiceNumber || 'Invoice')}</title><style>${baseCss(accent, compact)}</style></head><body>
   <div class="head"><div><h1 class="${minimal ? '' : 'accent'}">${esc(invoice.sellerName)}</h1>
-    <div class="muted">${esc(invoice.sellerAddress)}</div><div class="muted">${esc(invoice.sellerState)} ${esc(invoice.sellerPincode)} · GSTIN ${esc(invoice.sellerGstin)}</div></div>
+    <div class="muted">${esc(invoice.sellerAddress)}</div><div class="muted">${esc(invoice.sellerState)} ${esc(invoice.sellerPincode)} · GSTIN ${esc(invoice.sellerGstin)}</div>
+    ${hasDispatch(invoice) ? `<div class="muted">Dispatch from: ${esc(invoice.dispatchFrom || invoice.sellerAddress)}, ${esc(invoice.dispatchState)} ${esc(invoice.dispatchPincode)}</div>` : ''}</div>
     <div style="text-align:right"><span class="badge">${esc(invoice.documentType.toUpperCase())}</span>
     <div style="margin-top:8px;font-size:14px"><strong>${esc(invoice.invoiceNumber || 'Draft')}</strong></div>
     <div class="muted">${formatDate(invoice.invoiceDate)}</div></div></div>
   ${template.id === 'dispatch' ? transport : ''}
   <div class="row" style="margin-top:${template.id === 'dispatch' ? 12 : 0}px">
     ${party(service ? 'Client' : 'Bill to', invoice.buyerName, invoice.buyerGstin, invoice.buyerAddress, invoice.buyerState, invoice.buyerPincode)}
-    ${minimal ? '' : party('Ship to', invoice.buyerName, invoice.buyerGstin, invoice.shipTo || invoice.buyerAddress, invoice.buyerState, invoice.buyerPincode)}
+    ${minimal ? '' : hasShipTo(invoice)
+      ? party('Ship to', invoice.buyerName, invoice.buyerGstin, invoice.shipTo || invoice.buyerAddress, invoice.shipToState, invoice.shipToPincode)
+      : party('Ship to', invoice.buyerName, invoice.buyerGstin, invoice.buyerAddress, invoice.buyerState, invoice.buyerPincode)}
   </div>
   <div class="muted" style="margin-top:8px">Place of supply: <strong>${esc(invoice.placeOfSupply || invoice.buyerState)}</strong> · ${invoice.supplyType === 'intra' ? 'Intra-state (CGST + SGST)' : 'Inter-state (IGST)'}</div>
-  <table><tr><th>#</th><th>${service ? 'Service' : 'Description'}</th><th>${service ? 'SAC' : 'HSN'}</th><th class="num">${service ? 'Hrs/Qty' : 'Qty'}</th>${minimal ? '' : '<th class="num">Rate</th>'}<th class="num">Taxable</th><th class="num">GST</th><th class="num">Amount</th></tr>
-  ${lines.map((line, index) => `<tr><td>${index + 1}</td><td>${esc(line.description)}</td><td>${esc(line.hsn)}</td><td class="num">${esc(line.quantity)} ${esc(line.unit)}</td>${minimal ? '' : `<td class="num">${line.unitPricePaise ? formatInr(line.unitPricePaise) : '—'}</td>`}<td class="num">${formatInr(line.taxablePaise)}</td><td class="num">${line.taxRate}%</td><td class="num">${formatInr(line.taxablePaise + lineTax(line))}</td></tr>`).join('')}
+  <table><tr><th>#</th><th>${service ? 'Service' : 'Description'}</th><th>${service ? 'SAC' : 'HSN'}</th><th class="num">${service ? 'Hrs/Qty' : 'Qty'}</th>${minimal ? '' : '<th class="num">Rate</th>'}${discounted ? '<th class="num">Disc.</th>' : ''}<th class="num">Taxable</th><th class="num">GST</th><th class="num">Amount</th></tr>
+  ${lines.map((line, index) => `<tr><td>${index + 1}</td><td>${esc(line.description)}</td><td>${esc(line.hsn)}</td><td class="num">${esc(line.quantity)} ${esc(line.unit)}</td>${minimal ? '' : `<td class="num">${line.unitPricePaise ? formatInr(line.unitPricePaise) : '—'}</td>`}${discounted ? `<td class="num">${line.discountPaise ? formatInr(line.discountPaise) : '—'}</td>` : ''}<td class="num">${formatInr(line.taxablePaise)}</td><td class="num">${line.taxRate}%</td><td class="num">${formatInr(line.taxablePaise + lineTax(line))}</td></tr>`).join('')}
   </table>
   ${template.id === 'tax-summary' ? hsnSummary : ''}
   <div class="row" style="margin-top:12px"><div class="col"><div class="label">Amount in words</div><div>${esc(amountInWords(totals.total))}</div>

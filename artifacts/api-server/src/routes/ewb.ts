@@ -19,6 +19,8 @@ const inputSchema = z.object({
   supplyType: z.enum(["intra", "inter"]),
   seller: party,
   buyer: party,
+  dispatch: z.object({ address: z.string().max(400), state: z.string().max(60), pincode: z.string().max(6) }).optional(),
+  shipTo: z.object({ address: z.string().max(400), state: z.string().max(60), pincode: z.string().max(6) }).optional(),
   lines: z.array(z.object({
     description: z.string().max(200),
     hsn: z.string().max(8),

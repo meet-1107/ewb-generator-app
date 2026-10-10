@@ -77,28 +77,29 @@ The server marks accounts verified with the Firebase Admin SDK.
 
 ## Part 2: Deploy the server and database
 
-Do steps 1–2 once, in the Firebase console (https://console.firebase.google.com/project/ewb---generator):
+Do steps 1–3 once, in the Firebase console (https://console.firebase.google.com/project/ewb---generator):
 
 1. **Create the database.** Go to **Build → Firestore Database → Create database**. Choose location **asia-south1 (Mumbai)** and **Start in production mode**, then click **Create**. The location cannot be changed later.
 2. **Turn on Hosting.** Go to **Build → Hosting → Get started**, then click **Next** through the steps until **Continue to console**. You don't need to run the commands it shows.
+3. **Turn on road distances.** Open https://console.cloud.google.com/apis/library/routes.googleapis.com?project=ewb---generator and click **Enable**. The invoice screen then fills the distance from the two PIN codes. Each PIN pair is looked up once and saved (Firestore `distances`); Google's free monthly quota covers thousands of lookups.
 
 Then, on your PC, in the project folder (PowerShell or the VS Code terminal):
 
-3. Get the latest code and packages:
+4. Get the latest code and packages:
 
    ```powershell
    git pull origin claude/vibrant-ptolemy-yxewea
    npx pnpm@9.15.9 install
    ```
 
-4. Log in to Firebase (a browser window opens; pick the Google account that owns the project):
+5. Log in to Firebase (a browser window opens; pick the Google account that owns the project):
 
    ```powershell
    npm install -g firebase-tools
    firebase login
    ```
 
-5. Run the first deploy:
+6. Run the first deploy:
 
    ```powershell
    firebase deploy
@@ -106,14 +107,14 @@ Then, on your PC, in the project folder (PowerShell or the VS Code terminal):
 
    The first time, it stops with **Created functions/.env**.
 
-6. Open `functions/.env` in VS Code (`code functions/.env`) and fill in:
+7. Open `functions/.env` in VS Code (`code functions/.env`) and fill in:
    - `GSTINAPI_KEY=gak_…` (your gstinapi.in key)
    - `RESEND_API_KEY=re_…` (your Resend key)
    - optional: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`
 
    Save the file.
 
-7. Deploy again:
+8. Deploy again:
 
    ```powershell
    firebase deploy
@@ -123,7 +124,7 @@ Then, on your PC, in the project folder (PowerShell or the VS Code terminal):
    - If it asks how many days to keep container images, press **Enter**.
    - The first deploy takes about 5–10 minutes.
 
-8. Check it: open https://ewb---generator.web.app/api/healthz. It should show `{"status":"ok"}`.
+9. Check it: open https://ewb---generator.web.app/api/healthz. It should show `{"status":"ok"}`.
 
 Keep a copy of `functions/.env` somewhere safe (not in Git). If it is lost, saved e-way bill portal logins can no longer be decrypted.
 
@@ -305,7 +306,7 @@ Alternative (USB): download the `.apk` to your PC, enable **Developer options �
 | Build fails: `google-services.json` not found | Run the `eas env:create … GOOGLE_SERVICES_JSON` command from Part 4, step 3. |
 | EAS build fails at `pnpm install` with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH` | Keep `"pnpm": "9.15.9"` in `eas.json`. |
 | "App not installed" over an older APK | The new build was signed with a different keystore. Uninstall the old app first. |
-| `firebase deploy`: "Created functions/.env" or "still say your_key" | Fill in `functions/.env` (Part 2, step 6) and run `firebase deploy` again. |
+| `firebase deploy`: "Created functions/.env" or "still say your_key" | Fill in `functions/.env` (Part 2, step 7) and run `firebase deploy` again. |
 | `firebase deploy`: Firestore database does not exist | Create it first (Part 2, step 1). |
 | `firebase deploy`: no Hosting site | Click **Hosting → Get started** in the console (Part 2, step 2). |
 | `firebase deploy`: a build or permission error mentioning `396238368123-compute@developer.gserviceaccount.com` | Enable the Compute Engine API once (https://console.cloud.google.com/apis/library/compute.googleapis.com?project=ewb---generator), wait two minutes, and deploy again. |

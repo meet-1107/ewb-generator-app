@@ -91,6 +91,8 @@ export type ServiceConfig = {
   emailOtp?: boolean;
   ewbCredentialsRequired?: boolean;
   creditCosts?: CreditCosts;
+  /** The server can look up road distances between PIN codes. */
+  distanceLookup?: boolean;
 };
 /** Registered details for a GSTIN, from the server's verified-GSTIN registry. */
 export type VerifiedGstin = {
@@ -173,6 +175,8 @@ export const api = {
   saveEwbCredential: (gstin: string, username: string, password: string) =>
     request<{ credential: EwbCredential; checked: boolean; message: string }>('/ewb-credentials', { method: 'PUT', body: { gstin, username, password }, timeoutMs: 30_000 }),
   deleteEwbCredential: (gstin: string) => request<{ ok: true }>(`/ewb-credentials/${encodeURIComponent(gstin)}`, { method: 'DELETE' }),
+  /** Road distance between two PIN codes (Google Routes, looked up once per pair on the server). */
+  distance: (from: string, to: string) => request<{ from: string; to: string; km: number; cached: boolean }>(`/distance?from=${from}&to=${to}`, { timeoutMs: 20_000 }),
   verifyGstin: (gstin: string) => request<{ gstin: VerifiedGstin; cached: boolean }>('/gstin/verify', { body: { gstin }, timeoutMs: 30_000 }),
   wallet: () => request<WalletSummary>('/wallet'),
   sendEmailOtp: (email: string) => request<{ message: string; cooldownSeconds: number }>('/auth/email-otp/send', { body: { email }, timeoutMs: 30_000 }),

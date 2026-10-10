@@ -84,6 +84,10 @@ export type EwbInput = {
   supplyType: "intra" | "inter";
   seller: { name: string; gstin: string; address: string; state: string; pincode: string };
   buyer: { name: string; gstin: string; address: string; state: string; pincode: string };
+  /** Where the goods leave from, when not the seller's address. */
+  dispatch?: { address: string; state: string; pincode: string };
+  /** Where the goods are delivered, when not the buyer's address. */
+  shipTo?: { address: string; state: string; pincode: string };
   lines: { description: string; hsn: string; quantity: string; unit: string; taxablePaise: number; taxRate: number }[];
   transport: {
     transporterName: string;
@@ -126,6 +130,10 @@ export function validateEwb(input: EwbInput, now = new Date()): { issues: FieldI
     if (buyerIssue) push("buyer", "buyerGstin", buyerIssue);
   }
   if (!/^[1-9]\d{5}$/.test(input.buyer.pincode.trim())) push("buyer", "buyerPincode", "Receiver PIN code must be 6 digits.");
+  if (input.dispatch && !/^[1-9]\d{5}$/.test(input.dispatch.pincode.trim())) push("seller", "dispatchPincode", "Dispatch PIN code must be 6 digits.");
+  if (input.dispatch && !stateFromName(input.dispatch.state)) push("seller", "dispatchState", "Choose the dispatch state.");
+  if (input.shipTo && !/^[1-9]\d{5}$/.test(input.shipTo.pincode.trim())) push("buyer", "shipToPincode", "Delivery PIN code must be 6 digits.");
+  if (input.shipTo && !stateFromName(input.shipTo.state)) push("buyer", "shipToState", "Choose the delivery state.");
   const buyerState = stateFromName(input.buyer.state);
   if (!buyerState) push("buyer", "buyerState", "Choose the receiver state from the list.");
   if (sellerState && buyerState) {

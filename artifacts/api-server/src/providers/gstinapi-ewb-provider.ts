@@ -91,6 +91,9 @@ export function buildGeneratePayload(input: EwbInput) {
   const half = Math.round(taxTotal / 2);
   const fromState = stateCode(input.seller.state);
   const toState = stateCode(input.buyer.state);
+  // The goods move from the dispatch place to the delivery place; the GSTIN states stay the parties'.
+  const from = input.dispatch ?? input.seller;
+  const to = input.shipTo ?? input.buyer;
   const mode = TRANS_MODE[input.transport.mode] ?? "1";
   return {
     supplyType: "O",
@@ -100,18 +103,18 @@ export function buildGeneratePayload(input: EwbInput) {
     docDate: nicDate(input.invoiceDate),
     fromGstin: input.seller.gstin,
     fromTrdName: input.seller.name,
-    fromAddr1: input.seller.address.slice(0, 120),
-    fromPlace: input.seller.address.split(",").pop()?.trim().slice(0, 50) || input.seller.state,
-    fromPincode: Number(input.seller.pincode),
+    fromAddr1: from.address.slice(0, 120),
+    fromPlace: from.address.split(",").pop()?.trim().slice(0, 50) || from.state,
+    fromPincode: Number(from.pincode),
     fromStateCode: fromState,
-    actFromStateCode: fromState,
+    actFromStateCode: stateCode(from.state),
     toGstin: input.buyer.gstin || "URP",
     toTrdName: input.buyer.name,
-    toAddr1: input.buyer.address.slice(0, 120),
-    toPlace: input.buyer.address.split(",").pop()?.trim().slice(0, 50) || input.buyer.state,
-    toPincode: Number(input.buyer.pincode),
+    toAddr1: to.address.slice(0, 120),
+    toPlace: to.address.split(",").pop()?.trim().slice(0, 50) || to.state,
+    toPincode: Number(to.pincode),
     toStateCode: toState,
-    actToStateCode: toState,
+    actToStateCode: stateCode(to.state),
     transactionType: 1,
     totalValue: rupees(input.totals.taxable),
     cgstValue: inter ? 0 : rupees(half),

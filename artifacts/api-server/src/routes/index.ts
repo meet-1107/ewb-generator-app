@@ -5,6 +5,7 @@ import gstRouter from "./gst";
 import pdfRouter from "./pdf";
 import accountRouter from "./account";
 import gstinRouter from "./gstin";
+import distanceRouter from "./distance";
 import authRouter from "./auth";
 import { adminRouter, walletRouter } from "./wallet";
 import { requireWorkspace } from "../lib/auth";
@@ -20,6 +21,7 @@ router.use(gstRouter);
 router.use(pdfRouter);
 router.use(accountRouter);
 router.use(gstinRouter);
+router.use(distanceRouter);
 router.use(walletRouter);
 
 export default router;

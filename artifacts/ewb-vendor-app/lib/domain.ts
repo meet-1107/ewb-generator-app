@@ -15,6 +15,8 @@ export type InvoiceLine = {
   quantity: string;
   unit: string;
   unitPricePaise?: number;
+  /** Discount on this line, already taken off `taxablePaise`. */
+  discountPaise?: number;
   taxablePaise: number;
   taxRate: number;
 };
@@ -29,13 +31,21 @@ export type Invoice = {
   sellerAddress: string;
   sellerState: string;
   sellerPincode: string;
+  /** Dispatch place, when goods leave from somewhere other than the seller's address. */
   dispatchFrom: string;
+  dispatchState: string;
+  dispatchPincode: string;
   buyerName: string;
   buyerGstin: string;
   buyerAddress: string;
   buyerState: string;
   buyerPincode: string;
+  /** Delivery place, when not the buyer's address. */
   shipTo: string;
+  shipToState: string;
+  shipToPincode: string;
+  /** PIN pair ("411001-560001") the distance was looked up for; a change looks it up again. */
+  distanceFor?: string;
   placeOfSupply: string;
   supplyType: SupplyType;
   lines: InvoiceLine[];
@@ -286,12 +296,16 @@ export function newInvoice(templateId = 'classic'): Invoice {
     sellerState: '',
     sellerPincode: '',
     dispatchFrom: '',
+    dispatchState: '',
+    dispatchPincode: '',
     buyerName: '',
     buyerGstin: '',
     buyerAddress: '',
     buyerState: '',
     buyerPincode: '',
     shipTo: '',
+    shipToState: '',
+    shipToPincode: '',
     placeOfSupply: '',
     supplyType: 'intra',
     lines: [newLine(templateId)],
@@ -359,6 +373,27 @@ export function relativeTime(iso: string) {
   return days > 0 ? `${days} d ago` : `in ${-days} d`;
 }
 
+/** Taxable value of quantity × rate less the discount (never below zero). */
+export function lineTaxable(quantity: string, unitPricePaise: number, discountPaise = 0) {
+  return Math.max(0, Math.round((Number(quantity) || 0) * unitPricePaise) - discountPaise);
+}
+
+/** Has the user filled any part of a "dispatch from" / "ship to" place? */
+export function hasDispatch(invoice: Invoice) {
+  return Boolean(invoice.dispatchFrom.trim() || invoice.dispatchState || invoice.dispatchPincode.trim());
+}
+export function hasShipTo(invoice: Invoice) {
+  return Boolean(invoice.shipTo.trim() || invoice.shipToState || invoice.shipToPincode.trim());
+}
+
+/** PIN codes the goods move between: dispatch place → delivery place, else seller → buyer. */
+export function routePins(invoice: Invoice) {
+  return {
+    from: (hasDispatch(invoice) ? invoice.dispatchPincode : invoice.sellerPincode).trim(),
+    to: (hasShipTo(invoice) ? invoice.shipToPincode : invoice.buyerPincode).trim(),
+  };
+}
+
 export function lineTax(line: InvoiceLine) {
   return Math.round((line.taxablePaise * line.taxRate) / 100);
 }
@@ -412,6 +447,14 @@ export function invoiceIssues(invoice: Invoice, others: Invoice[] = [], released
   if (buyerProblem) add('buyer', 'buyerGstin', buyerProblem);
   if (!stateByName(invoice.buyerState)) add('buyer', 'buyerState', 'Choose the receiver state.');
   if (!/^[1-9]\d{5}$/.test(invoice.buyerPincode.trim())) add('buyer', 'buyerPincode', 'Enter the 6-digit PIN code.');
+  if (hasDispatch(invoice)) {
+    if (!stateByName(invoice.dispatchState)) add('seller', 'dispatchState', 'Choose the dispatch state.');
+    if (!/^[1-9]\d{5}$/.test(invoice.dispatchPincode.trim())) add('seller', 'dispatchPincode', 'Enter the 6-digit dispatch PIN code.');
+  }
+  if (hasShipTo(invoice)) {
+    if (!stateByName(invoice.shipToState)) add('buyer', 'shipToState', 'Choose the delivery state.');
+    if (!/^[1-9]\d{5}$/.test(invoice.shipToPincode.trim())) add('buyer', 'shipToPincode', 'Enter the 6-digit delivery PIN code.');
+  }
 
   if (!invoice.invoiceNumber.trim()) add('invoice', 'invoiceNumber', 'Invoice number is required.');
   else if (!/^[A-Za-z0-9/-]{1,16}$/.test(invoice.invoiceNumber.trim())) add('invoice', 'invoiceNumber', 'Use up to 16 letters, digits, / or -.');
@@ -466,8 +509,10 @@ export function toEwbInput(invoice: Invoice) {
     invoiceDate: invoice.invoiceDate,
     documentType: invoice.documentType,
     supplyType: invoice.supplyType,
-    seller: { name: invoice.sellerName.trim(), gstin: invoice.sellerGstin.trim(), address: invoice.dispatchFrom.trim() || invoice.sellerAddress.trim(), state: invoice.sellerState, pincode: invoice.sellerPincode.trim() },
-    buyer: { name: invoice.buyerName.trim(), gstin: invoice.buyerGstin.trim(), address: invoice.shipTo.trim() || invoice.buyerAddress.trim(), state: invoice.buyerState, pincode: invoice.buyerPincode.trim() },
+    seller: { name: invoice.sellerName.trim(), gstin: invoice.sellerGstin.trim(), address: invoice.sellerAddress.trim(), state: invoice.sellerState, pincode: invoice.sellerPincode.trim() },
+    buyer: { name: invoice.buyerName.trim(), gstin: invoice.buyerGstin.trim(), address: invoice.buyerAddress.trim(), state: invoice.buyerState, pincode: invoice.buyerPincode.trim() },
+    ...(hasDispatch(invoice) ? { dispatch: { address: invoice.dispatchFrom.trim() || invoice.sellerAddress.trim(), state: invoice.dispatchState, pincode: invoice.dispatchPincode.trim() } } : {}),
+    ...(hasShipTo(invoice) ? { shipTo: { address: invoice.shipTo.trim() || invoice.buyerAddress.trim(), state: invoice.shipToState, pincode: invoice.shipToPincode.trim() } } : {}),
     lines: invoice.lines
       .filter((line) => line.description.trim() && line.taxablePaise > 0)
       .map(({ description, hsn, quantity, unit, taxablePaise, taxRate }) => ({ description: description.trim(), hsn: hsn.trim(), quantity, unit, taxablePaise, taxRate })),

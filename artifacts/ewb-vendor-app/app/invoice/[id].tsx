@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Keyboard, Platform, Pressable, StyleSheet, View } from 'react-native';
+import { Keyboard, Modal, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -7,12 +7,12 @@ import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollV
 import {
   Button,
   Card,
+  Checkbox,
   Chip,
   ChipRow,
   Field,
   IconButton,
   KeyValue,
-  MoneyField,
   Notice,
   ProgressSteps,
   ScreenHeader,
@@ -23,18 +23,18 @@ import {
   TextBlock,
 } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
+import { InvoicePreview } from '@/components/InvoicePreview';
+import { InvoiceProducts } from '@/components/InvoiceProducts';
+import { api } from '@/lib/api';
 import { useColors } from '@/hooks/useColors';
 import { useGstinVerify } from '@/hooks/useGstinVerify';
 import {
   expectedSupplyType,
   formatDate,
   formatInr,
-  GST_RATES,
   invoiceIssues,
   invoiceTotals,
-  lineTax,
   newInvoice,
-  newLine,
   STATES,
   stateForGstin,
   gstinProblem,
@@ -42,20 +42,20 @@ import {
   transportIssues,
   TRANSPORT_MODES,
   uid,
-  UNITS,
   invoiceBank,
+  hasDispatch,
+  hasShipTo,
+  routePins,
   invoiceSeriesProblem,
   nextInvoiceNumber,
   releasedInvoiceIds,
   type Invoice,
-  type InvoiceLine,
   type Section,
 } from '@/lib/domain';
 import { invoiceHtml, printHtml, shareHtmlAsPdf } from '@/lib/documents';
 import { useAppStore } from '@/state/app-store';
 
 const stateOptions = STATES.map((state) => ({ value: state.name, label: state.name, detail: `Code ${state.code}` }));
-const unitOptions = UNITS.map((unit) => ({ value: unit, label: unit }));
 const sectionOrder = (templateId: string): Section[] =>
   templateId === 'dispatch' ? ['transport', 'seller', 'buyer', 'invoice', 'items'] : ['seller', 'buyer', 'invoice', 'items', 'transport'];
 
@@ -70,7 +70,11 @@ export default function InvoiceEditorScreen() {
   const [open, setOpen] = useState<Record<Section, boolean>>({ seller: false, buyer: true, invoice: true, items: true, transport: false });
   const [attempted, setAttempted] = useState(false);
   const [saveState, setSaveState] = useState<'saved' | 'saving' | 'idle'>('saved');
-  const [picker, setPicker] = useState<null | 'buyer' | 'transporter' | { line: string }>(null);
+  const [picker, setPicker] = useState<null | 'buyer' | 'transporter'>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [showDispatch, setShowDispatch] = useState(false);
+  const [showShipTo, setShowShipTo] = useState(false);
+  const [distanceState, setDistanceState] = useState<'idle' | 'loading' | 'error'>('idle');
   const loaded = useRef(false);
 
   useEffect(() => {
@@ -79,6 +83,8 @@ export default function InvoiceEditorScreen() {
     loaded.current = true;
     if (found) {
       setInvoice(found);
+      setShowDispatch(hasDispatch(found));
+      setShowShipTo(hasShipTo(found));
       if (found.templateId === 'dispatch') setOpen((current) => ({ ...current, transport: true }));
       if (!found.sellerGstin || !found.sellerName) setOpen((current) => ({ ...current, seller: true }));
     } else {
@@ -108,6 +114,34 @@ export default function InvoiceEditorScreen() {
   const issues = useMemo(() => (invoice ? [...invoiceIssues(invoice, store.invoices, released), ...transportIssues(invoice)] : []), [invoice, store.invoices, released]);
   // The first invoice of a GSTIN is numbered by the user; later ones continue from it.
   const firstInvoice = useMemo(() => Boolean(invoice) && !store.invoices.some((other) => other.id !== invoice!.id && other.sellerGstin === invoice!.sellerGstin && other.invoiceNumber.trim()), [invoice, store.invoices]);
+  // Road distance from Google once both PIN codes are known (dispatch / delivery places when given).
+  const pins = invoice ? routePins(invoice) : null;
+  const pinKey = pins && /^[1-9]\d{5}$/.test(pins.from) && /^[1-9]\d{5}$/.test(pins.to) ? `${pins.from}-${pins.to}` : '';
+  const distanceAuto = Boolean(pinKey && invoice?.distanceFor === pinKey);
+  useEffect(() => {
+    if (!invoice || locked || !pinKey || invoice.distanceFor === pinKey) return;
+    // Older invoices keep a distance someone typed before automatic lookup existed.
+    if (invoice.distanceFor === undefined && invoice.distanceKm.trim()) return;
+    if (store.config?.distanceLookup === false) return;
+    let active = true;
+    setDistanceState('loading');
+    const timer = setTimeout(() => {
+      const [from, to] = pinKey.split('-') as [string, string];
+      api.distance(from, to)
+        .then((result) => {
+          if (!active) return;
+          setInvoice((current) => (current ? { ...current, distanceKm: String(result.km), distanceFor: pinKey, updatedAt: new Date().toISOString() } : current));
+          setDistanceState('idle');
+        })
+        .catch(() => active && setDistanceState('error'));
+    }, 700);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pinKey, invoice?.distanceFor, locked]);
+
   const errorFor = (field: string) => (attempted ? issues.find((issue) => issue.field === field)?.message : undefined);
   const sectionErrors = (section: Section) => (attempted ? issues.filter((issue) => issue.section === section).length : 0);
   const totals = invoice ? invoiceTotals(invoice) : null;
@@ -127,20 +161,7 @@ export default function InvoiceEditorScreen() {
     });
   };
   const set = <K extends keyof Invoice>(key: K) => (value: Invoice[K]) => patch({ [key]: value } as Partial<Invoice>);
-  const patchLine = (lineId: string, changes: Partial<InvoiceLine>) => {
-    setInvoice((current) => {
-      if (!current) return current;
-      const lines = current.lines.map((line) => {
-        if (line.id !== lineId) return line;
-        const next = { ...line, ...changes };
-        if (next.unitPricePaise && ('quantity' in changes || 'unitPricePaise' in changes)) {
-          next.taxablePaise = Math.round((Number(next.quantity) || 0) * next.unitPricePaise);
-        }
-        return next;
-      });
-      return { ...current, lines, status: current.status === 'ready' ? 'draft' : current.status, updatedAt: new Date().toISOString() };
-    });
-  };
+
 
   const onGstinChange = (key: 'sellerGstin' | 'buyerGstin', stateKey: 'sellerState' | 'buyerState') => (raw: string) => {
     const value = raw.toUpperCase().replace(/\s/g, '');
@@ -197,6 +218,7 @@ export default function InvoiceEditorScreen() {
       icon: 'alert-triangle',
     });
     if (!useNext) {
+      setPreviewing(false);
       setAttempted(true);
       setOpen((current) => ({ ...current, invoice: true }));
       return null;
@@ -213,6 +235,13 @@ export default function InvoiceEditorScreen() {
     }
   };
 
+  /** Right after the number is typed: warn when it leaves the series. */
+  const checkNumberNow = async () => {
+    if (!invoice || !invoiceSeriesProblem(invoice, store.invoices, released)) return;
+    const fixed = await checkSeries(invoice);
+    if (fixed && fixed.invoiceNumber !== invoice.invoiceNumber) patch({ invoiceNumber: fixed.invoiceNumber });
+  };
+
   /** Save: check the invoice, then ask whether it needs an e-way bill. */
   const finishInvoice = async () => {
     Keyboard.dismiss();
@@ -222,6 +251,7 @@ export default function InvoiceEditorScreen() {
     const problems = invoiceIssues(checked, store.invoices, released);
     setInvoice(checked);
     if (problems.length) {
+      setPreviewing(false);
       showProblems(problems, `Fix ${problems.length} item${problems.length === 1 ? '' : 's'} highlighted in red`);
       return;
     }
@@ -230,6 +260,7 @@ export default function InvoiceEditorScreen() {
     await store.saveInvoice(saved);
     setSaveState('saved');
     await rememberDetails(saved);
+    setPreviewing(false);
     const answer = await dialog.prompt({
       title: 'Invoice saved. Do you need an e-way bill?',
       message: 'Usually needed when goods worth more than ₹50,000 move. You can also generate it later from this invoice.',
@@ -254,6 +285,7 @@ export default function InvoiceEditorScreen() {
     const problems = [...invoiceIssues(checked, store.invoices, released), ...transportIssues(checked)];
     if (checked !== invoice) setInvoice(checked);
     if (problems.length) {
+      setPreviewing(false);
       const transportOnly = problems.every((problem) => problem.section === 'transport');
       showProblems(problems, transportOnly ? 'Add the transport details to generate the e-way bill' : `Fix ${problems.length} item${problems.length === 1 ? '' : 's'} highlighted in red`);
       return;
@@ -262,6 +294,7 @@ export default function InvoiceEditorScreen() {
     setInvoice(ready);
     await store.saveInvoice(ready);
     await rememberDetails(ready);
+    setPreviewing(false);
     router.push({ pathname: '/ewb/review/[invoiceId]', params: { invoiceId: ready.id } });
   };
 
@@ -341,11 +374,23 @@ export default function InvoiceEditorScreen() {
           <View style={{ flex: 1.4 }}><SelectField label="State" required value={invoice.sellerState} placeholder="Choose" options={stateOptions} onSelect={set('sellerState')} error={errorFor('sellerState')} /></View>
           <View style={{ flex: 1 }}><Field label="PIN code" required value={invoice.sellerPincode} onChangeText={(value) => patch({ sellerPincode: value.replace(/\D/g, '').slice(0, 6) })} placeholder="411001" keyboardType="number-pad" error={errorFor('sellerPincode')} confidence={fromPdf('sellerPincode')} /></View>
         </View>
-        <Field label="Dispatch from (if different)" value={invoice.dispatchFrom} onChangeText={set('dispatchFrom')} placeholder="Warehouse or factory address" multiline />
+        <Checkbox checked={showDispatch} onToggle={() => {
+          if (showDispatch) patch({ dispatchFrom: '', dispatchState: '', dispatchPincode: '' });
+          setShowDispatch(!showDispatch);
+        }} label="Goods dispatch from a different place" testID="toggle-dispatch" />
+        {showDispatch ? (
+          <View style={{ gap: 12 }}>
+            <Field label="Dispatch address" value={invoice.dispatchFrom} onChangeText={set('dispatchFrom')} placeholder="Warehouse or factory address" multiline />
+            <View style={styles.row}>
+              <View style={{ flex: 1.4 }}><SelectField label="Dispatch state" required value={invoice.dispatchState} placeholder="Choose" options={stateOptions} onSelect={set('dispatchState')} error={errorFor('dispatchState')} /></View>
+              <View style={{ flex: 1 }}><Field label="PIN code" required value={invoice.dispatchPincode} onChangeText={(value) => patch({ dispatchPincode: value.replace(/\D/g, '').slice(0, 6) })} placeholder="411019" keyboardType="number-pad" error={errorFor('dispatchPincode')} testID="dispatch-pin" /></View>
+            </View>
+          </View>
+        ) : null}
       </EditorSection>
     ),
     buyer: (
-      <EditorSection key="buyer" title="Buyer / receiver" icon="users" open={open.buyer} onToggle={() => setOpen((c) => ({ ...c, buyer: !c.buyer }))} errors={sectionErrors('buyer')} summary={invoice.buyerName || 'Not set'}>
+      <EditorSection key="buyer" title="Buyer" icon="users" open={open.buyer} onToggle={() => setOpen((c) => ({ ...c, buyer: !c.buyer }))} errors={sectionErrors('buyer')} summary={invoice.buyerName || 'Not set'}>
         {store.parties.length ? <Button title="Choose a saved buyer" icon="user-check" variant="outline" size="sm" onPress={() => setPicker('buyer')} /> : null}
         <Field label="Name" required value={invoice.buyerName} onChangeText={set('buyerName')} placeholder="Business or person" autoCapitalize="words" error={errorFor('buyerName')} confidence={fromPdf('buyerName')} testID="buyer-name" />
         <Field label="GSTIN" value={invoice.buyerGstin} onChangeText={onGstinChange('buyerGstin', 'buyerState')} placeholder="Leave empty or URP if unregistered" autoCapitalize="characters" maxLength={15} error={errorFor('buyerGstin')} confidence={fromPdf('buyerGstin')}
@@ -356,13 +401,25 @@ export default function InvoiceEditorScreen() {
           <View style={{ flex: 1.4 }}><SelectField label="State" required value={invoice.buyerState} placeholder="Choose" options={stateOptions} onSelect={set('buyerState')} error={errorFor('buyerState')} testID="buyer-state" /></View>
           <View style={{ flex: 1 }}><Field label="PIN code" required value={invoice.buyerPincode} onChangeText={(value) => patch({ buyerPincode: value.replace(/\D/g, '').slice(0, 6) })} placeholder="560001" keyboardType="number-pad" error={errorFor('buyerPincode')} confidence={fromPdf('buyerPincode')} testID="buyer-pin" /></View>
         </View>
-        <Field label="Ship to (if different)" value={invoice.shipTo} onChangeText={set('shipTo')} placeholder="Delivery address" multiline />
+        <Checkbox checked={showShipTo} onToggle={() => {
+          if (showShipTo) patch({ shipTo: '', shipToState: '', shipToPincode: '' });
+          setShowShipTo(!showShipTo);
+        }} label="Ship to a different address" testID="toggle-ship-to" />
+        {showShipTo ? (
+          <View style={{ gap: 12 }}>
+            <Field label="Delivery address" value={invoice.shipTo} onChangeText={set('shipTo')} placeholder="Where the goods are delivered" multiline />
+            <View style={styles.row}>
+              <View style={{ flex: 1.4 }}><SelectField label="Delivery state" required value={invoice.shipToState} placeholder="Choose" options={stateOptions} onSelect={set('shipToState')} error={errorFor('shipToState')} /></View>
+              <View style={{ flex: 1 }}><Field label="PIN code" required value={invoice.shipToPincode} onChangeText={(value) => patch({ shipToPincode: value.replace(/\D/g, '').slice(0, 6) })} placeholder="560058" keyboardType="number-pad" error={errorFor('shipToPincode')} testID="ship-to-pin" /></View>
+            </View>
+          </View>
+        ) : null}
       </EditorSection>
     ),
     invoice: (
       <EditorSection key="invoice" title="Invoice details" icon="hash" open={open.invoice} onToggle={() => setOpen((c) => ({ ...c, invoice: !c.invoice }))} errors={sectionErrors('invoice')} summary={`${invoice.invoiceNumber || 'No number'} · ${formatDate(invoice.invoiceDate)}`}>
         <View style={styles.row}>
-          <View style={{ flex: 1.2 }}><Field label="Invoice number" required value={invoice.invoiceNumber} onChangeText={(value) => patch({ invoiceNumber: value.replace(/\s/g, '') })} placeholder="e.g. INV-001 or GR-1" autoCapitalize="none" maxLength={16} error={errorFor('invoiceNumber')} confidence={fromPdf('invoiceNumber')} hint={firstInvoice ? 'Your first invoice: enter its number. Next invoices continue from it.' : undefined} /></View>
+          <View style={{ flex: 1.2 }}><Field label="Invoice number" required value={invoice.invoiceNumber} onChangeText={(value) => patch({ invoiceNumber: value.replace(/\s/g, '') })} placeholder="e.g. INV-001 or GR-1" autoCapitalize="none" maxLength={16} onBlur={() => void checkNumberNow()} error={errorFor('invoiceNumber')} confidence={fromPdf('invoiceNumber')} hint={firstInvoice ? 'Your first invoice: enter its number. Next invoices continue from it.' : undefined} /></View>
           <View style={{ flex: 1 }}><Field label="Date" required value={invoice.invoiceDate} onChangeText={set('invoiceDate')} placeholder="YYYY-MM-DD" maxLength={10} error={errorFor('invoiceDate')} confidence={fromPdf('invoiceDate')} /></View>
         </View>
         <ChipRow>
@@ -377,27 +434,15 @@ export default function InvoiceEditorScreen() {
       </EditorSection>
     ),
     items: (
-      <EditorSection key="items" title="Products & charges" icon="package" open={open.items} onToggle={() => setOpen((c) => ({ ...c, items: !c.items }))} errors={sectionErrors('items')} summary={`${invoice.lines.length} line${invoice.lines.length === 1 ? '' : 's'} · ${formatInr(totals.total)}`}>
-        {errorFor('lines') ? <Notice tone="danger" title={errorFor('lines')!} /> : null}
-        {invoice.lines.map((line, index) => (
-          <LineEditor
-            key={line.id}
-            line={line}
-            index={index}
-            service={invoice.templateId === 'service'}
-            supplyType={invoice.supplyType}
-            canRemove={invoice.lines.length > 1}
-            hasProducts={store.products.length > 0}
-            errorFor={(field) => errorFor(`line.${line.id}.${field}`)}
-            onChange={(changes) => patchLine(line.id, changes)}
-            onRemove={async () => {
-              const ok = !line.description && !line.taxablePaise ? true : await dialog.confirm({ title: `Remove line ${index + 1}?`, message: line.description || undefined, confirmLabel: 'Remove', tone: 'danger', icon: 'trash-2' });
-              if (ok) patch({ lines: invoice.lines.filter((item) => item.id !== line.id) });
-            }}
-            onPickProduct={() => setPicker({ line: line.id })}
-          />
-        ))}
-        <Button title="Add another item" icon="plus" variant="outline" onPress={() => patch({ lines: [...invoice.lines, newLine(invoice.templateId)] })} testID="add-line" />
+      <EditorSection key="items" title="Products" icon="package" open={open.items} onToggle={() => setOpen((c) => ({ ...c, items: !c.items }))} errors={sectionErrors('items')} summary={`${invoice.lines.filter((line) => line.description.trim()).length} product${invoice.lines.filter((line) => line.description.trim()).length === 1 ? '' : 's'} · ${formatInr(totals.total)}`}>
+        <InvoiceProducts
+          lines={invoice.lines}
+          products={store.products}
+          error={errorFor('lines')}
+          lineError={(lineId) => attempted ? issues.find((issue) => issue.field.startsWith(`line.${lineId}.`))?.message : undefined}
+          onChange={(lines) => patch({ lines })}
+          onSaveProduct={(product) => void store.saveProduct(product as never)}
+        />
         <View style={[styles.totalsBox, { backgroundColor: colors.muted }]}>
           <KeyValue label="Taxable value" value={formatInr(totals.taxable)} />
           {invoice.supplyType === 'intra' ? <><KeyValue label="CGST" value={formatInr(totals.cgst)} /><KeyValue label="SGST" value={formatInr(totals.sgst)} /></> : <KeyValue label="IGST" value={formatInr(totals.igst)} />}
@@ -408,7 +453,9 @@ export default function InvoiceEditorScreen() {
     ),
     transport: (
       <EditorSection key="transport" title="Transport (for e-way bill)" icon="truck" open={open.transport} onToggle={() => setOpen((c) => ({ ...c, transport: !c.transport }))} errors={sectionErrors('transport')} summary={`${invoice.transportMode} · ${invoice.vehicleNumber || 'No vehicle'} · ${invoice.distanceKm ? `${invoice.distanceKm} km` : 'Distance not set'}`}>
-        {store.transporters.length ? <Button title="Choose a saved transporter" icon="truck" variant="outline" size="sm" onPress={() => setPicker('transporter')} /> : null}
+        {store.transporters.length
+          ? <Button title={invoice.transporterName ? `Transporter: ${invoice.transporterName} · change` : 'Choose transporter from list'} icon="truck" variant="outline" size="sm" onPress={() => setPicker('transporter')} testID="pick-transporter" />
+          : <TextBlock size={12} color={colors.mutedForeground}>Save transporters in Account → Transporters to pick them here.</TextBlock>}
         <Segmented options={TRANSPORT_MODES.map((mode) => ({ label: mode, value: mode }))} value={invoice.transportMode} onChange={set('transportMode')} />
         {invoice.transportMode === 'Road' ? (
           <Field label="Vehicle number" value={invoice.vehicleNumber} onChangeText={(value) => patch({ vehicleNumber: value.toUpperCase().replace(/[\s-]/g, '') })} placeholder="MH12AB1234" autoCapitalize="characters" maxLength={12} error={errorFor('vehicleNumber')} hint="Leave empty if the transporter will add the vehicle later (Part-B)." testID="vehicle" />
@@ -419,7 +466,8 @@ export default function InvoiceEditorScreen() {
           </View>
         )}
         <View style={styles.row}>
-          <View style={{ flex: 1 }}><Field label="Distance (km)" required value={invoice.distanceKm} onChangeText={(value) => patch({ distanceKm: value.replace(/\D/g, '').slice(0, 4) })} placeholder="e.g. 840" keyboardType="number-pad" error={errorFor('distanceKm')} testID="distance" /></View>
+          <View style={{ flex: 1 }}><Field label="Distance (km)" required value={invoice.distanceKm} onChangeText={(value) => patch({ distanceKm: value.replace(/\D/g, '').slice(0, 4) })} placeholder={distanceState === 'loading' ? 'Getting…' : 'e.g. 840'} keyboardType="number-pad" error={errorFor('distanceKm')} testID="distance"
+            hint={distanceState === 'loading' ? 'Getting road distance from Google…' : distanceAuto ? `From Google maps: ${pins!.from} → ${pins!.to}. You can change it.` : distanceState === 'error' ? 'Could not get the distance. Enter it manually.' : pinKey ? undefined : 'Filled automatically from the PIN codes.'} /></View>
           <View style={{ flex: 1, gap: 7 }}>
             <TextBlock size={13} weight="semibold">Cargo</TextBlock>
             <Segmented options={[{ label: 'Regular', value: 'regular' }, { label: 'ODC', value: 'odc' }]} value={invoice.vehicleType} onChange={set('vehicleType')} />
@@ -472,9 +520,22 @@ export default function InvoiceEditorScreen() {
           <TextBlock size={10} weight="semibold" color={colors.mutedForeground} style={{ letterSpacing: 0.8 }}>TOTAL</TextBlock>
           <TextBlock size={19} weight="bold" numberOfLines={1}>{formatInr(totals.total)}</TextBlock>
         </View>
-        <Button title="Generate EWB" variant="outline" size="sm" onPress={() => void continueToReview()} testID="continue-to-ewb" />
-        <Button title="Save invoice" icon="check" size="sm" onPress={() => void finishInvoice()} testID="save-invoice" />
+        <Button title="Preview invoice" icon="eye" size="sm" onPress={() => { Keyboard.dismiss(); setPreviewing(true); }} testID="preview-invoice" />
       </View>
+
+      <Modal visible={previewing} animationType="slide" onRequestClose={() => setPreviewing(false)}>
+        <View style={{ flex: 1, backgroundColor: colors.background }}>
+          <ScreenHeader title="Invoice preview" subtitle="Check everything before saving" onBack={() => setPreviewing(false)}
+            right={<Button title="Edit" icon="edit-2" variant="outline" size="sm" onPress={() => setPreviewing(false)} testID="preview-edit" />} />
+          <ScrollView contentContainerStyle={[styles.body, { paddingBottom: 24 }]}>
+            <InvoicePreview invoice={invoice} />
+          </ScrollView>
+          <View style={[styles.sticky, { backgroundColor: colors.card, borderColor: colors.border, paddingBottom: (Platform.OS === 'web' ? 12 : insets.bottom) + 10 }]}>
+            <Button title="Generate EWB" icon="truck" variant="outline" onPress={() => void continueToReview()} style={{ flex: 1 }} testID="continue-to-ewb" />
+            <Button title="Save invoice" icon="check" onPress={() => void finishInvoice()} style={{ flex: 1 }} testID="save-invoice" />
+          </View>
+        </View>
+      </Modal>
 
       <SelectSheet
         visible={picker === 'buyer'}
@@ -494,18 +555,6 @@ export default function InvoiceEditorScreen() {
         onSelect={(transporterId) => {
           const item = store.transporters.find((candidate) => candidate.id === transporterId);
           if (item) patch({ transporterName: item.name, transporterId: item.transporterId, vehicleNumber: item.vehicleNumber || invoice.vehicleNumber });
-        }}
-      />
-      <SelectSheet
-        visible={typeof picker === 'object' && picker !== null}
-        onClose={() => setPicker(null)}
-        title="Saved products"
-        options={store.products.map((product) => ({ value: product.id, label: product.name, detail: `HSN ${product.hsn} · ${product.taxRate}% · ${product.unitPricePaise ? `${formatInr(product.unitPricePaise)}/${product.unit}` : product.unit}` }))}
-        onSelect={(productId) => {
-          const product = store.products.find((item) => item.id === productId);
-          if (product && typeof picker === 'object' && picker) {
-            patchLine(picker.line, { description: product.name, hsn: product.hsn, unit: product.unit, taxRate: product.taxRate, unitPricePaise: product.unitPricePaise || undefined });
-          }
         }}
       />
     </View>
@@ -530,47 +579,6 @@ function EditorSection({ title, icon, open, onToggle, errors, summary, children 
   );
 }
 
-function LineEditor({ line, index, service, supplyType, canRemove, hasProducts, errorFor, onChange, onRemove, onPickProduct }: {
-  line: InvoiceLine; index: number; service: boolean; supplyType: 'intra' | 'inter'; canRemove: boolean; hasProducts: boolean;
-  errorFor: (field: keyof InvoiceLine) => string | undefined; onChange: (changes: Partial<InvoiceLine>) => void; onRemove: () => void; onPickProduct: () => void;
-}) {
-  const colors = useColors();
-  const tax = lineTax(line);
-  return (
-    <View style={[styles.line, { borderColor: colors.border, backgroundColor: colors.background }]}>
-      <View style={styles.lineHead}>
-        <View style={[styles.lineBadge, { backgroundColor: colors.accent }]}><TextBlock size={11} weight="bold" color={colors.primary}>{index + 1}</TextBlock></View>
-        <TextBlock size={13} weight="semibold" style={{ flex: 1 }}>{service ? 'Service' : 'Item'}</TextBlock>
-        {hasProducts ? <Pressable onPress={onPickProduct} hitSlop={8} accessibilityRole="button" style={styles.lineAction}><Feather name="bookmark" size={14} color={colors.primary} /><TextBlock size={12} weight="semibold" color={colors.primary}>Saved</TextBlock></Pressable> : null}
-        {canRemove ? <IconButton icon="trash-2" color={colors.dangerForeground} onPress={onRemove} accessibilityLabel={`Remove line ${index + 1}`} /> : null}
-      </View>
-      <Field label={service ? 'Service description' : 'Product / description'} required value={line.description} onChangeText={(value) => onChange({ description: value })} placeholder={service ? 'e.g. Installation charges' : 'e.g. MS steel pipes 2"'} error={errorFor('description')} testID={`line-${index}-desc`} />
-      <View style={styles.row}>
-        <View style={{ flex: 1 }}><Field label={service ? 'SAC' : 'HSN'} required value={line.hsn} onChangeText={(value) => onChange({ hsn: value.replace(/\D/g, '').slice(0, 8) })} placeholder={service ? '9987' : '7306'} keyboardType="number-pad" error={errorFor('hsn')} testID={`line-${index}-hsn`} /></View>
-        <View style={{ flex: 1 }}><Field label={service ? 'Hours / qty' : 'Quantity'} value={line.quantity} onChangeText={(value) => onChange({ quantity: value.replace(/[^0-9.]/g, '') })} placeholder="1" keyboardType="decimal-pad" error={errorFor('quantity')} /></View>
-        <View style={{ flex: 0.9 }}><SelectField label="Unit" value={line.unit} placeholder="Nos" options={unitOptions} onSelect={(value) => onChange({ unit: value })} /></View>
-      </View>
-      <View style={styles.row}>
-        <View style={{ flex: 1 }}><MoneyField label="Rate / unit" paise={line.unitPricePaise ?? 0} onChange={(value) => onChange({ unitPricePaise: value || undefined, ...(value ? { taxablePaise: Math.round((Number(line.quantity) || 0) * value) } : {}) })} hint="Optional" /></View>
-        <View style={{ flex: 1 }}><MoneyField label="Taxable value" required paise={line.taxablePaise} onChange={(value) => onChange({ taxablePaise: value, unitPricePaise: undefined })} error={errorFor('taxablePaise')} hint={line.unitPricePaise ? 'Qty × rate' : undefined} /></View>
-      </View>
-      <View style={{ gap: 7 }}>
-        <TextBlock size={13} weight="semibold">GST rate</TextBlock>
-        <View style={styles.rates}>
-          {GST_RATES.map((rate) => (
-            <Pressable key={rate} onPress={() => onChange({ taxRate: rate })} accessibilityRole="radio" accessibilityState={{ selected: line.taxRate === rate }} style={[styles.rate, { backgroundColor: line.taxRate === rate ? colors.primary : colors.card, borderColor: line.taxRate === rate ? colors.primary : colors.border }]}>
-              <TextBlock size={13} weight="semibold" color={line.taxRate === rate ? colors.primaryForeground : colors.mutedForeground}>{rate}%</TextBlock>
-            </Pressable>
-          ))}
-        </View>
-      </View>
-      <View style={styles.lineFoot}>
-        <TextBlock size={12} color={colors.mutedForeground}>{supplyType === 'intra' ? `CGST ${formatInr(Math.round(tax / 2))} + SGST ${formatInr(tax - Math.round(tax / 2))}` : `IGST ${formatInr(tax)}`}</TextBlock>
-        <TextBlock size={14} weight="bold">{formatInr(line.taxablePaise + tax)}</TextBlock>
-      </View>
-    </View>
-  );
-}
 
 const NO_BANK = 'none';
 
