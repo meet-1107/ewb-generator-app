@@ -490,7 +490,9 @@ export function useScopedRecords() {
   const store = useAppStore();
   return useMemo(() => {
     const gstin = store.activeGstin.toUpperCase();
-    const invoices = gstin ? store.invoices.filter((invoice) => !invoice.sellerGstin || invoice.sellerGstin.toUpperCase() === gstin) : store.invoices;
+    // New invoices appear only once saved from the preview.
+    const saved = store.invoices.filter((invoice) => !invoice.unsaved);
+    const invoices = gstin ? saved.filter((invoice) => !invoice.sellerGstin || invoice.sellerGstin.toUpperCase() === gstin) : saved;
     const ewbs = gstin ? store.ewbs.filter((ewb) => ewb.sellerGstin.toUpperCase() === gstin) : store.ewbs;
     return { invoices, ewbs };
   }, [store.activeGstin, store.invoices, store.ewbs]);

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Keyboard, Modal, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
@@ -104,11 +104,38 @@ export default function InvoiceEditorScreen() {
     if (stored && invoice && stored.status === 'ewb_generated' && invoice.status !== 'ewb_generated') setInvoice(stored);
   }, [stored, invoice]);
 
+  // A new invoice stays hidden (unsaved) until it is saved from the preview.
+  // Leaving before that discards it, asking first if anything was filled in.
+  const navigation = useNavigation();
+  const latest = useRef<Invoice | null>(null);
+  latest.current = invoice;
+  const discarded = useRef(false);
+  useEffect(() => navigation.addListener('beforeRemove', (event) => {
+    const current = latest.current;
+    if (!current?.unsaved || discarded.current) return;
+    const discard = () => {
+      discarded.current = true;
+      void store.removeInvoice(current.id).then(() => navigation.dispatch(event.data.action));
+    };
+    event.preventDefault();
+    const touched = current.buyerName.trim() || current.lines.some((line) => line.description.trim() || line.taxablePaise);
+    if (!touched) return discard();
+    void dialog.confirm({
+      title: 'Discard this invoice?',
+      message: 'It is not saved yet. Open Preview invoice and tap Save invoice to keep it.',
+      confirmLabel: 'Discard',
+      cancelLabel: 'Keep editing',
+      tone: 'danger',
+      icon: 'trash-2',
+    }).then((ok) => ok && discard());
+  }), [navigation, dialog, store]);
+
   // Debounced autosave; the explicit "Save draft" button saves immediately.
   useEffect(() => {
     if (!invoice || invoice.status === 'ewb_generated') return;
     setSaveState('saving');
     const timer = setTimeout(() => {
+      if (discarded.current) return;
       void store.saveInvoice(invoice).then(() => setSaveState('saved'));
     }, 700);
     return () => clearTimeout(timer);
@@ -119,7 +146,7 @@ export default function InvoiceEditorScreen() {
   const released = useMemo(() => releasedInvoiceIds(store.invoices, store.ewbs), [store.invoices, store.ewbs]);
   const issues = useMemo(() => (invoice ? [...invoiceIssues(invoice, store.invoices, released), ...transportIssues(invoice)] : []), [invoice, store.invoices, released]);
   // The first invoice of a GSTIN is numbered by the user; later ones continue from it.
-  const firstInvoice = useMemo(() => Boolean(invoice) && !store.invoices.some((other) => other.id !== invoice!.id && other.sellerGstin === invoice!.sellerGstin && other.invoiceNumber.trim()), [invoice, store.invoices]);
+  const firstInvoice = useMemo(() => Boolean(invoice) && !store.invoices.some((other) => other.id !== invoice!.id && other.sellerGstin === invoice!.sellerGstin && !other.unsaved && other.invoiceNumber.trim()), [invoice, store.invoices]);
   // Road distance from Google once both PIN codes are known (dispatch / delivery places when given).
   const pins = invoice ? routePins(invoice) : null;
   const pinKey = pins && /^[1-9]\d{5}$/.test(pins.from) && /^[1-9]\d{5}$/.test(pins.to) ? `${pins.from}-${pins.to}` : '';
@@ -276,8 +303,9 @@ export default function InvoiceEditorScreen() {
       showProblems(problems, `Fix ${problems.length} item${problems.length === 1 ? '' : 's'} highlighted in red`);
       return;
     }
-    const saved: Invoice = { ...checked, status: 'ready', updatedAt: new Date().toISOString(), extraction: checked.extraction ? { ...checked.extraction, confirmed: true } : undefined };
+    const saved: Invoice = { ...checked, status: 'ready', unsaved: false, updatedAt: new Date().toISOString(), extraction: checked.extraction ? { ...checked.extraction, confirmed: true } : undefined };
     setInvoice(saved);
+    latest.current = saved;
     await store.saveInvoice(saved);
     setSaveState('saved');
     await rememberDetails(saved);
@@ -291,7 +319,8 @@ export default function InvoiceEditorScreen() {
     if (!answer) return;
     if (!answer.choice.endsWith('now')) {
       const later = answer.choice.includes('later');
-      await store.saveInvoice({ ...saved, ewbRequired: later });
+      latest.current = { ...saved, ewbRequired: later };
+      await store.saveInvoice(latest.current);
       dialog.toast(later ? 'Invoice saved · e-way bill pending' : 'Invoice saved', 'success');
       router.replace('/(tabs)/invoices');
       return;
@@ -312,8 +341,9 @@ export default function InvoiceEditorScreen() {
       showProblems(problems, transportOnly ? 'Add the transport details to generate the e-way bill' : `Fix ${problems.length} item${problems.length === 1 ? '' : 's'} highlighted in red`);
       return;
     }
-    const ready: Invoice = { ...checked, status: 'ready', ewbRequired: true, updatedAt: new Date().toISOString(), extraction: checked.extraction ? { ...checked.extraction, confirmed: true } : undefined };
+    const ready: Invoice = { ...checked, status: 'ready', ewbRequired: true, unsaved: false, updatedAt: new Date().toISOString(), extraction: checked.extraction ? { ...checked.extraction, confirmed: true } : undefined };
     setInvoice(ready);
+    latest.current = ready;
     await store.saveInvoice(ready);
     await rememberDetails(ready);
     setPreviewing(false);
@@ -334,6 +364,7 @@ export default function InvoiceEditorScreen() {
     if (result.choice === 'Delete draft') {
       const ok = await dialog.confirm({ title: 'Delete this draft?', message: 'It will be removed from all your devices. This cannot be undone.', confirmLabel: 'Delete', cancelLabel: 'Keep', tone: 'danger', icon: 'trash-2' });
       if (ok) {
+        discarded.current = true;
         await store.removeInvoice(invoice.id);
         dialog.toast('Draft deleted');
         router.back();
@@ -348,7 +379,7 @@ export default function InvoiceEditorScreen() {
   const header = (
     <ScreenHeader
       title={invoice.invoiceNumber || 'New invoice'}
-      subtitle={locked ? `Locked · e-way bill ${invoice.ewbNumber}` : store.storageError || (saveState === 'saving' ? 'Saving…' : `Saved ${store.online === false ? 'on this device' : '· syncs automatically'}`)}
+      subtitle={locked ? `Locked · e-way bill ${invoice.ewbNumber}` : invoice.unsaved ? 'Not saved yet · tap Preview invoice to save' : store.storageError || (saveState === 'saving' ? 'Saving…' : `Saved ${store.online === false ? 'on this device' : '· syncs automatically'}`)}
       right={<IconButton icon="more-vertical" accessibilityLabel="More invoice actions" onPress={() => void moreActions()} />}
     />
   );

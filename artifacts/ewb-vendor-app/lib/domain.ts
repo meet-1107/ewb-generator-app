@@ -72,6 +72,8 @@ export type Invoice = {
   bank?: InvoiceBank | null;
   /** false: the user said this invoice needs no e-way bill. */
   ewbRequired?: boolean;
+  /** A new invoice not saved from the preview yet: hidden from lists and numbering, deleted if abandoned. */
+  unsaved?: boolean;
   status: InvoiceStatus;
   createdAt: string;
   updatedAt: string;
@@ -425,6 +427,17 @@ export type Section = 'seller' | 'buyer' | 'invoice' | 'items' | 'transport';
 export type Issue = { field: string; section: Section; message: string };
 
 /** Invoice completeness (needed to save as "Ready"). */
+/** Another saved invoice with this number for the same buyer, even one whose number was released. */
+function sameBuyerAndNumber(invoice: Invoice, others: Invoice[]) {
+  const number = invoice.invoiceNumber.trim().toLowerCase();
+  const buyer = invoice.buyerName.trim().toLowerCase();
+  if (!number || !buyer) return false;
+  return others.some((other) => other.id !== invoice.id && !other.unsaved
+    && other.sellerGstin.toUpperCase() === invoice.sellerGstin.toUpperCase()
+    && other.invoiceNumber.trim().toLowerCase() === number
+    && other.buyerName.trim().toLowerCase() === buyer);
+}
+
 /** `released`: invoices whose number may be used again (their e-way bill was cancelled). */
 export function invoiceIssues(invoice: Invoice, others: Invoice[] = [], released: Set<string> = new Set()): Issue[] {
   const issues: Issue[] = [];
@@ -459,7 +472,8 @@ export function invoiceIssues(invoice: Invoice, others: Invoice[] = [], released
   if (!invoice.invoiceNumber.trim()) add('invoice', 'invoiceNumber', 'Invoice number is required.');
   else if (!/^[A-Za-z0-9/-]{1,16}$/.test(invoice.invoiceNumber.trim())) add('invoice', 'invoiceNumber', 'Use up to 16 letters, digits, / or -.');
   else if (invoiceSeriesProblem(invoice, others, released)) add('invoice', 'invoiceNumber', invoiceSeriesProblem(invoice, others, released)!.message);
-  else if (others.some((other) => other.id !== invoice.id && !released.has(other.id) && other.invoiceNumber.trim().toLowerCase() === invoice.invoiceNumber.trim().toLowerCase() && other.sellerGstin.toUpperCase() === invoice.sellerGstin.toUpperCase())) {
+  else if (sameBuyerAndNumber(invoice, others)) add('invoice', 'invoiceNumber', `Invoice ${invoice.invoiceNumber.trim()} for ${invoice.buyerName.trim()} already exists. Open it from the invoice list instead.`);
+  else if (others.some((other) => other.id !== invoice.id && !other.unsaved && !released.has(other.id) && other.invoiceNumber.trim().toLowerCase() === invoice.invoiceNumber.trim().toLowerCase() && other.sellerGstin.toUpperCase() === invoice.sellerGstin.toUpperCase())) {
     add('invoice', 'invoiceNumber', 'This number is already used for this GSTIN.');
   }
   const validDate = /^\d{4}-\d{2}-\d{2}$/.test(invoice.invoiceDate) && !Number.isNaN(Date.parse(invoice.invoiceDate)) && new Date(`${invoice.invoiceDate}T00:00:00Z`).toISOString().slice(0, 10) === invoice.invoiceDate;
@@ -606,7 +620,7 @@ function seriesOf(invoiceNumber: string) {
  * (e.g. GR-01 after INV-05): the message and the number that would follow.
  */
 export function invoiceSeriesProblem(invoice: Invoice, others: Invoice[], released: Set<string> = new Set()) {
-  const counted = others.filter((other) => other.id !== invoice.id && !released.has(other.id) && other.invoiceNumber.trim() && other.sellerGstin.toUpperCase() === invoice.sellerGstin.toUpperCase());
+  const counted = others.filter((other) => other.id !== invoice.id && !other.unsaved && !released.has(other.id) && other.invoiceNumber.trim() && other.sellerGstin.toUpperCase() === invoice.sellerGstin.toUpperCase());
   const latest = [...counted].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   if (!latest || !invoice.invoiceNumber.trim()) return null;
   const expected = seriesOf(latest.invoiceNumber);
@@ -624,7 +638,7 @@ export function invoiceEwbMeta(invoice: Invoice): { label: string; tone: 'green'
 }
 
 export function nextInvoiceNumber(invoices: Invoice[], released: Set<string> = new Set()) {
-  const counted = invoices.filter((invoice) => invoice.invoiceNumber.trim() && !released.has(invoice.id));
+  const counted = invoices.filter((invoice) => invoice.invoiceNumber.trim() && !invoice.unsaved && !released.has(invoice.id));
   const latest = [...counted].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   const match = latest ? NUMBERED.exec(latest.invoiceNumber.trim()) : null;
   if (!match) return '';
@@ -682,5 +696,6 @@ export function draftForBusiness(business: Business, activeGstin: string, invoic
     sellerState: registration?.state || business.state,
     sellerPincode: business.pincode ?? '',
     bank: defaultBank(business) ? invoiceBank(defaultBank(business)!) : null,
+    unsaved: true,
   };
 }
