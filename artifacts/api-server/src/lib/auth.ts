@@ -1,5 +1,7 @@
 import { createPublicKey, verify } from "node:crypto";
 import type { NextFunction, Request, Response } from "express";
+import { runWithContext } from "./context";
+import { isSuspended } from "./suspensions";
 
 /**
  * Identifies the calling workspace.
@@ -43,7 +45,8 @@ function decodeSegment(segment: string) {
   return JSON.parse(Buffer.from(segment, "base64url").toString("utf8")) as Record<string, unknown>;
 }
 
-export type IdTokenClaims = { uid: string; email: string | null; emailVerified: boolean; provider: string | null };
+/** `adminRole`: the `admin_role` custom claim (set only by the server); `authTime`: when the user last signed in, in seconds. */
+export type IdTokenClaims = { uid: string; email: string | null; emailVerified: boolean; provider: string | null; adminRole: string | null; authTime: number };
 
 /** Verifies a Firebase ID token's signature, audience, issuer and lifetime. */
 export async function verifyIdToken(token: string): Promise<IdTokenClaims> {
@@ -78,6 +81,8 @@ export async function verifyIdToken(token: string): Promise<IdTokenClaims> {
     email: typeof payload["email"] === "string" ? payload["email"].toLowerCase() : null,
     emailVerified: payload["email_verified"] === true,
     provider: typeof firebase["sign_in_provider"] === "string" ? firebase["sign_in_provider"] : null,
+    adminRole: typeof payload["admin_role"] === "string" ? payload["admin_role"] : null,
+    authTime: Number(payload["auth_time"] ?? payload["iat"] ?? 0),
   };
 }
 
@@ -100,7 +105,11 @@ export async function requireWorkspace(req: Request, res: Response, next: NextFu
       req.workspaceId = `sbx_${id}`;
       req.actor = req.workspaceId;
     }
-    return next();
+    if (await isSuspended(req.workspaceId)) {
+      return res.status(403).json({ error: "account_suspended", message: "This account is suspended. Contact support." });
+    }
+    // Provider calls made while serving this request are logged against this account.
+    return runWithContext({ workspaceId: req.workspaceId, requestId: String(req.id ?? "") }, next);
   } catch {
     return res.status(401).json({ error: "auth_invalid", message: "Your session expired. Sign in again." });
   }

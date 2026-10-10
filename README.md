@@ -34,6 +34,10 @@ Everything runs on Firebase: Authentication, the API as a Cloud Function, Firest
 | Wallet | Credit balance, bills generated, cost per action, history; credits held and refunded on failure |
 | Account | Profile, multiple GST registrations, saved details, plan & usage, appearance (system/light/dark), cloud sync, data export, deletion request, sign out |
 
+## Admin panel
+
+`/admin/` on the Hosting site: users, e-way bills, API usage and provider quota, payments, credits, reconciliation, exports and audit log, with Super / Finance / Support / Technical roles checked by the server. Setup and metric definitions: [docs/ADMIN.md](docs/ADMIN.md).
+
 ## Tests
 
 `pnpm --filter @workspace/api-server test` runs the server unit tests: email OTP, registration grants, and the store (JSON-file backend). To also test the Firestore backend, run them inside the emulator:

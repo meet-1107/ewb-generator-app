@@ -12,6 +12,8 @@
  *   deactivated, 404 not found, 429 rate limited (60/min), 502 provider down.
  */
 
+import { outcomeFor, recordApiCall, recordProviderQuota } from "./api-log";
+
 const baseUrl = (process.env["GSTINAPI_BASE_URL"] ?? "https://www.gstinapi.in").replace(/\/+$/, "");
 const apiKey = process.env["GSTINAPI_KEY"] ?? "";
 /** Until GSTINAPI_TEST_MODE=false, e-way bill calls are validated but never sent to NIC. */
@@ -41,11 +43,22 @@ const CODES: Record<number, string> = {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** The operation a gstinapi.in path stands for, as the admin panel counts it. */
+function operationOf(path: string) {
+  if (path.startsWith("/v1/gstin/")) return "gstin_lookup";
+  const sub = path.replace(/^\/v1\/ewaybill/, "");
+  return ({ "": "ewb_generate", "/cancel": "ewb_cancel", "/update-vehicle": "ewb_part_b", "/extend-validity": "ewb_extend", "/consolidated": "ewb_consolidate", "/credentials/test": "credentials_test" } as Record<string, string>)[sub] ?? sub.replace(/\W+/g, "_");
+}
+
 async function call<T>(method: "GET" | "POST", path: string, body?: unknown, { timeoutMs = 20_000, retries = 2 } = {}): Promise<T> {
   if (!apiKey) throw new GstinApiError("GSTINAPI_KEY is not set on the server.", 503, "NOT_CONFIGURED");
   for (let attempt = 0; ; attempt++) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const started = Date.now();
+    const testMode = Boolean((body as { test_mode?: boolean } | undefined)?.test_mode);
+    const log = (httpStatus: number, outcome: ReturnType<typeof outcomeFor>, errorCode?: string, ewbNumber?: string) =>
+      recordApiCall({ provider: "gstinapi", operation: operationOf(path), outcome, httpStatus, durationMs: Date.now() - started, attempt: attempt + 1, ...(testMode ? { testMode } : {}), ...(errorCode ? { errorCode } : {}), ...(ewbNumber ? { ewbNumber } : {}) });
     let response: Response;
     let json: Record<string, unknown> = {};
     try {
@@ -58,11 +71,22 @@ async function call<T>(method: "GET" | "POST", path: string, body?: unknown, { t
       json = (await response.json().catch(() => ({}))) as Record<string, unknown>;
     } catch (error) {
       const timedOut = (error as Error).name === "AbortError";
+      await log(0, timedOut ? "timeout" : "network");
       throw new GstinApiError(timedOut ? "gstinapi.in did not respond in time." : "Could not reach gstinapi.in.", 0, timedOut ? "TIMEOUT" : "NETWORK");
     } finally {
       clearTimeout(timer);
     }
-    if (response.ok && json["success"] !== false) return json as T;
+    // gstinapi.in reports the account's remaining API credits on some responses.
+    const remaining = json["credits_remaining"] ?? (json["data"] as Record<string, unknown> | undefined)?.["credits_remaining"];
+    if (typeof remaining === "number") await recordProviderQuota("gstinapi", remaining, operationOf(path));
+    const providerCode = json["error_code"] !== undefined ? String(json["error_code"]) : undefined;
+    if (response.ok && json["success"] !== false) {
+      const data = (json["data"] ?? json) as Record<string, unknown>;
+      const number = data["ewaybill_no"] ?? data["consolidated_ewaybill_no"];
+      await log(response.status, "ok", undefined, number ? String(number) : undefined);
+      return json as T;
+    }
+    await log(response.status, response.ok ? "rejected" : outcomeFor(response.status), providerCode);
     // Only 429 and 502 are worth repeating; a 402 or 404 will not change.
     if ((response.status === 429 || response.status === 502) && attempt < retries) {
       await sleep(2 ** attempt * 500);

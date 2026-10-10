@@ -3,6 +3,7 @@ import { Router, type IRouter, type Response } from "express";
 import { z } from "zod";
 import { ewbProvider, type ProviderContext } from "../providers/ewb-provider";
 import { testCredentials } from "../providers/gstinapi-ewb-provider";
+import { currentContext } from "../lib/context";
 import { audit, currentPeriod, withWorkspace, type CewbRecord, type EwbRecord, type Workspace } from "../lib/store";
 import { decryptSecret, encryptSecret, secretsConfigured } from "../lib/secrets";
 import { holdCredits, refundCredits, settleCredits, walletSummary } from "../lib/wallet";
@@ -122,6 +123,7 @@ router.post("/ewb/generate", async (req, res) => {
   const parsed = inputSchema.safeParse(req.body?.input);
   if (!key.success || !parsed.success) return res.status(400).json({ error: "bad_request", message: "Some invoice fields could not be read." });
   const input = normalize(parsed.data);
+  currentContext().invoiceId = input.invoiceId;
 
   // Phase 1: claim the idempotency key and check entitlement/duplicates.
   // Requests are stored under their idempotency key.

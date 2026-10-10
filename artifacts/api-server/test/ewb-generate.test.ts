@@ -153,7 +153,11 @@ describe("e-way bill generation (gstinapi adapter, mocked provider)", () => {
     const ws = await readyWorkspace();
     const before = gstin.generateCalls;
     const [a, b] = await Promise.all([1, 2].map(() => ws.call("POST", "/ewb/generate", { idempotencyKey: "key-dbl-tap", input: invoice("inv-dbl", "DBL-1") })));
-    assert.deepEqual([a!.status, b!.status].sort(), [201, 409]);
+    // The second request either finds the first still running (409) or, if the store serialised them, replays its bill (200).
+    const [first, second] = [a!, b!].sort((x, y) => x.status - y.status);
+    assert.ok(first.status === 201 || second.status === 201, JSON.stringify([a!.status, b!.status]));
+    const other = first.status === 201 ? second : first;
+    assert.ok(other.status === 409 || (other.status === 200 && other.body["replay"] === true), JSON.stringify(other.body));
     assert.equal(gstin.generateCalls - before, 1);
     assert.equal(await balance(ws), 20);
   });

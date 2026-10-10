@@ -1,4 +1,5 @@
 import { projectId } from "./auth";
+import { outcomeFor, recordApiCall } from "./api-log";
 import { readDoc, withDoc } from "./store";
 
 /**
@@ -33,6 +34,8 @@ async function authHeaders(): Promise<Record<string, string>> {
 
 async function lookup(from: string, to: string): Promise<Saved> {
   let response: Response;
+  const started = Date.now();
+  const log = (httpStatus: number, outcome: ReturnType<typeof outcomeFor>) => recordApiCall({ provider: "google_routes", operation: "distance", outcome, httpStatus, durationMs: Date.now() - started, attempt: 1 });
   try {
     response = await fetch(ROUTES_URL, {
       method: "POST",
@@ -42,8 +45,10 @@ async function lookup(from: string, to: string): Promise<Saved> {
     });
   } catch (error) {
     if (error instanceof DistanceError) throw error;
+    await log(0, (error as Error).name === "TimeoutError" ? "timeout" : "network");
     throw new DistanceError("unavailable", "Could not reach Google for the distance.");
   }
+  await log(response.status, outcomeFor(response.status));
   if (!response.ok) throw new DistanceError("unavailable", `Google answered ${response.status}.`);
   const body = (await response.json()) as { routes?: { distanceMeters?: number }[] };
   const meters = body.routes?.[0]?.distanceMeters;

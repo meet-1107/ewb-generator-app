@@ -4,7 +4,7 @@ import { z } from "zod";
 import { authMode } from "../lib/auth";
 import { logger } from "../lib/logger";
 import { createPaymentLink, creditPacks, creditPricePaise, fetchPaymentLink, MAX_PURCHASE, MIN_PURCHASE, razorpayConfigured, webhookSignatureValid } from "../lib/payments";
-import { audit, withWorkspace, type Workspace } from "../lib/store";
+import { appendLog, audit, withWorkspace, type Workspace } from "../lib/store";
 import { addCredits, walletSummary } from "../lib/wallet";
 
 const paymentsMode = razorpayConfigured ? "razorpay" : authMode === "sandbox" ? "sandbox" : "off";
@@ -14,13 +14,13 @@ function pricing() {
 }
 
 /** Marks a purchase paid and adds its credits exactly once. */
-function settlePurchase(workspace: Workspace, purchaseId: string, paymentId?: string) {
+export function settlePurchase(workspace: Workspace, purchaseId: string, paymentId?: string) {
   const purchase = workspace.purchases[purchaseId];
   if (!purchase || purchase.status === "paid") return false;
   purchase.status = "paid";
   purchase.paidAt = new Date().toISOString();
   purchase.paymentId = paymentId;
-  addCredits(workspace, purchase.credits, `Bought for ₹${(purchase.amountPaise / 100).toFixed(2)}${paymentId ? ` · ${paymentId}` : purchase.provider === "sandbox" ? " · test purchase" : ""}`);
+  addCredits(workspace, purchase.credits, `Bought for ₹${(purchase.amountPaise / 100).toFixed(2)}${paymentId ? ` · ${paymentId}` : purchase.provider === "sandbox" ? " · test purchase" : ""}`, purchaseId);
   audit(workspace, "payments", "wallet.purchase", purchaseId, "paid");
   return true;
 }
@@ -114,7 +114,10 @@ adminRouter.post("/admin/wallet/topup", async (req, res) => {
  */
 adminRouter.post("/payments/razorpay/webhook", async (req, res) => {
   const raw = (req as Request & { rawBody?: Buffer }).rawBody;
-  if (!webhookSignatureValid(raw, req.header("x-razorpay-signature"))) return res.status(401).json({ error: "bad_signature" });
+  if (!webhookSignatureValid(raw, req.header("x-razorpay-signature"))) {
+    await appendLog("payment_events", { at: new Date().toISOString(), provider: "razorpay", event: "invalid_signature", signatureValid: false }).catch(() => undefined);
+    return res.status(401).json({ error: "bad_signature" });
+  }
   const event = req.body as { event?: string; payload?: { payment_link?: { entity?: { id?: string; amount_paid?: number; notes?: Record<string, string> } }; payment?: { entity?: { id?: string } } } };
   if (event.event !== "payment_link.paid") return res.json({ ok: true, ignored: event.event });
   const link = event.payload?.payment_link?.entity;
@@ -127,5 +130,7 @@ adminRouter.post("/payments/razorpay/webhook", async (req, res) => {
     return settlePurchase(workspace, link.id!, event.payload?.payment?.entity?.id);
   });
   logger.info({ link: link.id, credited }, "Razorpay payment_link.paid");
+  // Every verified delivery is kept, so replays and late deliveries are visible in the admin panel.
+  await appendLog("payment_events", { at: new Date().toISOString(), provider: "razorpay", event: event.event, signatureValid: true, linkId: link.id, paymentId: event.payload?.payment?.entity?.id ?? null, workspaceId, amountPaid: link.amount_paid ?? 0, credited }).catch(() => undefined);
   return res.json({ ok: true });
 });

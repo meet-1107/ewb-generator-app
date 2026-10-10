@@ -25,6 +25,7 @@ export const ACTION_LABELS: Record<WalletEntry["kind"], string> = {
   extend: "Validity extended",
   grant: "Welcome credits",
   topup: "Credits added",
+  adjust: "Adjusted by support",
 };
 
 const LEDGER_LIMIT = 1000;
@@ -62,10 +63,29 @@ export function refundCredits(workspace: Workspace, entryId: string | null, note
   workspace.wallet.balance += -entry.credits;
 }
 
-export function addCredits(workspace: Workspace, credits: number, note: string) {
+/** `targetId`: the purchase the credits were bought with, so payments and credits can be reconciled. */
+export function addCredits(workspace: Workspace, credits: number, note: string, targetId?: string) {
   workspace.wallet.balance += credits;
-  workspace.wallet.ledger.push({ id: randomUUID(), at: new Date().toISOString(), kind: "topup", credits, status: "credited", note });
+  workspace.wallet.ledger.push({ id: randomUUID(), at: new Date().toISOString(), kind: "topup", credits, status: "credited", note, ...(targetId ? { targetId } : {}) });
   trim(workspace.wallet);
+}
+
+export type Adjustment = { ok: true; entry: WalletEntry; replay: boolean; balance: number } | { ok: false; balance: number };
+
+/**
+ * A manual credit change by an administrator, applied once per `reference`
+ * (a retried request returns the first result). Never takes the balance below zero.
+ */
+export function adjustCredits(workspace: Workspace, { credits, reason, actor, reference }: { credits: number; reason: string; actor: string; reference: string }): Adjustment {
+  const id = `adj_${reference}`;
+  const existing = workspace.wallet.ledger.find((entry) => entry.id === id);
+  if (existing) return { ok: true, entry: existing, replay: true, balance: workspace.wallet.balance };
+  if (workspace.wallet.balance + credits < 0) return { ok: false, balance: workspace.wallet.balance };
+  const entry: WalletEntry = { id, at: new Date().toISOString(), kind: "adjust", credits, status: "credited", note: reason, actor };
+  workspace.wallet.balance += credits;
+  workspace.wallet.ledger.push(entry);
+  trim(workspace.wallet);
+  return { ok: true, entry, replay: false, balance: workspace.wallet.balance };
 }
 
 export function walletSummary(workspace: Workspace) {

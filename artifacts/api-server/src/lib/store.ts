@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { EwbInput } from "./validation";
 
@@ -115,7 +115,8 @@ export type WalletAction = "generate" | "part_b" | "consolidate" | "cancel" | "e
 export type WalletEntry = {
   id: string;
   at: string;
-  kind: WalletAction | "grant" | "topup";
+  /** "adjust": a manual change by an administrator (reason in `note`, who in `actor`). */
+  kind: WalletAction | "grant" | "topup" | "adjust";
   /** Signed: negative for charges, positive for grants/top-ups. */
   credits: number;
   /** "held" while the provider call runs; "charged" on success; "refunded" on failure. */
@@ -123,6 +124,8 @@ export type WalletEntry = {
   ewbNumber?: string;
   targetId?: string;
   note?: string;
+  /** Administrator who made an "adjust" entry. */
+  actor?: string;
 };
 export type Wallet = { balance: number; ledger: WalletEntry[] };
 
@@ -435,4 +438,103 @@ async function firestoreDoc<T, R>(collection: string, id: string, fn: (current: 
     }
     return result;
   });
+}
+
+/* ---------- Read-only views and append-only logs (admin panel) ---------- */
+
+/** What `peekWorkspace` loads besides the small fields. */
+export type PeekSpec = { ewbs?: boolean; requests?: boolean; syncKeys?: string[] };
+
+/** Every workspace that has been created, by id. */
+export async function listWorkspaceIds(): Promise<string[]> {
+  if (backend === "file") {
+    try {
+      return (await readdir(path.join(dataDir, "workspaces"))).filter((name) => name.endsWith(".json")).map((name) => name.slice(0, -5));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+  }
+  const { db } = await firestore();
+  return (await db.collection("workspaces").listDocuments()).map((ref) => ref.id);
+}
+
+/**
+ * A snapshot of a workspace for reading only: no lock, no transaction, never
+ * written back, and null (not a fresh workspace) when it does not exist.
+ * Sections that were not asked for are empty.
+ */
+export async function peekWorkspace(id: string, spec: PeekSpec = {}): Promise<Workspace | null> {
+  if (backend === "file") {
+    const cached = cache.get(id);
+    if (!cached) {
+      try {
+        await readFile(workspaceFile(id), "utf8");
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+        throw error;
+      }
+    }
+    const full = structuredClone(await loadFile(id));
+    const syncKeys = new Set(spec.syncKeys ?? []);
+    const sync: Workspace["sync"] = {};
+    for (const key of syncKeys) {
+      const [name, recordId] = key.split("/") as [string, string];
+      const record = full.sync[name]?.[recordId];
+      if (record) (sync[name] ??= {})[recordId] = record;
+    }
+    return { ...full, ewbs: spec.ewbs ? full.ewbs : {}, requests: spec.requests ? full.requests : {}, gst: {}, cewbs: {}, sync };
+  }
+  const { db } = await firestore();
+  const root = db.collection("workspaces").doc(id);
+  const snap = await root.get();
+  if (!snap.exists) return null;
+  const workspace: Workspace = { ...freshWorkspace(id), ...(JSON.parse(String(snap.get("data"))) as Core) };
+  const records = (docs: { data(): unknown }[]) => docs.map((doc) => doc.data() as RecordDoc);
+  if (spec.ewbs) for (const doc of records((await root.collection("ewbs").get()).docs)) workspace.ewbs[doc.key] = JSON.parse(doc.json) as EwbRecord;
+  if (spec.requests) for (const doc of records((await root.collection("requests").get()).docs)) workspace.requests[doc.key] = JSON.parse(doc.json) as EwbRequest;
+  if (spec.syncKeys?.length) {
+    const snaps = await db.getAll(...spec.syncKeys.map((key) => root.collection("sync").doc(docId(key))));
+    for (const item of snaps) {
+      if (!item.exists) continue;
+      const doc = item.data() as RecordDoc;
+      (workspace.sync[doc.name!] ??= {})[doc.key] = JSON.parse(doc.json) as SyncRecord;
+    }
+  }
+  return workspace;
+}
+
+/** Append-only logs. Records are never updated or deleted by the app. */
+export type LogCollection = "api_calls" | "payment_events" | "admin_audit";
+export type LogRecord = Record<string, unknown> & { at: string };
+
+export async function appendLog(collection: LogCollection, record: LogRecord): Promise<void> {
+  if (backend === "file") {
+    const file = path.join(dataDir, "logs", `${collection}.jsonl`);
+    await mkdir(path.dirname(file), { recursive: true });
+    await appendFile(file, `${JSON.stringify(record)}\n`);
+    return;
+  }
+  const { db } = await firestore();
+  await db.collection(collection).add(record);
+}
+
+/** Log records with `at` in [from, to], newest first, at most `limit`. */
+export async function queryLogs(collection: LogCollection, { from, to, limit }: { from?: string; to?: string; limit: number }): Promise<LogRecord[]> {
+  const inRange = (record: LogRecord) => (!from || record.at >= from) && (!to || record.at <= to);
+  if (backend === "file") {
+    let text = "";
+    try {
+      text = await readFile(path.join(dataDir, "logs", `${collection}.jsonl`), "utf8");
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
+    return text.split("\n").filter(Boolean).map((line) => JSON.parse(line) as LogRecord).filter(inRange).sort((a, b) => b.at.localeCompare(a.at)).slice(0, limit);
+  }
+  const { db } = await firestore();
+  let query: import("firebase-admin/firestore").Query = db.collection(collection);
+  if (from) query = query.where("at", ">=", from);
+  if (to) query = query.where("at", "<=", to);
+  const snap = await query.orderBy("at", "desc").limit(limit).get();
+  return snap.docs.map((doc) => doc.data() as LogRecord);
 }
