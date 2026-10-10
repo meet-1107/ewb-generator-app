@@ -1,12 +1,24 @@
+import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { EwbInput } from "./validation";
 
 /**
- * Workspace-scoped persistence. Each workspace is one JSON document written
- * atomically, with writes serialized per workspace. This keeps the service
- * dependency-free for development; swap `WorkspaceStore` for the Postgres
- * implementation (lib/db) before running at production scale.
+ * Workspace-scoped persistence with two backends:
+ *
+ * - Firestore (STORE=firestore; always on Cloud Functions). The workspace's
+ *   small fields live in `workspaces/{id}`; each record of the large
+ *   sections (ewbs, requests, gst, cewbs, sync) is its own document in a
+ *   subcollection of the same name. Every `withWorkspace` call is one
+ *   Firestore transaction, so concurrent requests on any number of server
+ *   instances cannot overspend credits or lose writes.
+ * - JSON files under DATA_DIR (local development and tests), one file per
+ *   workspace, writes serialized per workspace in this process.
+ *
+ * Callers name the large sections they use, so a request reads only those
+ * records: `{ ewbs: "all" }` loads every bill, `{ ewbs: [id] }` only that one,
+ * `{ ewbs: [] }` none (new records can still be added). Touching a section
+ * that was not named throws, on both backends.
  */
 
 export type EwbStatus = "active" | "expired" | "cancelled" | "part_b_pending";
@@ -144,9 +156,15 @@ export type Workspace = {
   sync: Record<string, Record<string, SyncRecord>>;
 };
 
+
+export const SECTIONS = ["ewbs", "requests", "gst", "cewbs", "sync"] as const;
+export type Section = (typeof SECTIONS)[number];
+/** Which records of each large section a call needs; `sync` can only be loaded whole. */
+export type SectionSpec = { [K in Exclude<Section, "sync">]?: "all" | string[] } & { sync?: "all" };
+type Core = Omit<Workspace, Section>;
+
+const backend = process.env["STORE"] === "firestore" ? "firestore" : "file";
 const dataDir = path.resolve(process.env["DATA_DIR"] ?? path.join(process.cwd(), ".data"));
-const cache = new Map<string, Workspace>();
-const queues = new Map<string, Promise<unknown>>();
 
 /** Credits a new workspace starts with (WALLET_START_CREDITS, default 0: every action is paid). */
 function startCredits() {
@@ -185,16 +203,61 @@ function freshWorkspace(id: string): Workspace {
   };
 }
 
-function fileFor(id: string) {
+/** The workspace as `fn` sees it: sections that were not requested throw instead of reading as empty. */
+function guard(workspace: Workspace, spec: SectionSpec): Workspace {
+  return new Proxy(workspace, {
+    get(target, prop, receiver) {
+      if (typeof prop === "string" && (SECTIONS as readonly string[]).includes(prop) && !(prop in spec)) {
+        throw new Error(`withWorkspace: section "${prop}" was used but not requested.`);
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+}
+
+/** Runs `fn` with exclusive access to the workspace and saves what it changed. `fn` may run more than once (Firestore retries), so it must not call out. */
+export function withWorkspace<T>(id: string, fn: (workspace: Workspace) => T | Promise<T>, spec: SectionSpec = {}): Promise<T> {
+  return backend === "firestore" ? firestoreWorkspace(id, fn, spec) : fileWorkspace(id, fn, spec);
+}
+
+/**
+ * Small shared documents (OTP challenges, the GSTIN registry) with exclusive
+ * access per document: `fn` gets the current value (or null) and returns the
+ * next one, `null` to delete it. A throw leaves the document unchanged.
+ * Concurrent calls cannot double-spend a code or grant.
+ */
+export function withDoc<T, R>(collection: string, id: string, fn: (current: T | null) => { next: T | null; result: R } | Promise<{ next: T | null; result: R }>): Promise<R> {
+  return backend === "firestore" ? firestoreDoc(collection, id, fn) : fileDoc(collection, id, fn);
+}
+
+/** Reads a shared document without locking it. */
+export async function readDoc<T>(collection: string, id: string): Promise<T | null> {
+  if (backend === "file") return withDoc<T, T | null>(collection, id, (current) => ({ next: current, result: current }));
+  const { db } = await firestore();
+  const snap = await db.collection(collection).doc(docId(id)).get();
+  return snap.exists ? (JSON.parse(String(snap.get("data"))) as T) : null;
+}
+
+export function audit(workspace: Workspace, actor: string, action: string, targetId: string, outcome: string) {
+  workspace.audit.push({ at: new Date().toISOString(), actor, action, targetId, outcome });
+  if (workspace.audit.length > 500) workspace.audit.splice(0, workspace.audit.length - 500);
+}
+
+/* ---------- JSON files (development) ---------- */
+
+const cache = new Map<string, Workspace>();
+const queues = new Map<string, Promise<unknown>>();
+
+function workspaceFile(id: string) {
   return path.join(dataDir, "workspaces", `${id}.json`);
 }
 
-async function load(id: string) {
+async function loadFile(id: string) {
   const cached = cache.get(id);
   if (cached) return cached;
   let workspace: Workspace;
   try {
-    workspace = { ...freshWorkspace(id), ...(JSON.parse(await readFile(fileFor(id), "utf8")) as Workspace) };
+    workspace = { ...freshWorkspace(id), ...(JSON.parse(await readFile(workspaceFile(id), "utf8")) as Workspace) };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     workspace = freshWorkspace(id);
@@ -203,21 +266,21 @@ async function load(id: string) {
   return workspace;
 }
 
-async function persist(workspace: Workspace) {
-  const file = fileFor(workspace.id);
+async function writeJson(file: string, value: unknown) {
   await mkdir(path.dirname(file), { recursive: true });
   const temp = `${file}.${process.pid}.tmp`;
-  await writeFile(temp, JSON.stringify(workspace));
+  await writeFile(temp, JSON.stringify(value));
   await rename(temp, file);
 }
 
-/** Runs `fn` with exclusive access to the workspace and saves the result. */
-export function withWorkspace<T>(id: string, fn: (workspace: Workspace) => T | Promise<T>): Promise<T> {
+function fileWorkspace<T>(id: string, fn: (workspace: Workspace) => T | Promise<T>, spec: SectionSpec): Promise<T> {
   const previous = queues.get(id) ?? Promise.resolve();
   const next = previous.catch(() => undefined).then(async () => {
-    const workspace = await load(id);
-    const result = await fn(workspace);
-    await persist(workspace);
+    // fn works on a copy, so a throw leaves the workspace exactly as it was.
+    const workspace = structuredClone(await loadFile(id));
+    const result = await fn(guard(workspace, spec));
+    await writeJson(workspaceFile(id), workspace);
+    cache.set(id, workspace);
     return result;
   });
   queues.set(id, next);
@@ -226,13 +289,7 @@ export function withWorkspace<T>(id: string, fn: (workspace: Workspace) => T | P
 
 const docQueues = new Map<string, Promise<unknown>>();
 
-/**
- * Small shared documents (e.g. OTP challenges) with exclusive access per
- * document: `fn` gets the current value (or null) and returns the next one,
- * `null` to delete it. Serialized per document so concurrent requests cannot
- * double-spend a code or grant. Use Redis when running several instances.
- */
-export function withDoc<T, R>(collection: string, id: string, fn: (current: T | null) => { next: T | null; result: R } | Promise<{ next: T | null; result: R }>): Promise<R> {
+function fileDoc<T, R>(collection: string, id: string, fn: (current: T | null) => { next: T | null; result: R } | Promise<{ next: T | null; result: R }>): Promise<R> {
   const file = path.join(dataDir, collection, `${id}.json`);
   const previous = docQueues.get(file) ?? Promise.resolve();
   const run = previous.catch(() => undefined).then(async () => {
@@ -246,10 +303,7 @@ export function withDoc<T, R>(collection: string, id: string, fn: (current: T | 
     if (next === null) {
       if (current !== null) await rm(file, { force: true });
     } else {
-      await mkdir(path.dirname(file), { recursive: true });
-      const temp = `${file}.${process.pid}.tmp`;
-      await writeFile(temp, JSON.stringify(next));
-      await rename(temp, file);
+      await writeJson(file, next);
     }
     return result;
   });
@@ -261,16 +315,107 @@ export function withDoc<T, R>(collection: string, id: string, fn: (current: T | 
   return run;
 }
 
-/** Shared (not per-workspace) JSON documents, e.g. the verified-GSTIN registry. */
-export function sharedFile(...parts: string[]) {
-  return path.join(dataDir, ...parts);
+/* ---------- Firestore (production) ---------- */
+
+type FirestoreModule = typeof import("firebase-admin/firestore");
+let firestoreReady: Promise<{ db: import("firebase-admin/firestore").Firestore; sdk: FirestoreModule }> | null = null;
+
+function firestore() {
+  firestoreReady ??= (async () => {
+    // Loaded only on this backend, so local development needs no Google libraries.
+    const [sdk, { firebaseApp }] = await Promise.all([import("firebase-admin/firestore"), import("./firebase")]);
+    return { db: sdk.getFirestore(firebaseApp()), sdk };
+  })();
+  return firestoreReady;
 }
 
-export function readWorkspace(id: string) {
-  return withWorkspace(id, (workspace) => workspace);
+/** Firestore document IDs cannot contain "/" or look like "__x__"; long keys are hashed. */
+function docId(key: string) {
+  const encoded = `k${encodeURIComponent(key)}`;
+  return encoded.length <= 700 ? encoded : `h${createHash("sha256").update(key).digest("hex")}`;
 }
 
-export function audit(workspace: Workspace, actor: string, action: string, targetId: string, outcome: string) {
-  workspace.audit.push({ at: new Date().toISOString(), actor, action, targetId, outcome });
-  if (workspace.audit.length > 500) workspace.audit.splice(0, workspace.audit.length - 500);
+/** One stored record of a large section. `name` is the sync collection, for `sync` only. */
+type RecordDoc = { key: string; name?: string; json: string };
+
+function sectionEntries(workspace: Workspace, section: Section): { id: string; doc: RecordDoc }[] {
+  if (section === "sync") {
+    return Object.entries(workspace.sync).flatMap(([name, records]) =>
+      Object.entries(records).map(([key, record]) => ({ id: docId(`${name}/${key}`), doc: { key, name, json: JSON.stringify(record) } })),
+    );
+  }
+  return Object.entries(workspace[section] as Record<string, unknown>).map(([key, record]) => ({ id: docId(key), doc: { key, json: JSON.stringify(record) } }));
+}
+
+function coreOf(workspace: Workspace): Core {
+  const core: Record<string, unknown> = { ...workspace };
+  for (const section of SECTIONS) delete core[section];
+  return core as Core;
+}
+
+async function firestoreWorkspace<T>(id: string, fn: (workspace: Workspace) => T | Promise<T>, spec: SectionSpec): Promise<T> {
+  const { db, sdk } = await firestore();
+  const root = db.collection("workspaces").doc(id);
+  const sections = SECTIONS.filter((section) => spec[section] !== undefined);
+
+  return db.runTransaction(async (tx) => {
+    const rootSnap = await tx.get(root);
+    const loaded = await Promise.all(sections.map(async (section) => {
+      const wanted = spec[section]!;
+      if (wanted === "all") return (await tx.get(root.collection(section))).docs;
+      if (!wanted.length) return [];
+      return (await tx.getAll(...[...new Set(wanted)].map((key) => root.collection(section).doc(docId(key))))).filter((snap) => snap.exists);
+    }));
+
+    const coreBefore = rootSnap.exists ? String(rootSnap.get("data")) : null;
+    const workspace: Workspace = { ...freshWorkspace(id), ...(coreBefore ? (JSON.parse(coreBefore) as Core) : {}) };
+    const before = new Map<string, string>();
+    sections.forEach((section, index) => {
+      for (const snap of loaded[index]!) {
+        const doc = snap.data() as RecordDoc;
+        before.set(`${section}/${snap.id}`, doc.json);
+        const value = JSON.parse(doc.json) as never;
+        if (section === "sync") (workspace.sync[doc.name!] ??= {})[doc.key] = value;
+        else (workspace[section] as Record<string, unknown>)[doc.key] = value;
+      }
+    });
+
+    const result = await fn(guard(workspace, spec));
+
+    const coreAfter = JSON.stringify(coreOf(workspace));
+    if (coreAfter !== coreBefore) {
+      // `balance` is duplicated as a plain field so it can be read in the Firebase console.
+      tx.set(root, { data: coreAfter, balance: workspace.wallet.balance, updatedAt: sdk.FieldValue.serverTimestamp() });
+    }
+    for (const section of sections) {
+      for (const { id: recordId, doc } of sectionEntries(workspace, section)) {
+        const slot = `${section}/${recordId}`;
+        if (before.get(slot) !== doc.json) tx.set(root.collection(section).doc(recordId), doc);
+        before.delete(slot);
+      }
+    }
+    // Loaded records that are gone from the workspace were deleted by `fn`.
+    for (const slot of before.keys()) {
+      const [section, recordId] = slot.split("/") as [Section, string];
+      tx.delete(root.collection(section).doc(recordId));
+    }
+    return result;
+  });
+}
+
+async function firestoreDoc<T, R>(collection: string, id: string, fn: (current: T | null) => { next: T | null; result: R } | Promise<{ next: T | null; result: R }>): Promise<R> {
+  const { db, sdk } = await firestore();
+  const ref = db.collection(collection).doc(docId(id));
+  return db.runTransaction(async (tx) => {
+    const snap = await tx.get(ref);
+    const current = snap.exists ? (JSON.parse(String(snap.get("data"))) as T) : null;
+    const { next, result } = await fn(current);
+    if (next === null) {
+      if (snap.exists) tx.delete(ref);
+    } else {
+      const json = JSON.stringify(next);
+      if (!snap.exists || json !== snap.get("data")) tx.set(ref, { data: json, updatedAt: sdk.FieldValue.serverTimestamp() });
+    }
+    return result;
+  });
 }

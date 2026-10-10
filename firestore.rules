@@ -1,0 +1,10 @@
+rules_version = '2';
+// The app never reads Firestore directly: only the "api" Cloud Function does,
+// through the Admin SDK, which these rules do not restrict. Block everyone else.
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

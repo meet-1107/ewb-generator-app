@@ -104,8 +104,10 @@ router.post("/ewb/generate", async (req, res) => {
   const input = normalize(parsed.data);
 
   // Phase 1: claim the idempotency key and check entitlement/duplicates.
+  // Requests are stored under their idempotency key.
+  const requestKey = key.data;
   const claim = await withWorkspace(req.workspaceId, (workspace) => {
-    const existing = Object.values(workspace.requests).find((request) => request.idempotencyKey === key.data);
+    const existing = workspace.requests[requestKey];
     if (existing?.state === "generated" && existing.ewbId) return { kind: "replay" as const, ewb: workspace.ewbs[existing.ewbId] };
     if (existing?.state === "pending") return { kind: "pending" as const };
     const duplicate = Object.values(workspace.ewbs).find((ewb) => ewb.invoiceId === input.invoiceId && refreshStatus(ewb).status !== "cancelled");
@@ -115,11 +117,11 @@ router.post("/ewb/generate", async (req, res) => {
     if ("missing" in ctx) return { kind: "credentials" as const };
     const hold = holdCredits(workspace, "generate", input.invoiceId);
     if (!hold.ok) return { kind: "credits" as const, cost: hold.cost, balance: hold.balance };
-    const request = existing ?? { id: randomUUID(), idempotencyKey: key.data, invoiceId: input.invoiceId, state: "pending" as const, createdAt: new Date().toISOString() };
+    const request = existing ?? { id: randomUUID(), idempotencyKey: requestKey, invoiceId: input.invoiceId, state: "pending" as const, createdAt: new Date().toISOString() };
     request.state = "pending";
-    workspace.requests[request.id] = request;
+    workspace.requests[requestKey] = request;
     return { kind: "claimed" as const, requestId: request.id, holdId: hold.entryId, ctx };
-  });
+  }, { requests: [requestKey], ewbs: "all" });
 
   if (claim.kind === "replay") return res.json({ ewb: claim.ewb, replay: true });
   if (claim.kind === "pending") return res.status(409).json({ error: "pending", message: "This bill is already being submitted. Wait a moment and refresh." });
@@ -133,17 +135,17 @@ router.post("/ewb/generate", async (req, res) => {
     result = await ewbProvider.generate(input, claim.ctx);
   } catch {
     await withWorkspace(req.workspaceId, (workspace) => {
-      const request = workspace.requests[claim.requestId]!;
+      const request = workspace.requests[requestKey]!;
       request.state = "rejected";
       request.safeErrorCode = "PROVIDER_UNAVAILABLE";
       refundCredits(workspace, claim.holdId, "Provider did not respond");
-    });
+    }, { requests: [requestKey] });
     return res.status(502).json({ error: "provider_unavailable", message: "The provider did not respond. Nothing was generated; try again.", reference: claim.requestId.slice(0, 8) });
   }
 
   // Phase 3: record the outcome.
   const outcome = await withWorkspace(req.workspaceId, (workspace) => {
-    const request = workspace.requests[claim.requestId]!;
+    const request = workspace.requests[requestKey]!;
     request.completedAt = new Date().toISOString();
     if (!result.ok) {
       request.state = "rejected";
@@ -188,7 +190,7 @@ router.post("/ewb/generate", async (req, res) => {
     settleCredits(workspace, claim.holdId, { ewbNumber: record.ewbNumber, targetId: record.id });
     audit(workspace, req.actor, "ewb.generate", record.id, "generated");
     return { ok: true as const, record, wallet: walletSummary(workspace).balance };
-  });
+  }, { requests: [requestKey], ewbs: [] });
 
   if (!outcome.ok) {
     const failed = outcome.result as Extract<typeof result, { ok: false }>;
@@ -200,7 +202,7 @@ router.post("/ewb/generate", async (req, res) => {
 router.get("/ewb", async (req, res) => {
   const ewbs = await withWorkspace(req.workspaceId, (workspace) =>
     Object.values(workspace.ewbs).map((ewb) => refreshStatus(ewb)).sort((a, b) => b.generatedAt.localeCompare(a.generatedAt)),
-  );
+  { ewbs: "all" });
   res.json({ ewbs, provider: ewbProvider ? { id: ewbProvider.id, label: ewbProvider.label, sandbox: ewbProvider.sandbox } : null });
 });
 
@@ -211,7 +213,7 @@ router.get("/ewb/:id", async (req, res) => {
     refreshStatus(record);
     record.lastVerifiedAt = new Date().toISOString();
     return record;
-  });
+  }, { ewbs: [req.params.id] });
   if (!ewb) return res.status(404).json({ error: "not_found", message: "This e-way bill is not in your workspace." });
   return res.json({ ewb });
 });
@@ -233,7 +235,7 @@ router.post("/ewb/:id/actions", async (req, res) => {
   const current = await withWorkspace(req.workspaceId, (workspace) => {
     const record = workspace.ewbs[req.params.id];
     return record ? structuredClone(refreshStatus(record)) : null;
-  });
+  }, { ewbs: [req.params.id] });
   if (!current) return res.status(404).json({ error: "not_found", message: "This e-way bill is not in your workspace." });
   if (current.status === "cancelled") return res.status(409).json({ error: "cancelled", message: "This bill is cancelled; no further changes are allowed." });
   if (body.action === "update_vehicle" && current.status === "expired") return res.status(409).json({ error: "expired", message: "The vehicle cannot be changed on an expired bill." });
@@ -290,7 +292,7 @@ router.post("/ewb/:id/actions", async (req, res) => {
     record.lastVerifiedAt = now;
     audit(workspace, req.actor, `ewb.${body.action}`, record.id, "ok");
     return { record, balance: workspace.wallet.balance };
-  });
+  }, { ewbs: [req.params.id] });
   return res.json({ ewb: ewb.record, balance: ewb.balance });
 });
 
@@ -307,7 +309,7 @@ const consolidateSchema = z.object({
 });
 
 router.get("/ewb-consolidated", async (req, res) => {
-  const cewbs = await withWorkspace(req.workspaceId, (workspace) => Object.values(workspace.cewbs).sort((a, b) => b.generatedAt.localeCompare(a.generatedAt)));
+  const cewbs = await withWorkspace(req.workspaceId, (workspace) => Object.values(workspace.cewbs).sort((a, b) => b.generatedAt.localeCompare(a.generatedAt)), { cewbs: "all" });
   res.json({ cewbs });
 });
 
@@ -333,7 +335,7 @@ router.post("/ewb-consolidated", async (req, res) => {
     const held = holdCredits(workspace, "consolidate");
     if (!held.ok) return { kind: "credits" as const, cost: held.cost, balance: held.balance };
     return { kind: "held" as const, holdId: held.entryId, ctx, ewbNumbers: records.map((bill) => bill.ewbNumber) };
-  });
+  }, { ewbs: body.ewbIds });
   if (claim.kind === "error") return res.status(claim.status).json({ error: "not_allowed", message: claim.message });
   if (claim.kind === "credentials") return credentialsMissing(res, claim.gstin);
   if (claim.kind === "credits") return insufficient(res, claim.cost, claim.balance, "A consolidated e-way bill");
@@ -378,7 +380,7 @@ router.post("/ewb-consolidated", async (req, res) => {
     settleCredits(workspace, claim.holdId, { ewbNumber: cewb.cewbNumber, targetId: cewb.id });
     audit(workspace, req.actor, "ewb.consolidate", cewb.id, "ok");
     return { cewb, balance: workspace.wallet.balance };
-  });
+  }, { cewbs: [], ewbs: body.ewbIds });
   return res.status(201).json(saved);
 });
 

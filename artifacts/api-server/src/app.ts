@@ -8,6 +8,9 @@ import { rateLimit } from "./lib/rate-limit";
 const app: Express = express();
 
 app.disable("x-powered-by");
+// On Cloud Functions every request arrives through Google's front end (and
+// Firebase Hosting); use the client address it forwards for rate limits.
+if (process.env["K_SERVICE"]) app.set("trust proxy", true);
 app.use(
   pinoHttp({
     logger,
@@ -37,6 +40,7 @@ app.use(cors());
 app.use(rateLimit({ windowMs: 60_000, max: 240 }));
 // PDF imports arrive base64-encoded (8 MB file ≈ 11 MB body).
 // The raw body is kept for webhook signature checks (Razorpay signs the exact bytes).
+// On Cloud Functions the body arrives already parsed, with req.rawBody set.
 app.use(express.json({ limit: "12mb", verify: (req, _res, buf) => { (req as Request & { rawBody?: Buffer }).rawBody = buf; } }));
 app.use(express.urlencoded({ extended: true }));
 

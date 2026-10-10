@@ -14,7 +14,7 @@
         "buildType": "apk"
       },
       "env": {
-        "EXPO_PUBLIC_API_URL": "http://192.168.1.152:5000"
+        "EXPO_PUBLIC_API_URL": "https://ewb---generator.web.app"
       },
       "environment": "preview"
     },
@@ -22,6 +22,9 @@
       "extends": "base",
       "android": {
         "buildType": "app-bundle"
+      },
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://ewb---generator.web.app"
       },
       "environment": "production"
     }

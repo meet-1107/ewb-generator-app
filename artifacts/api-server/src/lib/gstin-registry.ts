@@ -1,7 +1,5 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import path from "node:path";
 import { GstinApiError, lookupGstin } from "./gstinapi";
-import { sharedFile } from "./store";
+import { readDoc, withDoc } from "./store";
 import { STATES } from "./validation";
 
 /**
@@ -32,29 +30,16 @@ export type VerifiedGstin = {
 const memory = new Map<string, VerifiedGstin>();
 const inFlight = new Map<string, Promise<{ record: VerifiedGstin; cached: boolean }>>();
 
-function fileFor(gstin: string) {
-  return sharedFile("gstins", `${gstin}.json`);
-}
-
 async function readCached(gstin: string) {
   const hit = memory.get(gstin);
   if (hit) return hit;
-  try {
-    const record = JSON.parse(await readFile(fileFor(gstin), "utf8")) as VerifiedGstin;
-    memory.set(gstin, record);
-    return record;
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    return null;
-  }
+  const record = await readDoc<VerifiedGstin>("gstins", gstin);
+  if (record) memory.set(gstin, record);
+  return record;
 }
 
 async function writeCached(record: VerifiedGstin) {
-  const file = fileFor(record.gstin);
-  await mkdir(path.dirname(file), { recursive: true });
-  const temp = `${file}.${process.pid}.tmp`;
-  await writeFile(temp, JSON.stringify(record));
-  await rename(temp, file);
+  await withDoc<VerifiedGstin, null>("gstins", record.gstin, () => ({ next: record, result: null }));
   memory.set(record.gstin, record);
 }
 

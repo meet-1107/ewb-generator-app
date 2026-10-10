@@ -1,29 +1,30 @@
 # Deploy on Firebase (Blaze) and install the APK
 
-What goes where:
+Everything runs in one Firebase project and is deployed with one command, `firebase deploy`:
 
-| Piece | Runs on | Why |
+| Piece | Runs on | Notes |
 |---|---|---|
 | Sign-in | **Firebase Authentication**: Continue with Google + email/password (free, no SMS) | `lib/auth-client.native.ts` (React Native Firebase + Google Sign-In), `lib/auth-client.ts` (web SDK) |
-| API server (`artifacts/api-server`) | **Cloud Run** in the same Firebase project | Firebase Hosting serves only static files, so the Express server runs on Cloud Run (billed through your Blaze plan) |
-| Server data (`DATA_DIR`) | **Cloud Storage bucket** mounted into Cloud Run | The Cloud Run disk is wiped on every restart |
-| Android app | **APK** built by Expo EAS, installed on the phone | Firebase does not build or host APKs |
-| Web version (optional) | **Firebase Hosting** (`firebase.json`) | `/api/**` is forwarded to Cloud Run |
+| API server (`artifacts/api-server`) | **Cloud Functions for Firebase**: one HTTPS function `api` in `asia-south1` | Built into `functions/` by `firebase deploy`. Keys and settings come from `functions/.env`. |
+| Server data | **Cloud Firestore** | Wallets, e-way bills, saved invoices, verified GSTINs, OTP codes. Only the function can read it (`firestore.rules`). |
+| Web version | **Firebase Hosting**: https://ewb---generator.web.app | `/api/**` is forwarded to the `api` function (`firebase.json`), so the app and the website use the same address. |
+| Android app | **APK** built by Expo EAS, installed on the phone | Firebase does not build APKs. |
 
 This project's values (from `google-services.json`):
 
-- Firebase project ID: `ewb---generator`
+- Firebase project ID: `ewb---generator` (already selected in `.firebaserc`)
 - Project number: `396238368123`
 - Android package: `com.ewayeasy.app`, app name **E-Way Easy**
-- Region: `asia-south1` (Mumbai). If you pick another region, also change it in `firebase.json`.
+- Region: `asia-south1` (Mumbai). To change it, edit `artifacts/api-server/src/functions.ts` and `firebase.json`.
+- Server address used by the app: `https://ewb---generator.web.app` (already in `eas.json`)
 
 ## What you need
 
 - Firebase project on the **Blaze** plan
 - A Google account with Owner access to that project
 - A free **Expo** account: https://expo.dev/signup
-- On your PC: Node.js 22 or 24 LTS, Git, and **pnpm 9** (`npm install -g pnpm@9.15.9`).
-  Use pnpm 9: the committed `pnpm-lock.yaml` fails `--frozen-lockfile` under pnpm 10.
+- On your PC: Node.js 22 or 24 LTS, Git, and the Firebase CLI (`npm install -g firebase-tools`).
+  Install the project's packages with `npx pnpm@9.15.9 install` (pnpm 9: the committed `pnpm-lock.yaml` fails under pnpm 10).
 - An Android phone (Android 7+) and its USB cable or a browser on the phone
 - Recommended: a budget alert (Google Cloud console → Billing → Budgets & alerts), for example ₹500/month
 
@@ -60,72 +61,75 @@ The rules:
 1. Sign up at https://resend.com.
 2. Go to **Domains → Add domain**. Add the DNS records it shows, at your domain provider, and wait until the domain shows **Verified**.
 3. Go to **API keys → Create** (permission "Sending access").
-4. Put these on the server (`artifacts/api-server/.env` for testing; Cloud Run variables when live, Part 2b):
+4. Put these in `functions/.env` (Part 2):
    - `RESEND_API_KEY=re_…`
    - `EMAIL_FROM=E-Way Easy <verify@yourdomain.com>`
-   - `OTP_PEPPER=` followed by 64 random characters (`openssl rand -hex 32`)
-   - `FIREBASE_PROJECT_ID=ewb---generator`
+
+   `OTP_PEPPER` is generated for you on the first deploy, and the project ID is set by Firebase.
 
 To test before verifying a domain, use `EMAIL_FROM=E-Way Easy <onboarding@resend.dev>`. It only delivers to the email you signed up to Resend with.
 
 ### Firebase Admin permission (server)
 
 The server marks accounts verified with the Firebase Admin SDK.
-- **On Cloud Run:** it uses the service's account automatically. Give that account the Firebase Authentication Admin role once:
+- **On Cloud Functions:** nothing to do. The function's default service account can already manage Firebase Authentication users and Firestore.
+- **On your PC (testing only):** go to Firebase console → Project settings → Service accounts → **Generate new private key**. Save the file outside the project folder and set `GOOGLE_APPLICATION_CREDENTIALS` in `artifacts/api-server/.env` to its path. Never commit this file.
 
-```bash
-gcloud projects add-iam-policy-binding ewb---generator \
-  --member=serviceAccount:396238368123-compute@developer.gserviceaccount.com \
-  --role=roles/firebaseauth.admin
-```
+## Part 2: Deploy the server, database and website
 
-- **On your PC:** go to Firebase console → Project settings → Service accounts → **Generate new private key**. Save the file outside the project folder and set `GOOGLE_APPLICATION_CREDENTIALS` in `.env` to its path. Never commit this file.
+Do steps 1–2 once, in the Firebase console (https://console.firebase.google.com/project/ewb---generator):
 
-### Web version only (Part 3)
+1. **Create the database.** Go to **Build → Firestore Database → Create database**. Choose location **asia-south1 (Mumbai)** and **Start in production mode**, then click **Create**. The location cannot be changed later.
+2. **Turn on Hosting.** Go to **Build → Hosting → Get started**, then click **Next** through the steps until **Continue to console**. You don't need to run the commands it shows.
 
-Go to **Project settings → General → Your apps → Add app → Web (`</>`)**, then copy `apiKey`, `authDomain`, `projectId`, `storageBucket`, `messagingSenderId` and `appId`.
+Then, on your PC, in the project folder (PowerShell or the VS Code terminal):
 
-## Part 2: API server on Cloud Run
+3. Get the latest code and packages:
 
-**Quick way:** in Google Cloud Shell, run `cp deploy/env.example.yaml deploy/env.yaml`, fill in your keys (`cloudshell edit deploy/env.yaml`), then `bash deploy/cloudrun.sh`. The script does every step below, including the permissions and secrets, and prints the server URL. Re-run it to redeploy.
+   ```powershell
+   git pull origin claude/vibrant-ptolemy-yxewea
+   npx pnpm@9.15.9 install
+   ```
 
+4. Log in to Firebase (a browser window opens; pick the Google account that owns the project):
 
-Easiest: run these in **Google Cloud Shell** (console.cloud.google.com → the `>_` icon, top right). It already has `gcloud` and `firebase`. Upload the project zip (⋮ → Upload) and `unzip` it, or `git clone` the repo. Then `cd` into the project folder.
+   ```powershell
+   npm install -g firebase-tools
+   firebase login
+   ```
 
-```bash
-gcloud config set project ewb---generator
+5. Run the first deploy:
 
-# 1. Turn on the services
-gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com
+   ```powershell
+   firebase deploy
+   ```
 
-# 2. Storage bucket for the server's data
-gcloud storage buckets create gs://ewb---generator-ewb-data --location=asia-south1 --uniform-bucket-level-access
-gcloud storage buckets add-iam-policy-binding gs://ewb---generator-ewb-data \
-  --member=serviceAccount:396238368123-compute@developer.gserviceaccount.com \
-  --role=roles/storage.objectUser
+   The first time, it stops with **Created functions/.env**.
 
-# 3. Build (uses the root Dockerfile) and deploy
-gcloud run deploy ewb-api --source . --region asia-south1 \
-  --allow-unauthenticated --execution-environment gen2 \
-  --max-instances 1 --memory 512Mi \
-  --set-env-vars NODE_ENV=production,FIREBASE_PROJECT_ID=ewb---generator,DATA_DIR=/data \
-  --add-volume name=data,type=cloud-storage,bucket=ewb---generator-ewb-data \
-  --add-volume-mount volume=data,mount-path=/data
-```
+6. Open `functions/.env` in VS Code (`code functions/.env`) and fill in:
+   - `GSTINAPI_KEY=gak_…` (your gstinapi.in key)
+   - `RESEND_API_KEY=re_…` (your Resend key)
+   - optional: `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET`
 
-If it asks to create an Artifact Registry repository, answer **Y**.
+   Save the file.
 
-At the end it prints a **Service URL** like `https://ewb-api-xxxxxxxx.asia-south1.run.app`. Check it:
+7. Deploy again:
 
-```bash
-curl https://ewb-api-xxxxxxxx.asia-south1.run.app/api/healthz    # {"status":"ok"}
-```
+   ```powershell
+   firebase deploy
+   ```
 
-Notes:
+   - It adds `OTP_PEPPER`, `EWB_CREDENTIALS_SECRET` and `WALLET_ADMIN_TOKEN` to `functions/.env`, builds the server, deploys it, deploys the Firestore rules, builds the web version and publishes it.
+   - The web build creates the Firebase web app **E-Way Easy Web** the first time and downloads its config, so you don't copy any web config by hand.
+   - If it asks how many days to keep container images, press **Enter**.
+   - The first deploy takes about 5–10 minutes.
 
-- `--allow-unauthenticated` only makes the URL reachable. Because `FIREBASE_PROJECT_ID` is set, every data endpoint still requires a valid Firebase sign-in token.
-- Keep `--max-instances 1`. The server keeps workspaces in memory and in JSON files, so two instances would overwrite each other. Moving to Postgres (README "Before production") removes this limit.
-- To redeploy after code changes, run the same `gcloud run deploy` command again.
+8. Check it: open https://ewb---generator.web.app/api/healthz. It should show `{"status":"ok"}`. The website is https://ewb---generator.web.app.
+
+Keep a copy of `functions/.env` somewhere safe (not in Git). If it is lost, saved e-way bill portal logins can no longer be decrypted.
+
+**To change a setting or key later:** edit `functions/.env`, then run `firebase deploy --only functions`.
+**After code changes:** run `firebase deploy` (or `--only functions` / `--only hosting`).
 
 ## Part 2b: gstinapi.in key, credits and payments
 
@@ -135,8 +139,8 @@ The gstinapi.in key is a password, so it lives only on the server, never in the 
 
 | Where the server runs | Put the key here |
 |---|---|
+| Live (Cloud Functions) | `functions/.env`, then `firebase deploy --only functions`. The file is git-ignored. |
 | On your PC (testing) | `artifacts/api-server/.env`. Copy `artifacts/api-server/.env.example` to `.env` and fill it in. `pnpm --filter @workspace/api-server run start` loads it automatically. The file is git-ignored. |
-| Cloud Run (live) | Environment variables on the `ewb-api` service (command below). The `.env` file is not uploaded. |
 
 All settings:
 
@@ -154,11 +158,7 @@ All settings:
 | `RAZORPAY_WEBHOOK_SECRET` | any long string | The secret you type when creating the Razorpay webhook (below). |
 | `WALLET_ADMIN_TOKEN` | 48 random characters | Lets you add credits by hand, for example for a bank transfer. |
 
-Set them on Cloud Run. Run this as one line; `^@^` makes `@` the separator so the JSON's commas are kept:
-
-```bash
-gcloud run services update ewb-api --region asia-south1 --update-env-vars "^@^EWB_PROVIDER=gstinapi@GSTINAPI_KEY=gak_xxx@GSTINAPI_TEST_MODE=true@EWB_CREDENTIALS_SECRET=$(openssl rand -hex 32)@WALLET_ADMIN_TOKEN=$(openssl rand -hex 24)@WALLET_START_CREDITS=0@RAZORPAY_KEY_ID=rzp_live_xxx@RAZORPAY_KEY_SECRET=xxx@RAZORPAY_WEBHOOK_SECRET=xxx@RESEND_API_KEY=re_xxx@EMAIL_FROM=E-Way Easy <verify@yourdomain.com>@OTP_PEPPER=$(openssl rand -hex 32)"
-```
+`OTP_PEPPER`, `EWB_CREDENTIALS_SECRET` and `WALLET_ADMIN_TOKEN` are generated on the first deploy. Don't add `FIREBASE_…` names to `functions/.env`: Firebase reserves them and sets the project ID itself.
 
 ### gstinapi.in endpoints the server uses
 
@@ -190,7 +190,7 @@ How credits work:
 1. **Create and activate a Razorpay account.** Sign up at https://razorpay.com. Activation needs business KYC: PAN, bank account and GST.
 2. **Get the API keys.** Dashboard → Account & Settings → API keys → generate. Put them in `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET`.
 3. **Create the webhook.** Dashboard → Webhooks → Add:
-   - URL: `https://ewb-api-xxxxxxxx.asia-south1.run.app/api/payments/razorpay/webhook`
+   - URL: `https://ewb---generator.web.app/api/payments/razorpay/webhook`
    - Secret: the same value as `RAZORPAY_WEBHOOK_SECRET`
    - Event: **payment_link.paid**
 4. **Buy credits in the app.** In the app, go to Wallet → Buy credits → choose a pack, then pay on Razorpay with UPI, card or net banking. Credits are added when Razorpay confirms the payment, through the webhook or when the app re-checks. Each payment is credited once.
@@ -200,8 +200,8 @@ Test first with Razorpay **test mode** keys (`rzp_test_…`); no real money move
 Without Razorpay keys, the Wallet shows **Request credits** instead. You can then add credits by hand:
 
 ```bash
-curl -X POST https://ewb-api-xxxxxxxx.asia-south1.run.app/api/admin/wallet/topup \
-  -H "x-admin-token: YOUR_WALLET_ADMIN_TOKEN" -H "content-type: application/json" \
+curl -X POST https://ewb---generator.web.app/api/admin/wallet/topup \
+  -H "x-admin-token: WALLET_ADMIN_TOKEN_FROM_functions/.env" -H "content-type: application/json" \
   -d '{"workspaceId":"USER_WALLET_ID","credits":500,"note":"UPI ref 1234"}'
 ```
 
@@ -211,25 +211,11 @@ Before you sell credits:
 - **GST:** selling credits is a taxable supply. Decide whether ₹1 per credit includes GST, and issue invoices from Razorpay or your accounting software.
 - **Play Store:** credits sold inside an app on Google Play may need Google Play Billing, or Play's user-choice billing in India. A sideloaded APK isn't affected.
 
-## Part 3 (optional): Web version on Firebase Hosting
+## Part 3: Web version
 
-On your PC, from the repo root:
+`firebase deploy` builds and publishes the website (Part 2). It reads the web sign-in config from the Firebase web app **E-Way Easy Web**, creating it the first time. To use a different web app, put its `EXPO_PUBLIC_FIREBASE_API_KEY`, `EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN`, `EXPO_PUBLIC_FIREBASE_PROJECT_ID` and `EXPO_PUBLIC_FIREBASE_APP_ID` in `artifacts/ewb-vendor-app/.env`.
 
-```bash
-pnpm install
-cd artifacts/ewb-vendor-app
-EXPO_PUBLIC_FIREBASE_API_KEY=... EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN=... \
-EXPO_PUBLIC_FIREBASE_PROJECT_ID=... EXPO_PUBLIC_FIREBASE_APP_ID=... \
-npx expo export -p web           # writes artifacts/ewb-vendor-app/dist
-cd ../..
-npm install -g firebase-tools
-firebase login
-firebase deploy --only hosting --project ewb---generator
-```
-
-On Windows PowerShell, set each variable first (`$env:EXPO_PUBLIC_FIREBASE_API_KEY="..."`), then run `npx expo export -p web`.
-
-The site is served at `https://ewb---generator.web.app`. Its `/api/**` calls go to the `ewb-api` Cloud Run service through `firebase.json`.
+The site is served at `https://ewb---generator.web.app`. Its `/api/**` calls go to the `api` function.
 
 ## Part 4: Build the APK
 
@@ -264,12 +250,11 @@ On your PC:
 
    If you download the file again later, replace the stored copy with `eas env:update` (same flags), or delete and recreate the variable.
 
-4. Open `artifacts/ewb-vendor-app/eas.json` and set the `preview` → `env` block:
+4. `artifacts/ewb-vendor-app/eas.json` already points the app at the server:
 
    ```json
    "env": {
-     "EXPO_PUBLIC_API_URL": "https://ewb-api-xxxxxxxx.asia-south1.run.app",
-     "EXPO_PUBLIC_SUPPORT_EMAIL": "support@yourdomain.com"
+     "EXPO_PUBLIC_API_URL": "https://ewb---generator.web.app"
    }
    ```
 
@@ -291,7 +276,7 @@ eas build --platform android --profile preview
 3. If Android says the source isn't allowed, tap **Settings**, turn on **Allow from this source** for Chrome (or Files), then press back.
 4. Tap **Install**. If **Play Protect** warns that the app is unknown, tap **More details → Install anyway**. The warning appears because the app isn't from the Play Store.
 5. Open **E-Way Easy**, tap **Continue with Google**, and pick your account. The user then appears in Firebase console → Authentication → Users with provider Google.
-6. Check it works: create a business, save an invoice, pull to refresh. Then confirm a file appears in the `ewb---generator-ewb-data` bucket under `workspaces/`.
+6. Check it works: create a business, save an invoice, pull to refresh. Then confirm a document appears in Firebase console → Firestore Database → `workspaces`.
 
 Alternative (USB): download the `.apk` to your PC, enable **Developer options → USB debugging** on the phone, then run `adb install path/to/app.apk`.
 
@@ -306,12 +291,12 @@ Alternative (USB): download the `.apk` to your PC, enable **Developer options �
 | Symptom | Fix |
 |---|---|
 | App says "offline / service unreachable" | `EXPO_PUBLIC_API_URL` is wrong or not `https://`. Rebuild after fixing `eas.json`. |
-| "Sign in again to continue" on every screen | `FIREBASE_PROJECT_ID` on Cloud Run doesn't match the app's project ID. |
+| "Sign in again to continue" on every screen | The app was built for another Firebase project: `google-services.json` must be from `ewb---generator`. |
 | Sign-in screen shows **Open local preview** | Native Firebase is missing: you are in Expo Go (Google sign-in needs a real build), or `GOOGLE_SERVICES_JSON` was not available to the build. |
-| "Email verification is not set up on the server yet" | Set `RESEND_API_KEY`, `EMAIL_FROM`, `OTP_PEPPER` and `FIREBASE_PROJECT_ID` on the server. |
-| "Could not start verification right now" / "Could not activate your account" | The server cannot reach Firebase Admin. Grant `roles/firebaseauth.admin` (Part 1), or set `GOOGLE_APPLICATION_CREDENTIALS` locally. |
+| "Email verification is not set up on the server yet" | Set `RESEND_API_KEY` and `EMAIL_FROM` in `functions/.env`, then `firebase deploy --only functions`. |
+| "Could not start verification right now" / "Could not activate your account" | The server cannot reach Firebase Authentication. Check the function's logs: Firebase console → Functions → `api` → Logs. |
 | Code email never arrives | Check Resend → Emails for bounces, that the sender domain is verified, and the spam folder. |
-| "Online payment is not set up yet" in the Wallet | Add `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` to the server (Part 2b). |
+| "Online payment is not set up yet" in the Wallet | Add `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` to `functions/.env` and redeploy (Part 2b). |
 | Paid, but credits did not arrive | Check the Razorpay webhook URL, its secret, and the event `payment_link.paid`. Re-opening the Wallet also re-checks pending payments. |
 | "Google sign-in is not set up yet. Enable Google…" | The `google-services.json` used for the build has no Web client ID. Enable the Google provider, download the file again, update `GOOGLE_SERVICES_JSON`, and rebuild. |
 | "Google sign-in is not set up for this app build yet (SHA fingerprints…)" | The keystore's SHA-1/SHA-256 is not in Firebase (Part 4, step 2). Adding it doesn't need a rebuild. |
@@ -319,11 +304,15 @@ Alternative (USB): download the `.apk` to your PC, enable **Developer options �
 | Build fails: `google-services.json` not found | Run the `eas env:create … GOOGLE_SERVICES_JSON` command from Part 4, step 3. |
 | EAS build fails at `pnpm install` with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH` | Keep `"pnpm": "9.15.9"` in `eas.json`. |
 | "App not installed" over an older APK | The new build was signed with a different keystore. Uninstall the old app first. |
-| Cloud Run deploy: permission denied on the bucket | Re-run the `add-iam-policy-binding` command with the right `396238368123`. |
+| `firebase deploy`: "Created functions/.env" or "still say your_key" | Fill in `functions/.env` (Part 2, step 6) and run `firebase deploy` again. |
+| `firebase deploy`: Firestore database does not exist | Create it first (Part 2, step 1). |
+| `firebase deploy`: no Hosting site | Click **Hosting → Get started** in the console (Part 2, step 2). |
+| `firebase deploy`: a build or permission error mentioning `396238368123-compute@developer.gserviceaccount.com` | Enable the Compute Engine API once (https://console.cloud.google.com/apis/library/compute.googleapis.com?project=ewb---generator), wait two minutes, and deploy again. |
+| `firebase deploy`: "Remove FIREBASE_… from functions/.env" | Delete that line. Firebase sets the project ID itself. |
 
 ## Still sandbox
 
-Hosting does not make e-way bills or GST checks real. `EWB_PROVIDER` / `GST_PROVIDER` default to `sandbox` until a licensed GSP adapter is added. See README → "Before production".
+E-way bills are real only with `EWB_PROVIDER=gstinapi` and `GSTINAPI_TEST_MODE=false` in `functions/.env` (Part 2b). GST return status (`GST_PROVIDER`) is still `sandbox` until a provider adapter is added. See README → "Before production".
 
 ## iOS
 

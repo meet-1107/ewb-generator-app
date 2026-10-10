@@ -134,6 +134,17 @@ describe("email OTP registration", () => {
     mailFails = false;
     await service.send("new@example.com"); // no cooldown was recorded
   });
+
+  it("keeps the earlier code working when a resend cannot be sent", async () => {
+    await service.send("new@example.com");
+    const first = lastCode();
+    clock += RESEND_COOLDOWN_MS + 1;
+    mailFails = true;
+    await rejects(service.send("new@example.com"), "email_failed");
+    mailFails = false;
+    const { grant } = await service.verify("new@example.com", first);
+    assert.match(grant, /^[A-Za-z0-9_-]{43}$/);
+  });
 });
 
 describe("registration grants", () => {

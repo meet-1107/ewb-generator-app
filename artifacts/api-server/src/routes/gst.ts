@@ -16,7 +16,7 @@ router.get("/gst/status", async (req, res) => {
   if (gstinProblem(gstin) || !periodOk(period)) return res.status(400).json({ error: "bad_request", message: "Choose a valid GSTIN and period." });
   const snapshots = await withWorkspace(req.workspaceId, (workspace) =>
     Object.values(workspace.gst).filter((item) => item.gstin === gstin && item.period === period),
-  );
+  { gst: "all" });
   return res.json({
     snapshots,
     provider: gstProvider ? { id: gstProvider.id, label: gstProvider.label, sandbox: gstProvider.sandbox } : null,
@@ -42,7 +42,7 @@ router.post("/gst/refresh", async (req, res) => {
       workspace.gst[id] = { ...item, id, checkedAt };
       return workspace.gst[id]!;
     });
-  });
+  }, { gst: [] });
   return res.json({ snapshots, provider: { id: gstProvider.id, label: gstProvider.label, sandbox: gstProvider.sandbox } });
 });
 

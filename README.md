@@ -18,7 +18,7 @@ The web build talks to `http://localhost:5000` automatically. On a phone, set `E
 
 ## Deploy
 
-Firebase Auth + Cloud Run + optional Firebase Hosting, and building/installing the Android APK: see [docs/DEPLOY.md](docs/DEPLOY.md).
+Everything runs on Firebase: Authentication, the API as a Cloud Function, Firestore for data, and Hosting for the website (`firebase deploy`), plus building/installing the Android APK. See [docs/DEPLOY.md](docs/DEPLOY.md).
 
 ## What's in the app
 
@@ -36,12 +36,16 @@ Firebase Auth + Cloud Run + optional Firebase Hosting, and building/installing t
 
 ## Tests
 
-`pnpm --filter @workspace/api-server test` runs the server unit tests: email OTP, registration grants, and the document store.
+`pnpm --filter @workspace/api-server test` runs the server unit tests: email OTP, registration grants, and the store (JSON-file backend). To also test the Firestore backend, run them inside the emulator:
+
+```bash
+firebase emulators:exec --only firestore --project demo-ewb "pnpm --filter @workspace/api-server test"
+```
 
 ## Architecture
 
 - **Mobile** (`artifacts/ewb-vendor-app`): local-first store (`state/app-store.tsx`) persists to device and syncs to the backend (last write wins per record). Domain rules: `lib/domain.ts`. API client: `lib/api.ts`. UI kit: `components/AppUI.tsx`. Dialogs/toasts: `components/Dialog.tsx`.
-- **Backend** (`artifacts/api-server`): `providers/ewb-provider.ts` and `providers/gst-provider.ts` are adapter interfaces with **sandbox** implementations; `lib/validation.ts` holds the authoritative rules; `routes/` holds e-way bills, GST, PDF, sync, subscription.
+- **Backend** (`artifacts/api-server`): an Express app (`src/app.ts`), deployed as the Cloud Function `api` (`src/functions.ts`, built into `functions/` by `build-functions.mjs`). `lib/store.ts` keeps each workspace in Firestore (one transaction per update; large sections such as e-way bills and synced invoices are one document per record). `providers/ewb-provider.ts` and `providers/gst-provider.ts` are adapter interfaces with **sandbox** implementations; `lib/validation.ts` holds the authoritative rules; `routes/` holds e-way bills, GST, PDF, sync, subscription.
 - E-way bill generation is never queued offline. Retries reuse an idempotency key, so a duplicate submission returns the existing bill instead of creating a second one.
 
 ## Environment
@@ -55,8 +59,8 @@ Firebase Auth + Cloud Run + optional Firebase Hosting, and building/installing t
 | `FIREBASE_PROJECT_ID` | server | Requires and verifies Firebase ID tokens (otherwise sandbox workspace IDs are accepted) |
 | `EWB_PROVIDER`, `GST_PROVIDER` | server | Provider adapter (default `sandbox`) |
 | `PLANS_JSON`, `BILLING_PROVIDER` | server | Real plans / billing (defaults are labelled samples) |
-| `DATA_DIR`, `PORT` | server | Storage directory, port (dev default 5000) |
-| `GSTINAPI_KEY`, `EWB_PROVIDER=gstinapi`, `GSTINAPI_TEST_MODE` | server | GSTIN verification (cached once per GSTIN) and e-way bills via gstinapi.in. Local: `artifacts/api-server/.env` (see `.env.example`) |
+| `STORE`, `DATA_DIR`, `PORT` | server | `STORE=firestore` on Cloud Functions (set automatically); otherwise JSON files in `DATA_DIR` for local development. Port (dev default 5000) |
+| `GSTINAPI_KEY`, `EWB_PROVIDER=gstinapi`, `GSTINAPI_TEST_MODE` | server | GSTIN verification (cached once per GSTIN) and e-way bills via gstinapi.in. Live: `functions/.env`; local: `artifacts/api-server/.env` (see the `.env.example` files) |
 | `RESEND_API_KEY`, `EMAIL_FROM`, `OTP_PEPPER`, `GOOGLE_APPLICATION_CREDENTIALS` (local only) | server | Email OTP registration: code delivery, code hashing, Firebase Admin to activate verified accounts |
 | `EWB_CREDENTIALS_SECRET` | server | Encrypts each GSTIN's e-way bill portal password |
 | `WALLET_START_CREDITS`, `CREDIT_COSTS_JSON`, `WALLET_ADMIN_TOKEN` | server | Credit wallet: starting credits (default 0), cost per action (generate 10; Part-B, consolidate, cancel, extend 5), admin top-up |
@@ -66,6 +70,6 @@ Firebase Auth + Cloud Run + optional Firebase Hosting, and building/installing t
 
 1. Contract a licensed GSP and implement its adapter behind the `EwbProvider` / `GstProvider` interfaces.
 2. Set `FIREBASE_PROJECT_ID` so the server rejects unauthenticated calls.
-3. Replace the JSON-file `WorkspaceStore` with Postgres (`lib/db`), and the in-memory rate limiter with Redis, before running more than one instance.
+3. Rate limits are kept in memory per function instance (up to 10 instances); move them to Firestore or Redis if abuse becomes a problem. Data is already in Firestore with transactions.
 4. Wire App Store / Play billing and approve real plans (no prices are final).
 5. Approve PDF retention policy (currently processed in memory, not stored) and set the support email.

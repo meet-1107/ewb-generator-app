@@ -1,13 +1,8 @@
-import { applicationDefault, getApps, initializeApp } from "firebase-admin/app";
 import { getAuth } from "firebase-admin/auth";
 import { projectId } from "./auth";
+import { firebaseApp } from "./firebase";
 
-/**
- * Firebase Authentication user management (Admin SDK). Credentials come from
- * Application Default Credentials: the Cloud Run service account in
- * production, or GOOGLE_APPLICATION_CREDENTIALS (a service-account JSON
- * file) on a developer machine. Never shipped to the app.
- */
+/** Firebase Authentication user management (Admin SDK). Never shipped to the app. */
 
 export type IdentityUser = { uid: string; email: string; emailVerified: boolean; disabled: boolean; providers: string[] };
 
@@ -18,8 +13,7 @@ export interface Identity {
 
 function auth() {
   if (!projectId) throw new Error("FIREBASE_PROJECT_ID is not set.");
-  const app = getApps()[0] ?? initializeApp({ credential: applicationDefault(), projectId });
-  return getAuth(app);
+  return getAuth(firebaseApp());
 }
 
 export const firebaseIdentity: Identity = {

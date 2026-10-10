@@ -1,9 +1,22 @@
 {
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "runtime": "nodejs22",
+      "ignore": ["node_modules", ".git", "*.local", ".env.example", "firebase-debug.log", "firebase-debug.*.log"],
+      "predeploy": ["node artifacts/api-server/build-functions.mjs"]
+    }
+  ],
+  "firestore": {
+    "rules": "firestore.rules"
+  },
   "hosting": {
     "public": "artifacts/ewb-vendor-app/dist",
     "ignore": ["firebase.json", "**/.*"],
+    "predeploy": ["node artifacts/ewb-vendor-app/scripts/export-web.mjs"],
     "rewrites": [
-      { "source": "/api/**", "run": { "serviceId": "ewb-api", "region": "asia-south1" } },
+      { "source": "/api/**", "function": { "functionId": "api", "region": "asia-south1" } },
       { "source": "**", "destination": "/index.html" }
     ]
   }

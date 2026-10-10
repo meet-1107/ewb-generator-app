@@ -82,7 +82,11 @@ export function createEmailOtpService(deps: { store: DocStore; identity: Identit
     }
     const alreadyActive = Boolean(existing && (existing.emailVerified || existing.disabled || existing.providers.includes("google.com")));
 
-    return deps.store<Challenge, { cooldownSeconds: number }>("auth-otp", keyFor(email), async (current) => {
+    // Reserve the send (limits, new code) first; the store may retry this
+    // function, so the email itself goes out only after it is saved.
+    const key = keyFor(email);
+    const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
+    const reserved = await deps.store<Challenge, { at: number; previous: Challenge | null }>("auth-otp", key, (current) => {
       const at = now();
       const sends = (current?.sends ?? []).filter((time) => at - time < 3_600_000);
       const last = sends[sends.length - 1];
@@ -94,19 +98,24 @@ export function createEmailOtpService(deps: { store: DocStore; identity: Identit
         const wait = Math.ceil((3_600_000 - (at - sends[0]!)) / 1000);
         throw new OtpError("too_many_codes", 429, "Too many codes requested for this email. Try again later.", wait);
       }
-      const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
-      const message = alreadyActive ? existingAccountEmail(Boolean(existing?.providers.includes("google.com"))) : codeEmail(code);
-      try {
-        await deps.mailer.send({ ...message, to: email });
-      } catch {
-        throw new OtpError("email_failed", 502, "We could not send the email. Check the address and try again.");
-      }
       return {
         // An existing account gets no usable code.
         next: { codeHash: alreadyActive ? null : hashCode(email, code), expiresAt: at + CODE_TTL_MS, attempts: 0, sends: [...sends, at] },
-        result: { cooldownSeconds: RESEND_COOLDOWN_MS / 1000 },
+        result: { at, previous: current },
       };
     });
+
+    const message = alreadyActive ? existingAccountEmail(Boolean(existing?.providers.includes("google.com"))) : codeEmail(code);
+    try {
+      await deps.mailer.send({ ...message, to: email });
+    } catch {
+      // Undo the reservation, so the earlier code (if any) still works and no cooldown applies.
+      await deps.store<Challenge, null>("auth-otp", key, (current) =>
+        current?.sends.at(-1) === reserved.at ? { next: reserved.previous, result: null } : { next: current, result: null },
+      ).catch(() => undefined);
+      throw new OtpError("email_failed", 502, "We could not send the email. Check the address and try again.");
+    }
+    return { cooldownSeconds: RESEND_COOLDOWN_MS / 1000 };
   }
 
   async function verify(rawEmail: unknown, rawCode: unknown) {
