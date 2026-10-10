@@ -75,7 +75,7 @@ The server marks accounts verified with the Firebase Admin SDK.
 - **On Cloud Functions:** nothing to do. The function's default service account can already manage Firebase Authentication users and Firestore.
 - **On your PC (testing only):** go to Firebase console → Project settings → Service accounts → **Generate new private key**. Save the file outside the project folder and set `GOOGLE_APPLICATION_CREDENTIALS` in `artifacts/api-server/.env` to its path. Never commit this file.
 
-## Part 2: Deploy the server, database and website
+## Part 2: Deploy the server and database
 
 Do steps 1–2 once, in the Firebase console (https://console.firebase.google.com/project/ewb---generator):
 
