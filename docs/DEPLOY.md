@@ -7,7 +7,7 @@ Everything runs in one Firebase project and is deployed with one command, `fireb
 | Sign-in | **Firebase Authentication**: Continue with Google + email/password (free, no SMS) | `lib/auth-client.native.ts` (React Native Firebase + Google Sign-In), `lib/auth-client.ts` (web SDK) |
 | API server (`artifacts/api-server`) | **Cloud Functions for Firebase**: one HTTPS function `api` in `asia-south1` | Built into `functions/` by `firebase deploy`. Keys and settings come from `functions/.env`. |
 | Server data | **Cloud Firestore** | Wallets, e-way bills, saved invoices, verified GSTINs, OTP codes. Only the function can read it (`firestore.rules`). |
-| Web version | **Firebase Hosting**: https://ewb---generator.web.app | `/api/**` is forwarded to the `api` function (`firebase.json`), so the app and the website use the same address. |
+| Server address | **Firebase Hosting**: https://ewb---generator.web.app | Forwards `/api/**` to the `api` function (`firebase.json`) and shows a one-line page (`hosting/index.html`). The web version of the app is optional (Part 3). |
 | Android app | **APK** built by Expo EAS, installed on the phone | Firebase does not build APKs. |
 
 This project's values (from `google-services.json`):
@@ -119,17 +119,16 @@ Then, on your PC, in the project folder (PowerShell or the VS Code terminal):
    firebase deploy
    ```
 
-   - It adds `OTP_PEPPER`, `EWB_CREDENTIALS_SECRET` and `WALLET_ADMIN_TOKEN` to `functions/.env`, builds the server, deploys it, deploys the Firestore rules, builds the web version and publishes it.
-   - The web build creates the Firebase web app **E-Way Easy Web** the first time and downloads its config, so you don't copy any web config by hand.
+   - It adds `OTP_PEPPER`, `EWB_CREDENTIALS_SECRET` and `WALLET_ADMIN_TOKEN` to `functions/.env`, builds the server, deploys it, deploys the Firestore rules, and publishes the Hosting address that forwards `/api` to the server.
    - If it asks how many days to keep container images, press **Enter**.
    - The first deploy takes about 5–10 minutes.
 
-8. Check it: open https://ewb---generator.web.app/api/healthz. It should show `{"status":"ok"}`. The website is https://ewb---generator.web.app.
+8. Check it: open https://ewb---generator.web.app/api/healthz. It should show `{"status":"ok"}`.
 
 Keep a copy of `functions/.env` somewhere safe (not in Git). If it is lost, saved e-way bill portal logins can no longer be decrypted.
 
 **To change a setting or key later:** edit `functions/.env`, then run `firebase deploy --only functions`.
-**After code changes:** run `firebase deploy` (or `--only functions` / `--only hosting`).
+**After code changes:** run `firebase deploy` (or `--only functions`).
 
 ## Part 2b: gstinapi.in key, credits and payments
 
@@ -211,11 +210,13 @@ Before you sell credits:
 - **GST:** selling credits is a taxable supply. Decide whether ₹1 per credit includes GST, and issue invoices from Razorpay or your accounting software.
 - **Play Store:** credits sold inside an app on Google Play may need Google Play Billing, or Play's user-choice billing in India. A sideloaded APK isn't affected.
 
-## Part 3: Web version
+## Part 3 (optional): Web version
 
-`firebase deploy` builds and publishes the website (Part 2). It reads the web sign-in config from the Firebase web app **E-Way Easy Web**, creating it the first time. To use a different web app, put its `EXPO_PUBLIC_FIREBASE_API_KEY`, `EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN`, `EXPO_PUBLIC_FIREBASE_PROJECT_ID` and `EXPO_PUBLIC_FIREBASE_APP_ID` in `artifacts/ewb-vendor-app/.env`.
+The normal deploy publishes only the server address. To also publish the app as a website:
 
-The site is served at `https://ewb---generator.web.app`. Its `/api/**` calls go to the `api` function.
+1. Run `node artifacts/ewb-vendor-app/scripts/export-web.mjs`. It builds `artifacts/ewb-vendor-app/dist`, reading the web sign-in config from the Firebase web app **E-Way Easy Web** (created the first time), or from `EXPO_PUBLIC_FIREBASE_*` in `artifacts/ewb-vendor-app/.env`.
+2. In `firebase.json`, set `hosting.public` to `artifacts/ewb-vendor-app/dist` and add `{ "source": "**", "destination": "/index.html" }` after the `/api/**` rewrite.
+3. Run `firebase deploy --only hosting`.
 
 ## Part 4: Build the APK
 

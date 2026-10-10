@@ -1,5 +1,8 @@
-// Builds the web version into dist/ for Firebase Hosting. Runs automatically
-// before `firebase deploy` (firebase.json predeploy).
+// Optional: builds the web version of the app into dist/. Not part of the
+// normal deploy (Hosting only serves hosting/ and forwards /api to the
+// server). To publish the web app, run this script, then set "public" in
+// firebase.json to "artifacts/ewb-vendor-app/dist", add the rewrite
+// { "source": "**", "destination": "/index.html" }, and run firebase deploy --only hosting.
 //
 // The web sign-in needs the project's Firebase web-app config. It is taken
 // from EXPO_PUBLIC_FIREBASE_* (environment or this folder's .env) when set;
