@@ -28,6 +28,7 @@ import { InvoiceProducts } from '@/components/InvoiceProducts';
 import { api } from '@/lib/api';
 import { useColors } from '@/hooks/useColors';
 import { useGstinVerify } from '@/hooks/useGstinVerify';
+import { useDeleteInvoice } from '@/hooks/useDeleteInvoice';
 import {
   expectedSupplyType,
   formatDate,
@@ -66,6 +67,7 @@ export default function InvoiceEditorScreen() {
   const store = useAppStore();
   const banks = store.business?.bankAccounts ?? [];
   const dialog = useDialog();
+  const deleteInvoice = useDeleteInvoice();
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [open, setOpen] = useState<Record<Section, boolean>>({ seller: false, buyer: true, invoice: true, items: true, transport: false });
   const [attempted, setAttempted] = useState(false);
@@ -369,7 +371,7 @@ export default function InvoiceEditorScreen() {
 
   const moreActions = async () => {
     if (!invoice) return;
-    const choices = ['Print invoice', 'Share as PDF', ...(invoice.status === 'draft' ? ['Delete draft'] : [])];
+    const choices = ['Print invoice', 'Share as PDF', ...(invoice.unsaved || invoice.status === 'ewb_generated' ? [] : ['Delete invoice'])];
     const result = await dialog.prompt({ title: 'Invoice actions', choices, confirmLabel: 'Continue' });
     if (!result) return;
     try {
@@ -378,15 +380,7 @@ export default function InvoiceEditorScreen() {
     } catch (error) {
       dialog.toast((error as Error).message || 'Could not open the document', 'danger');
     }
-    if (result.choice === 'Delete draft') {
-      const ok = await dialog.confirm({ title: 'Delete this draft?', message: 'It will be removed from all your devices. This cannot be undone.', confirmLabel: 'Delete', cancelLabel: 'Keep', tone: 'danger', icon: 'trash-2' });
-      if (ok) {
-        discarded.current = true;
-        await store.removeInvoice(invoice.id);
-        dialog.toast('Draft deleted');
-        router.back();
-      }
-    }
+    if (result.choice === 'Delete invoice' && await deleteInvoice(invoice, () => { discarded.current = true; })) router.back();
   };
 
   if (!invoice || !totals) {
@@ -600,6 +594,7 @@ export default function InvoiceEditorScreen() {
           <View style={[styles.sticky, { backgroundColor: colors.card, borderColor: colors.border, paddingBottom: (Platform.OS === 'web' ? 12 : insets.bottom) + 10 }]}>
             <Button title="Generate EWB" icon="truck" variant={viewOnly ? 'primary' : 'outline'} onPress={() => void continueToReview()} style={{ flex: 1 }} testID="continue-to-ewb" />
             {viewOnly ? null : <Button title="Save invoice" icon="check" onPress={() => void finishInvoice()} style={{ flex: 1 }} testID="save-invoice" />}
+            {viewOnly && invoice.status !== 'ewb_generated' ? <Button title="Delete" icon="trash-2" variant="danger" onPress={() => void deleteInvoice(invoice, () => { discarded.current = true; }).then((done) => { if (done) { setPreviewing(false); router.back(); } })} style={{ flex: 0.7 }} testID="preview-delete" /> : null}
           </View>
         </View>
       </Modal>

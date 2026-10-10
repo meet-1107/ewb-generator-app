@@ -4,6 +4,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { useLoadMore } from '@/hooks/useLoadMore';
+import { useDeleteInvoice } from '@/hooks/useDeleteInvoice';
 import { formatInr, invoiceTotals, type Invoice } from '@/lib/domain';
 import { useAppStore, useScopedRecords } from '@/state/app-store';
 import { Button, Card, Chip, ChipRow, EmptyState, Field, Heading, LoadMore, Notice, Page, SearchBar, SectionTitle, SelectSheet, Sheet, TextBlock } from '@/components/AppUI';
@@ -28,6 +29,7 @@ export default function InvoicesScreen() {
   const [partyPicker, setPartyPicker] = useState(false);
   const [sheet, setSheet] = useState(false);
   const list = useLoadMore(PAGE);
+  const deleteInvoice = useDeleteInvoice();
 
   useEffect(() => {
     if (params.period && /^\d{4}-\d{2}$/.test(params.period)) {
@@ -79,19 +81,13 @@ export default function InvoicesScreen() {
     const choice = await dialog.prompt({
       title: invoice.invoiceNumber || 'Untitled invoice',
       message: 'Choose an action for this invoice.',
-      choices: invoice.status === 'draft' ? ['Open', 'Delete draft'] : ['Open', 'Edit invoice'],
+      choices: invoice.status === 'ewb_generated' ? ['Open', 'Edit invoice'] : ['Open', 'Edit invoice', 'Delete invoice'],
       confirmLabel: 'Continue',
     });
     if (!choice) return;
     if (choice.choice === 'Open') openInvoice(invoice);
     if (choice.choice === 'Edit invoice') router.push(`/invoice/${invoice.id}`);
-    if (choice.choice === 'Delete draft') {
-      const ok = await dialog.confirm({ title: 'Delete this draft?', message: 'This removes the unsubmitted draft from all your devices. This cannot be undone.', confirmLabel: 'Delete draft', cancelLabel: 'Keep it', tone: 'danger', icon: 'trash-2' });
-      if (ok) {
-        await store.removeInvoice(invoice.id);
-        dialog.toast('Draft deleted');
-      }
-    }
+    if (choice.choice === 'Delete invoice') await deleteInvoice(invoice);
   };
 
   return (
@@ -148,7 +144,7 @@ export default function InvoicesScreen() {
       {filtered.length ? (
         <View style={{ gap: 10 }}>
           {filtered.slice(0, list.limit).map((invoice) => (
-            <InvoiceCard key={invoice.id} invoice={invoice} onPress={() => openInvoice(invoice)} onLongPress={() => void actions(invoice)} />
+            <InvoiceCard key={invoice.id} invoice={invoice} onPress={() => openInvoice(invoice)} onLongPress={() => void actions(invoice)} onDelete={() => void deleteInvoice(invoice)} />
           ))}
           <LoadMore remaining={filtered.length - list.limit} loading={list.loading} onPress={() => list.more(filtered.length)} noun="more invoices" />
           <TextBlock size={11} color={colors.mutedForeground} style={{ textAlign: 'center' }}>Tip: long-press an invoice to edit it or delete a draft.</TextBlock>

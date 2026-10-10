@@ -6,7 +6,7 @@ import { useColors } from '@/hooks/useColors';
 import { formatDate, formatInr, invoiceEwbMeta, invoiceTotals, type Invoice } from '@/lib/domain';
 import { Card, StatusPill, TextBlock } from '@/components/AppUI';
 
-export default function InvoiceCard({ invoice, onPress, onLongPress }: { invoice: Invoice; onPress: () => void; onLongPress?: () => void }) {
+export default function InvoiceCard({ invoice, onPress, onLongPress, onDelete }: { invoice: Invoice; onPress: () => void; onLongPress?: () => void; onDelete?: () => void }) {
   const colors = useColors();
   const total = invoiceTotals(invoice).total;
   const meta = invoiceEwbMeta(invoice);
@@ -41,6 +41,11 @@ export default function InvoiceCard({ invoice, onPress, onLongPress }: { invoice
               </Pressable>
             ) : invoice.sourceFileName ? (
               <View style={styles.ewbLink}><Feather name="paperclip" size={12} color={colors.mutedForeground} /><TextBlock size={11} color={colors.mutedForeground}>From PDF</TextBlock></View>
+            ) : <View style={{ flex: 1 }} />}
+            {onDelete ? (
+              <Pressable onPress={onDelete} hitSlop={8} style={({ pressed }) => [styles.delete, { opacity: pressed ? 0.6 : 1 }]} accessibilityRole="button" accessibilityLabel={`Delete invoice ${invoice.invoiceNumber || ''}`} testID="invoice-delete">
+                <Feather name="trash-2" size={16} color={colors.destructive} />
+              </Pressable>
             ) : null}
           </View>
         </Card>
@@ -53,7 +58,8 @@ const styles = StyleSheet.create({
   card: { padding: 14, gap: 11, borderRadius: 18 },
   top: { flexDirection: 'row', gap: 11, alignItems: 'center' },
   icon: { width: 40, height: 40, borderRadius: 13, alignItems: 'center', justifyContent: 'center' },
-  bottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingLeft: 51 },
+  bottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8, paddingLeft: 51 },
+  delete: { width: 32, height: 32, borderRadius: 16, alignItems: 'center', justifyContent: 'center' },
   numberRow: { flexDirection: 'row', alignItems: 'center', gap: 7 },
   number: { borderRadius: 7, paddingHorizontal: 7, paddingVertical: 2, flexShrink: 1 },
   ewbLink: { flexDirection: 'row', alignItems: 'center', gap: 5, minHeight: 28 },
