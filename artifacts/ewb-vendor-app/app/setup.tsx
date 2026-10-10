@@ -8,7 +8,7 @@ import { useAppStore } from '@/state/app-store';
 import { useAuth } from '@/state/auth';
 import { useColors } from '@/hooks/useColors';
 import { useGstinVerify } from '@/hooks/useGstinVerify';
-import { financialYearPrefix, gstinProblem, STATES, stateForGstin, type Business } from '@/lib/domain';
+import { gstinProblem, STATES, stateForGstin, type Business } from '@/lib/domain';
 
 const stateOptions = STATES.map((state) => ({ value: state.name, label: state.name, detail: `State code ${state.code}` }));
 
@@ -26,7 +26,6 @@ export default function BusinessSetupScreen() {
     phone: '',
     email: auth.user?.email ?? '',
     timezone: 'Asia/Kolkata',
-    invoicePrefix: financialYearPrefix(),
   });
   const [errors, setErrors] = useState<Partial<Record<keyof Business, string>>>({});
   const [saving, setSaving] = useState(false);
@@ -138,7 +137,6 @@ export default function BusinessSetupScreen() {
       </Card>
       <Card>
         <TextBlock size={15} weight="semibold">Invoice numbering</TextBlock>
-        <Field label="Invoice number prefix" value={form.invoicePrefix} onChangeText={change('invoicePrefix')} placeholder="INV/26-27/" autoCapitalize="characters" maxLength={12} hint={`Next invoice will be ${form.invoicePrefix || 'INV-'}001. You can change any number before saving.`} />
       </Card>
       <Button title="Save and continue" icon="arrow-right" onPress={save} loading={saving} testID="setup-save" />
     </KeyboardAwareScrollViewCompat>

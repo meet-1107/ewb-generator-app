@@ -45,6 +45,8 @@ import {
   uid,
   UNITS,
   invoiceBank,
+  nextInvoiceNumber,
+  releasedInvoiceIds,
   type Invoice,
   type InvoiceLine,
   type Section,
@@ -102,7 +104,10 @@ export default function InvoiceEditorScreen() {
   }, [invoice]);
 
   const locked = invoice?.status === 'ewb_generated';
-  const issues = useMemo(() => (invoice ? [...invoiceIssues(invoice, store.invoices), ...transportIssues(invoice)] : []), [invoice, store.invoices]);
+  const released = useMemo(() => releasedInvoiceIds(store.invoices, store.ewbs), [store.invoices, store.ewbs]);
+  const issues = useMemo(() => (invoice ? [...invoiceIssues(invoice, store.invoices, released), ...transportIssues(invoice)] : []), [invoice, store.invoices, released]);
+  // The first invoice of a GSTIN is numbered by the user; later ones continue from it.
+  const firstInvoice = useMemo(() => Boolean(invoice) && !store.invoices.some((other) => other.id !== invoice!.id && other.sellerGstin === invoice!.sellerGstin && other.invoiceNumber.trim()), [invoice, store.invoices]);
   const errorFor = (field: string) => (attempted ? issues.find((issue) => issue.field === field)?.message : undefined);
   const sectionErrors = (section: Section) => (attempted ? issues.filter((issue) => issue.section === section).length : 0);
   const totals = invoice ? invoiceTotals(invoice) : null;
@@ -216,7 +221,7 @@ export default function InvoiceEditorScreen() {
     if (result.choice === 'Duplicate as new draft') {
       const fresh = newInvoice(invoice.templateId);
       const { revisionHistory: _h, ...rest } = invoice;
-      const copy: Invoice = { ...rest, id: fresh.id, createdAt: fresh.createdAt, updatedAt: fresh.updatedAt, invoiceDate: today(), invoiceNumber: '', status: 'draft', ewbId: undefined, ewbNumber: undefined, idempotencyKey: undefined, extraction: undefined, sourceFileName: undefined, revisionHistory: [], lines: invoice.lines.map((line) => ({ ...line, id: uid('l') })) };
+      const copy: Invoice = { ...rest, id: fresh.id, createdAt: fresh.createdAt, updatedAt: fresh.updatedAt, invoiceDate: today(), invoiceNumber: nextInvoiceNumber(store.invoices.filter((other) => other.sellerGstin === invoice.sellerGstin), released), status: 'draft', ewbId: undefined, ewbNumber: undefined, idempotencyKey: undefined, extraction: undefined, sourceFileName: undefined, revisionHistory: [], lines: invoice.lines.map((line) => ({ ...line, id: uid('l') })) };
       await store.saveInvoice(copy);
       dialog.toast('Copied as a new draft', 'success');
       router.replace(`/invoice/${copy.id}`);
@@ -299,7 +304,7 @@ export default function InvoiceEditorScreen() {
     invoice: (
       <EditorSection key="invoice" title="Invoice details" icon="hash" open={open.invoice} onToggle={() => setOpen((c) => ({ ...c, invoice: !c.invoice }))} errors={sectionErrors('invoice')} summary={`${invoice.invoiceNumber || 'No number'} · ${formatDate(invoice.invoiceDate)}`}>
         <View style={styles.row}>
-          <View style={{ flex: 1.2 }}><Field label="Invoice number" required value={invoice.invoiceNumber} onChangeText={(value) => patch({ invoiceNumber: value.toUpperCase() })} placeholder="INV/26-27/001" autoCapitalize="characters" maxLength={16} error={errorFor('invoiceNumber')} confidence={fromPdf('invoiceNumber')} /></View>
+          <View style={{ flex: 1.2 }}><Field label="Invoice number" required value={invoice.invoiceNumber} onChangeText={(value) => patch({ invoiceNumber: value.replace(/\s/g, '') })} placeholder="e.g. INV-001 or GR-1" autoCapitalize="none" maxLength={16} error={errorFor('invoiceNumber')} confidence={fromPdf('invoiceNumber')} hint={firstInvoice ? 'Your first invoice: enter its number. Next invoices continue from it.' : undefined} /></View>
           <View style={{ flex: 1 }}><Field label="Date" required value={invoice.invoiceDate} onChangeText={set('invoiceDate')} placeholder="YYYY-MM-DD" maxLength={10} error={errorFor('invoiceDate')} confidence={fromPdf('invoiceDate')} /></View>
         </View>
         <ChipRow>

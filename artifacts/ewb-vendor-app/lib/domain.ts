@@ -84,6 +84,7 @@ export type Business = {
   phone: string;
   email: string;
   timezone: string;
+  /** Old setting, no longer used: numbers continue from the last invoice (`nextInvoiceNumber`). */
   invoicePrefix?: string;
   defaultTemplateId?: string;
   gstRegistrations?: GstRegistration[];
@@ -387,7 +388,8 @@ export type Section = 'seller' | 'buyer' | 'invoice' | 'items' | 'transport';
 export type Issue = { field: string; section: Section; message: string };
 
 /** Invoice completeness (needed to save as "Ready"). */
-export function invoiceIssues(invoice: Invoice, others: Invoice[] = []): Issue[] {
+/** `released`: invoices whose number may be used again (their e-way bill was cancelled). */
+export function invoiceIssues(invoice: Invoice, others: Invoice[] = [], released: Set<string> = new Set()): Issue[] {
   const issues: Issue[] = [];
   const add = (section: Section, field: string, message: string) => issues.push({ section, field, message });
   if (!invoice.sellerName.trim()) add('seller', 'sellerName', 'Seller name is required.');
@@ -411,7 +413,7 @@ export function invoiceIssues(invoice: Invoice, others: Invoice[] = []): Issue[]
 
   if (!invoice.invoiceNumber.trim()) add('invoice', 'invoiceNumber', 'Invoice number is required.');
   else if (!/^[A-Za-z0-9/-]{1,16}$/.test(invoice.invoiceNumber.trim())) add('invoice', 'invoiceNumber', 'Use up to 16 letters, digits, / or -.');
-  else if (others.some((other) => other.id !== invoice.id && other.invoiceNumber.trim().toLowerCase() === invoice.invoiceNumber.trim().toLowerCase() && other.sellerGstin.toUpperCase() === invoice.sellerGstin.toUpperCase())) {
+  else if (others.some((other) => other.id !== invoice.id && !released.has(other.id) && other.invoiceNumber.trim().toLowerCase() === invoice.invoiceNumber.trim().toLowerCase() && other.sellerGstin.toUpperCase() === invoice.sellerGstin.toUpperCase())) {
     add('invoice', 'invoiceNumber', 'This number is already used for this GSTIN.');
   }
   const validDate = /^\d{4}-\d{2}-\d{2}$/.test(invoice.invoiceDate) && !Number.isNaN(Date.parse(invoice.invoiceDate)) && new Date(`${invoice.invoiceDate}T00:00:00Z`).toISOString().slice(0, 10) === invoice.invoiceDate;
@@ -527,20 +529,36 @@ export function amountInWords(paise: number) {
   return `${words ? `${words} Rupees` : ''}${remainder ? `${words ? ' and ' : ''}${belowHundred(remainder)} Paise` : ''} Only`;
 }
 
-export function nextInvoiceNumber(invoices: Invoice[], prefix: string) {
-  const clean = prefix.trim() || 'INV-';
-  let max = 0;
-  for (const invoice of invoices) {
-    if (!invoice.invoiceNumber.startsWith(clean)) continue;
-    const value = Number(invoice.invoiceNumber.slice(clean.length));
-    if (Number.isInteger(value) && value > max) max = value;
-  }
-  return `${clean}${String(max + 1).padStart(3, '0')}`;
+/** Text before the last run of digits, the digits, and the text after them: "INV/26-27/005" → "INV/26-27/", "005", "". */
+const NUMBERED = /^(.*?)(\d+)(\D*)$/;
+
+/**
+ * Invoices whose e-way bill was cancelled (and not generated again) give
+ * their number back, so the next invoice can use it.
+ */
+export function releasedInvoiceIds(invoices: Invoice[], ewbs: EwbRecord[]) {
+  const cancelled = new Set(ewbs.filter((ewb) => ewb.status === 'cancelled').map((ewb) => ewb.invoiceId));
+  return new Set(invoices.filter((invoice) => invoice.status !== 'ewb_generated' && cancelled.has(invoice.id)).map((invoice) => invoice.id));
 }
 
-export function financialYearPrefix(date = new Date()) {
-  const year = date.getMonth() >= 3 ? date.getFullYear() : date.getFullYear() - 1;
-  return `INV/${String(year).slice(2)}-${String(year + 1).slice(2)}/`;
+/**
+ * The number after the latest invoice's, in the same style: INV-001 → INV-002,
+ * GR-01 → GR-02, gr-1 → gr-2, INV/26-27/009 → INV/26-27/010. Empty for the
+ * first invoice, which the user numbers. Deleted invoices and invoices whose
+ * e-way bill was cancelled (`released`) do not count, so their number is used again.
+ */
+export function nextInvoiceNumber(invoices: Invoice[], released: Set<string> = new Set()) {
+  const counted = invoices.filter((invoice) => invoice.invoiceNumber.trim() && !released.has(invoice.id));
+  const latest = [...counted].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  const match = latest ? NUMBERED.exec(latest.invoiceNumber.trim()) : null;
+  if (!match) return '';
+  const [, prefix, digits, suffix] = match as unknown as [string, string, string, string];
+  let max = 0;
+  for (const invoice of counted) {
+    const other = NUMBERED.exec(invoice.invoiceNumber.trim());
+    if (other && other[1]!.toLowerCase() === prefix.toLowerCase() && other[3]!.toLowerCase() === suffix.toLowerCase()) max = Math.max(max, Number(other[2]));
+  }
+  return `${prefix}${String(max + 1).padStart(digits.length, '0')}${suffix}`;
 }
 
 /** Return period for GST: `YYYY-MM`. Returns are filed for the previous month. */
@@ -574,14 +592,14 @@ export const GST_STATUS_META: Record<GstSnapshot['providerStatus'], { label: str
 };
 
 /** New draft prefilled with seller details for the selected GST registration. */
-export function draftForBusiness(business: Business, activeGstin: string, invoices: Invoice[], templateId?: string): Invoice {
+export function draftForBusiness(business: Business, activeGstin: string, invoices: Invoice[], templateId?: string, ewbs: EwbRecord[] = []): Invoice {
   const template = templates.some((item) => item.id === templateId) ? templateId! : business.defaultTemplateId ?? 'classic';
   const gstin = activeGstin || business.gstin;
   const registration = business.gstRegistrations?.find((item) => item.gstin === gstin);
   const sellerInvoices = invoices.filter((invoice) => invoice.sellerGstin === gstin);
   return {
     ...newInvoice(template),
-    invoiceNumber: nextInvoiceNumber(sellerInvoices, business.invoicePrefix ?? financialYearPrefix()),
+    invoiceNumber: nextInvoiceNumber(sellerInvoices, releasedInvoiceIds(sellerInvoices, ewbs)),
     sellerName: business.name,
     sellerGstin: gstin,
     sellerAddress: business.address,

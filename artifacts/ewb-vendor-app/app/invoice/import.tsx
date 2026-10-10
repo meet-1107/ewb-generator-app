@@ -81,7 +81,7 @@ export default function PdfImportScreen() {
 
   const createDraft = async (manual = false) => {
     if (!store.business) return;
-    const base = draftForBusiness(store.business, store.activeGstin, store.invoices);
+    const base = draftForBusiness(store.business, store.activeGstin, store.invoices, undefined, store.ewbs);
     const confidence: Record<string, Confidence> = {};
     const original: Record<string, string> = {};
     const invoice: Invoice = { ...base, sourceFileName: file?.name };

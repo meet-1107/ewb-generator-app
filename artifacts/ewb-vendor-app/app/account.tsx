@@ -177,8 +177,6 @@ export default function AccountScreen() {
         <ListRow icon="briefcase" title={business?.name || 'Not set'} detail={[business?.address, business?.state, business?.pincode].filter(Boolean).join(', ') || 'Add your address'} onPress={() => { setForm(store.business); setEditing(true); }} />
         <Divider inset={64} />
         <ListRow icon="phone" title="Contact" detail={[business?.phone, business?.email].filter(Boolean).join(' · ') || 'Not added'} />
-        <Divider inset={64} />
-        <ListRow icon="hash" title="Invoice numbering" detail={`Prefix ${business?.invoicePrefix || 'INV-'} · timezone ${business?.timezone || 'Asia/Kolkata'}`} onPress={() => { setForm(store.business); setEditing(true); }} />
       </Card>
 
       <SectionTitle title="GST registrations" count={registrations.length} action="Add" onPress={() => void addRegistration()} />
@@ -275,7 +273,6 @@ export default function AccountScreen() {
             </View>
             <Field label="Phone" value={form.phone} onChangeText={(value) => setForm({ ...form, phone: value })} keyboardType="phone-pad" />
             <Field label="Email" value={form.email} onChangeText={(value) => setForm({ ...form, email: value })} keyboardType="email-address" autoCapitalize="none" error={formError.email} />
-            <Field label="Invoice prefix" value={form.invoicePrefix ?? ''} onChangeText={(value) => setForm({ ...form, invoicePrefix: value.toUpperCase() })} autoCapitalize="characters" maxLength={12} />
           </View>
         ) : null}
       </Sheet>

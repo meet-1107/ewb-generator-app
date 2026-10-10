@@ -7,7 +7,7 @@ import { useColors } from '@/hooks/useColors';
 
 export default function NewInvoiceRoute() {
   const { templateId } = useLocalSearchParams<{ templateId?: string }>();
-  const { business, activeGstin, invoices, saveInvoice, isHydrated } = useAppStore();
+  const { business, activeGstin, invoices, ewbs, saveInvoice, isHydrated } = useAppStore();
   const colors = useColors();
   const created = useRef(false);
 
@@ -19,9 +19,9 @@ export default function NewInvoiceRoute() {
     }
     if (created.current) return;
     created.current = true;
-    const invoice = draftForBusiness(business, activeGstin, invoices, templateId);
+    const invoice = draftForBusiness(business, activeGstin, invoices, templateId, ewbs);
     void saveInvoice(invoice).then(() => router.replace(`/invoice/${invoice.id}`));
-  }, [activeGstin, business, invoices, isHydrated, saveInvoice, templateId]);
+  }, [activeGstin, business, invoices, ewbs, isHydrated, saveInvoice, templateId]);
 
   return <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.background }}><ActivityIndicator color={colors.primary} /></View>;
 }
