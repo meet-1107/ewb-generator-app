@@ -21,7 +21,17 @@ PROJECT_NUMBER="$(gcloud projects describe "$PROJECT_ID" --format='value(project
 SA="${PROJECT_NUMBER}-compute@developer.gserviceaccount.com"
 
 echo "== Enabling services"
-gcloud services enable run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com storage.googleapis.com identitytoolkit.googleapis.com
+gcloud services enable compute.googleapis.com run.googleapis.com cloudbuild.googleapis.com artifactregistry.googleapis.com storage.googleapis.com identitytoolkit.googleapis.com
+
+# Cloud Run and Cloud Build run as the default compute service account, which
+# Google creates a little after the Compute Engine API is first enabled.
+echo "== Waiting for $SA"
+for _ in $(seq 1 30); do
+  gcloud iam service-accounts describe "$SA" >/dev/null 2>&1 && break
+  sleep 10
+done
+gcloud iam service-accounts describe "$SA" >/dev/null || { echo "Service account $SA not found. Wait a few minutes and run this script again."; exit 1; }
+gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:$SA" --role=roles/run.builder --condition=None >/dev/null
 
 echo "== Data bucket gs://$BUCKET"
 gcloud storage buckets describe "gs://$BUCKET" >/dev/null 2>&1 || gcloud storage buckets create "gs://$BUCKET" --location="$REGION" --uniform-bucket-level-access
