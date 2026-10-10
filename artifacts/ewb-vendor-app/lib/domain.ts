@@ -251,7 +251,8 @@ export const STATES: { code: string; name: string }[] = [
   { code: '37', name: 'Andhra Pradesh' }, { code: '38', name: 'Ladakh' }, { code: '97', name: 'Other Territory' },
 ];
 
-export const GST_RATES = [0, 3, 5, 12, 18, 28];
+// 40% applies from 22 Sep 2025; 12% and 28% remain for some goods.
+export const GST_RATES = [0, 3, 5, 12, 18, 28, 40];
 export const UNITS = ['Nos', 'Kgs', 'Mtr', 'Ltr', 'Box', 'Pcs', 'Set', 'Ton', 'Hrs', 'OTH'];
 export const TRANSPORT_MODES = ['Road', 'Rail', 'Air', 'Ship'];
 export const CANCEL_REASONS = ['Duplicate', 'Order cancelled', 'Data entry mistake', 'Others'];

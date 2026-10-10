@@ -33,6 +33,7 @@ export default function EwbReviewScreen() {
   const [problem, setProblem] = useState<{ title: string; body: string; reference?: string } | null>(null);
   const [generated, setGenerated] = useState<EwbRecord | null>(null);
   const inFlight = useRef(false);
+  const requestKey = useRef<string | null>(null);
   const input = useMemo(() => (invoice ? toEwbInput(invoice) : null), [invoice]);
   const provider = store.config?.ewbProvider ?? null;
 
@@ -74,18 +75,21 @@ export default function EwbReviewScreen() {
   const totals = invoiceTotals(invoice);
 
   const submit = async (confirmedRetry = false) => {
+    // Taken before any dialog: a second tap would otherwise queue a second confirm and a second request.
     if (inFlight.current) return;
+    inFlight.current = true;
     if (phase === 'uncertain' && !confirmedRetry) {
       const ok = await dialog.confirm({ title: 'Try submitting again?', message: 'We will reuse the same request ID, so the provider returns the existing bill instead of creating a duplicate if the first attempt went through.', confirmLabel: 'Submit again', icon: 'refresh-cw' });
-      if (!ok) return;
+      if (!ok) { inFlight.current = false; return; }
     } else if (!(await credits.confirmSpend('generate', 'Generating this e-way bill'))) {
+      inFlight.current = false;
       return;
     }
-    inFlight.current = true;
     setPhase('submitting');
     setProblem(null);
-    // A stable key per invoice version makes retries safe.
-    const key = invoice.idempotencyKey ?? uid('ewbreq_');
+    // A stable key per invoice version makes retries safe; kept in a ref so every tap uses the same one.
+    const key = requestKey.current ?? invoice.idempotencyKey ?? uid('ewbreq_');
+    requestKey.current = key;
     if (!invoice.idempotencyKey) await store.saveInvoice({ ...invoice, idempotencyKey: key });
     try {
       const result = await api.generateEwb(key, input);
@@ -137,7 +141,7 @@ export default function EwbReviewScreen() {
         return;
       }
       setPhase('uncertain');
-      setProblem({ title: 'No bill was created', body: 'The provider has no bill for this invoice yet. It is safe to submit again.' });
+      setProblem({ title: 'Not found yet', body: 'No bill is recorded for this invoice yet; the provider may still be processing. Submitting again is safe: it reuses the same request and never creates or charges a second bill.' });
     } catch {
       setPhase('uncertain');
       setProblem({ title: 'Still offline', body: 'Reconnect, then check the status again.' });

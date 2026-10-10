@@ -144,7 +144,18 @@ export default function AccountScreen() {
     });
     if (!ok) return;
     if (!auth.previewMode) {
-      await store.syncNow();
+      // Clearing the device is only safe once everything on it is in the account.
+      if (!(await store.syncNow())) {
+        const discard = await dialog.confirm({
+          title: 'Changes not saved to your account',
+          message: 'Some invoices or details on this phone could not be synced. Signing out now deletes them. Connect to the internet and try again to keep them.',
+          confirmLabel: 'Sign out and lose them',
+          cancelLabel: 'Stay signed in',
+          tone: 'danger',
+          icon: 'cloud-off',
+        });
+        if (!discard) return;
+      }
       await store.clearLocalData();
     }
     await auth.signOut();

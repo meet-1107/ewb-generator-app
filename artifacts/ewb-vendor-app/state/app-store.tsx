@@ -76,7 +76,8 @@ type StoreValue = Omit<Persisted, 'tombstones'> & {
   refreshWallet: () => Promise<void>;
   /** Applies a balance returned by an action without refetching the whole wallet. */
   setWalletBalance: (balance: number | undefined) => void;
-  syncNow: () => Promise<void>;
+  /** Resolves true once local changes are saved to the account. */
+  syncNow: () => Promise<boolean>;
   clearLocalData: () => Promise<void>;
   exportData: () => string;
 };
@@ -218,8 +219,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     if (error instanceof ApiError && error.offline) setOnline(false);
   }, []);
 
-  const syncNow = useCallback(async () => {
-    if (!workspaceId || syncing.current) return;
+  const syncNow = useCallback(async (): Promise<boolean> => {
+    if (!workspaceId) return false;
+    // A sync already running: wait for it, then sync whatever changed meanwhile.
+    while (syncing.current) await new Promise((resolve) => setTimeout(resolve, 200));
     syncing.current = true;
     setSyncState('syncing');
     try {
@@ -273,9 +276,11 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         return next;
       });
       setSyncState('idle');
+      return true;
     } catch (error) {
       handleError(error);
       setSyncState(error instanceof ApiError && error.offline ? 'offline' : 'error');
+      return false;
     } finally {
       syncing.current = false;
     }

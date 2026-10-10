@@ -115,7 +115,13 @@ export default function EwbDetailScreen() {
       dialog.toast(success, 'success');
     } catch (error) {
       if (await credits.handleError(error)) return;
-      await dialog.alert({ title: `Could not ${label.toLowerCase()}`, message: error instanceof ApiError ? error.message : 'Check your connection and try again.', tone: 'danger' });
+      const apiError = error instanceof ApiError ? error : null;
+      if (!apiError || apiError.status === 0 || apiError.status >= 500) {
+        // The change may have reached the portal: say so instead of inviting a blind retry.
+        await dialog.alert({ title: 'Not confirmed yet', message: apiError?.code === 'outcome_unknown' ? apiError.message : 'We could not confirm whether this change was applied. Check the bill on the e-way bill portal before trying again.', tone: 'warning' });
+        return;
+      }
+      await dialog.alert({ title: `Could not ${label.toLowerCase()}`, message: apiError.message, tone: 'danger' });
     } finally {
       setBusy(null);
     }
