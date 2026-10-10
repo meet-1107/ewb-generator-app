@@ -2,6 +2,7 @@ import { Router, type IRouter } from "express";
 import { GstinApiError, gstinApiConfigured } from "../lib/gstinapi";
 import { verifyGstin } from "../lib/gstin-registry";
 import { gstinProblem } from "../lib/validation";
+import { rateLimit } from "../lib/rate-limit";
 
 const router: IRouter = Router();
 
@@ -10,7 +11,8 @@ const router: IRouter = Router();
  * from gstinapi.in once and then served from the shared registry. Free for
  * users; the check digit is validated first so typos never reach the API.
  */
-router.post("/gstin/verify", async (req, res) => {
+// Each new GSTIN costs one paid lookup: cap how many one account can make.
+router.post("/gstin/verify", rateLimit({ windowMs: 60 * 60_000, max: 100, by: "workspace" }), async (req, res) => {
   const gstin = String(req.body?.gstin ?? "").trim().toUpperCase();
   const problem = gstinProblem(gstin);
   if (problem) return res.status(400).json({ error: "invalid_gstin", message: problem });

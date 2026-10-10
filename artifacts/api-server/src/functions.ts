@@ -8,6 +8,7 @@ import app from "./app";
  * Deploy with `firebase deploy`; settings and keys come from functions/.env.
  */
 export const api = onRequest(
-  { region: "asia-south1", memory: "512MiB", timeoutSeconds: 120, maxInstances: 10, concurrency: 80 },
+  // 300 s: an e-way bill call can take up to ~140 s (45 s timeout, retried on 429/502), which must finish before the instance is stopped.
+  { region: "asia-south1", memory: "512MiB", timeoutSeconds: 300, maxInstances: 10, concurrency: 80 },
   app,
 );

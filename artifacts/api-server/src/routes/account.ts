@@ -48,7 +48,7 @@ router.post("/subscription/change", async (req, res) => {
   const planId = z.string().safeParse(req.body?.planId);
   if (!planId.success || !plans.some((plan) => plan.id === planId.data)) return res.status(400).json({ error: "bad_request", message: "Choose a plan." });
   if (billingMode !== "sandbox") {
-    return res.status(501).json({ error: "billing_store", message: "Purchases are completed through the app store billing sheet." });
+    return res.status(501).json({ error: "billing_off", message: "Plans cannot be bought yet. E-way bills are paid with wallet credits." });
   }
   const subscription = await withWorkspace(req.workspaceId, (workspace) => {
     const plan = planById(planId.data);

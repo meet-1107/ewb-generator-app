@@ -95,10 +95,13 @@ export function buildGeneratePayload(input: EwbInput) {
   const from = input.dispatch ?? input.seller;
   const to = input.shipTo ?? input.buyer;
   const mode = TRANS_MODE[input.transport.mode] ?? "1";
+  // NIC transactionType: 1 regular, 2 bill to - ship to, 3 bill from - dispatch from, 4 both.
+  const transactionType = input.dispatch ? (input.shipTo ? 4 : 3) : input.shipTo ? 2 : 1;
   return {
     supplyType: "O",
     subSupplyType: "1",
-    docType: "INV",
+    // A bill of supply is "BIL"; everything else this app makes is reported as a tax invoice.
+    docType: input.documentType === "Bill of supply" ? "BIL" : "INV",
     docNo: input.invoiceNumber,
     docDate: nicDate(input.invoiceDate),
     fromGstin: input.seller.gstin,
@@ -115,7 +118,7 @@ export function buildGeneratePayload(input: EwbInput) {
     toPincode: Number(to.pincode),
     toStateCode: toState,
     actToStateCode: stateCode(to.state),
-    transactionType: 1,
+    transactionType,
     totalValue: rupees(input.totals.taxable),
     cgstValue: inter ? 0 : rupees(half),
     sgstValue: inter ? 0 : rupees(taxTotal - half),

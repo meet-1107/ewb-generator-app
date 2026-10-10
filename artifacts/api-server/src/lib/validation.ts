@@ -167,7 +167,8 @@ export function validateEwb(input: EwbInput, now = new Date()): { issues: FieldI
   });
 
   const totals = computeTotals(input);
-  if (totals.total !== input.totals.total) push("items", "totals", "Totals changed since review. Re-open the invoice to recalculate.");
+  // The bill reports the taxable value and the invoice total; both must follow from the lines.
+  if (totals.total !== input.totals.total || totals.taxable !== input.totals.taxable) push("items", "totals", "Totals changed since review. Re-open the invoice to recalculate.");
   if (totals.total < 50_000_00) warnings.push("Consignment value is below ₹50,000. An e-way bill is generally optional here, but you may still generate one.");
 
   const distance = Number(input.transport.distanceKm);

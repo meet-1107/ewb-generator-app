@@ -1,3 +1,5 @@
+import { authMode } from "./auth";
+
 /**
  * Plan catalogue. Prices and limits are placeholders until billing is
  * approved — override with PLANS_JSON. `sampleOnly` drives the client label.
@@ -22,7 +24,8 @@ const defaults: Plan[] = [
 
 export const plans: Plan[] = process.env["PLANS_JSON"] ? (JSON.parse(process.env["PLANS_JSON"]) as Plan[]) : defaults;
 export const plansAreSamples = !process.env["PLANS_JSON"];
-export const billingMode = process.env["BILLING_PROVIDER"] ?? "sandbox";
+/** "sandbox" lets anyone switch plans for free, so it is the default only on a sandbox (non-Firebase) server. */
+export const billingMode = process.env["BILLING_PROVIDER"] ?? (authMode === "firebase" ? "off" : "sandbox");
 
 export function planById(id: string) {
   return plans.find((plan) => plan.id === id) ?? plans[0]!;

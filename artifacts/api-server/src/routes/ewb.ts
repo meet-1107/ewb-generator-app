@@ -27,7 +27,8 @@ const inputSchema = z.object({
     quantity: z.string().max(20),
     unit: z.string().max(10),
     taxablePaise: z.number().int().min(0).max(1e13),
-    taxRate: z.number().min(0).max(28),
+    // GST rates go up to 40% since 22 Sep 2025.
+    taxRate: z.number().min(0).max(40),
   })).min(1).max(200),
   transport: z.object({
     transporterName: z.string().max(120),
@@ -67,6 +68,23 @@ function credentialsMissing(res: Response, gstin: string) {
 function insufficient(res: Response, cost: number, balance: number, what: string) {
   return res.status(402).json({ error: "insufficient_credits", cost, balance, message: `${what} needs ${cost} credits. Your wallet has ${balance}. Add credits to continue.` });
 }
+
+/** A pending request older than this was left by an instance that stopped mid-call (the function times out at 300 s). */
+const STALE_PENDING_MS = 6 * 60_000;
+
+/**
+ * Provider failures after which the bill may or may not exist (no reply, cut
+ * connection, provider outage, a reply without a number). Retrying with the
+ * same document number is safe: the provider returns the existing bill.
+ */
+const UNKNOWN_OUTCOME = new Set(["TIMEOUT", "NETWORK", "PROVIDER_UNAVAILABLE", "HTTP_ERROR", "PROVIDER_ERROR", "NO_NUMBER"]);
+
+function outcomeUnknown(res: Response, reference: string) {
+  return res.status(502).json({ error: "outcome_unknown", message: "We could not confirm whether the e-way bill was created. Submit again: the same request is reused, so you get the existing bill and are never charged twice.", reference });
+}
+
+/** Document numbers compare without case or surrounding spaces. */
+const docKey = (gstin: string, number: string) => `${gstin.trim().toUpperCase()}|${number.trim().toUpperCase()}`;
 
 function rollUsage(workspace: Workspace) {
   const period = currentPeriod();
@@ -108,26 +126,50 @@ router.post("/ewb/generate", async (req, res) => {
   // Phase 1: claim the idempotency key and check entitlement/duplicates.
   // Requests are stored under their idempotency key.
   const requestKey = key.data;
+  // One submission per document number at a time, whatever key it carries (two queued taps make two keys).
+  const lockKey = `doc|${docKey(input.seller.gstin, input.invoiceNumber)}`;
   const claim = await withWorkspace(req.workspaceId, (workspace) => {
     const existing = workspace.requests[requestKey];
     if (existing?.state === "generated" && existing.ewbId) return { kind: "replay" as const, ewb: workspace.ewbs[existing.ewbId] };
-    if (existing?.state === "pending") return { kind: "pending" as const };
-    const duplicate = Object.values(workspace.ewbs).find((ewb) => ewb.invoiceId === input.invoiceId && refreshStatus(ewb).status !== "cancelled");
+    if (existing?.state === "pending") {
+      const since = Date.parse(existing.claimedAt ?? existing.createdAt);
+      if (Date.now() - since < STALE_PENDING_MS) return { kind: "pending" as const };
+      // The attempt never finished: return what it held; this attempt reconciles with the provider.
+      refundCredits(workspace, existing.holdId ?? null, "Previous attempt did not finish");
+      audit(workspace, req.actor, "ewb.generate", input.invoiceId, "stale_pending_reclaimed");
+    }
+    const live = Object.values(workspace.ewbs).filter((ewb) => refreshStatus(ewb).status !== "cancelled");
+    const duplicate = live.find((ewb) => ewb.invoiceId === input.invoiceId);
     if (duplicate) return { kind: "duplicate" as const, ewb: duplicate };
+    // The portal keys bills by GSTIN + document number: another invoice with this number would get its bill back.
+    const sameNumber = live.find((ewb) => docKey(ewb.sellerGstin, ewb.invoiceNumber) === docKey(input.seller.gstin, input.invoiceNumber));
+    if (sameNumber) return { kind: "duplicate_number" as const, ewb: sameNumber };
+    const knownNumbers = Object.values(workspace.ewbs).map((ewb) => ewb.ewbNumber);
+    const lock = workspace.requests[lockKey];
+    if (lock?.state === "pending" && lock.idempotencyKey !== requestKey && Date.now() - Date.parse(lock.claimedAt ?? lock.createdAt) < STALE_PENDING_MS) {
+      return { kind: "pending" as const };
+    }
     rollUsage(workspace);
     const ctx = contextFor(workspace, input.seller.gstin);
     if ("missing" in ctx) return { kind: "credentials" as const };
     const hold = holdCredits(workspace, "generate", input.invoiceId);
     if (!hold.ok) return { kind: "credits" as const, cost: hold.cost, balance: hold.balance };
-    const request = existing ?? { id: randomUUID(), idempotencyKey: requestKey, invoiceId: input.invoiceId, state: "pending" as const, createdAt: new Date().toISOString() };
+    const now = new Date().toISOString();
+    const request = existing ?? { id: randomUUID(), idempotencyKey: requestKey, invoiceId: input.invoiceId, state: "pending" as const, createdAt: now };
     request.state = "pending";
+    request.claimedAt = now;
+    request.holdId = hold.entryId ?? undefined;
     workspace.requests[requestKey] = request;
-    return { kind: "claimed" as const, requestId: request.id, holdId: hold.entryId, ctx };
-  }, { requests: [requestKey], ewbs: "all" });
+    workspace.requests[lockKey] = { id: request.id, idempotencyKey: requestKey, invoiceId: input.invoiceId, state: "pending", createdAt: now, claimedAt: now };
+    return { kind: "claimed" as const, requestId: request.id, holdId: hold.entryId, ctx, knownNumbers };
+  }, { requests: [requestKey, lockKey], ewbs: "all" });
 
   if (claim.kind === "replay") return res.json({ ewb: claim.ewb, replay: true });
   if (claim.kind === "pending") return res.status(409).json({ error: "pending", message: "This bill is already being submitted. Wait a moment and refresh." });
   if (claim.kind === "duplicate") return res.status(409).json({ error: "duplicate", message: `This invoice already has e-way bill ${claim.ewb.ewbNumber}.`, ewb: claim.ewb });
+  if (claim.kind === "duplicate_number") {
+    return res.status(409).json({ error: "duplicate_number", message: `Invoice number ${input.invoiceNumber} already has e-way bill ${claim.ewb.ewbNumber} (for ${claim.ewb.buyerName}). Each invoice needs its own number.` });
+  }
   if (claim.kind === "credentials") return credentialsMissing(res, input.seller.gstin);
   if (claim.kind === "credits") return insufficient(res, claim.cost, claim.balance, "Generating an e-way bill");
 
@@ -138,23 +180,36 @@ router.post("/ewb/generate", async (req, res) => {
   } catch {
     await withWorkspace(req.workspaceId, (workspace) => {
       const request = workspace.requests[requestKey]!;
-      request.state = "rejected";
-      request.safeErrorCode = "PROVIDER_UNAVAILABLE";
-      refundCredits(workspace, claim.holdId, "Provider did not respond");
-    }, { requests: [requestKey] });
-    return res.status(502).json({ error: "provider_unavailable", message: "The provider did not respond. Nothing was generated; try again.", reference: claim.requestId.slice(0, 8) });
+      request.state = "unknown";
+      request.safeErrorCode = "PROVIDER_ERROR";
+      workspace.requests[lockKey]!.state = "unknown";
+      refundCredits(workspace, claim.holdId, "Provider outcome unknown");
+    }, { requests: [requestKey, lockKey] });
+    return outcomeUnknown(res, claim.requestId.slice(0, 8));
   }
 
   // Phase 3: record the outcome.
   const outcome = await withWorkspace(req.workspaceId, (workspace) => {
     const request = workspace.requests[requestKey]!;
     request.completedAt = new Date().toISOString();
+    // Released whatever the outcome; the bill itself (or its absence) now guards the number.
+    workspace.requests[lockKey]!.state = result.ok ? "generated" : "rejected";
     if (!result.ok) {
-      request.state = "rejected";
+      const unknown = UNKNOWN_OUTCOME.has(result.code);
+      request.state = unknown ? "unknown" : "rejected";
       request.safeErrorCode = result.code;
-      refundCredits(workspace, claim.holdId, `Rejected: ${result.code}`);
-      audit(workspace, req.actor, "ewb.generate", input.invoiceId, `rejected:${result.code}`);
-      return { ok: false as const, result };
+      // Not charged while unknown: the retry that recovers the bill pays for it, once.
+      refundCredits(workspace, claim.holdId, unknown ? `Outcome unknown: ${result.code}` : `Rejected: ${result.code}`);
+      audit(workspace, req.actor, "ewb.generate", input.invoiceId, `${unknown ? "unknown" : "rejected"}:${result.code}`);
+      return { ok: false as const, unknown, result };
+    }
+    if (claim.knownNumbers.includes(result.ewbNumber)) {
+      // The provider handed back a bill this workspace already holds for another invoice.
+      request.state = "rejected";
+      request.safeErrorCode = "DUPLICATE_DOC";
+      refundCredits(workspace, claim.holdId, "Rejected: document number already used");
+      audit(workspace, req.actor, "ewb.generate", input.invoiceId, "rejected:DUPLICATE_DOC");
+      return { ok: false as const, unknown: false, duplicateOf: result.ewbNumber };
     }
     const now = new Date().toISOString();
     const record: EwbRecord = {
@@ -192,9 +247,11 @@ router.post("/ewb/generate", async (req, res) => {
     settleCredits(workspace, claim.holdId, { ewbNumber: record.ewbNumber, targetId: record.id });
     audit(workspace, req.actor, "ewb.generate", record.id, "generated");
     return { ok: true as const, record, wallet: walletSummary(workspace).balance };
-  }, { requests: [requestKey], ewbs: [] });
+  }, { requests: [requestKey, lockKey], ewbs: [] });
 
   if (!outcome.ok) {
+    if ("duplicateOf" in outcome) return res.status(409).json({ error: "duplicate_number", message: `Invoice number ${input.invoiceNumber} already has e-way bill ${outcome.duplicateOf}. Each invoice needs its own number.` });
+    if (outcome.unknown) return outcomeUnknown(res, claim.requestId.slice(0, 8));
     const failed = outcome.result as Extract<typeof result, { ok: false }>;
     return res.status(422).json({ error: "rejected", message: failed.message, issues: failed.issues, reference: claim.requestId.slice(0, 8) });
   }
@@ -262,10 +319,15 @@ router.post("/ewb/:id/actions", async (req, res) => {
     else if (body.action === "extend") result = await ewbProvider.extend({ ewbNumber: current.ewbNumber, validUntil: new Date(current.validUntil), distanceKm: Number(current.transport.distanceKm), remainingKm: body.remainingKm, reason: body.reason, vehicleNumber: current.transport.vehicleNumber, fromPincode: body.fromPincode, ...where }, hold.ctx);
     else result = await ewbProvider.updateVehicle({ ewbNumber: current.ewbNumber, vehicleNumber: body.vehicleNumber.replace(/[\s-]/g, "").toUpperCase(), reason: body.reason, ...where }, hold.ctx);
   } catch {
-    result = { ok: false as const, code: "PROVIDER_UNAVAILABLE", message: "The provider did not respond. Nothing was changed; try again." };
+    result = { ok: false as const, code: "PROVIDER_ERROR", message: "The provider returned an unexpected error." };
   }
   if (!result.ok) {
-    await withWorkspace(req.workspaceId, (workspace) => refundCredits(workspace, hold.holdId, `Rejected: ${result.code}`));
+    const unknown = UNKNOWN_OUTCOME.has(result.code);
+    await withWorkspace(req.workspaceId, (workspace) => refundCredits(workspace, hold.holdId, `${unknown ? "Outcome unknown" : "Rejected"}: ${result.code}`));
+    if (unknown) {
+      // The portal may have applied the change; repeating an extension or cancellation blindly is not safe.
+      return res.status(502).json({ error: "outcome_unknown", message: "We could not confirm this change with the e-way bill portal. Check the bill on the portal before trying again. No credits were used." });
+    }
     return res.status(422).json({ error: result.code, message: result.message });
   }
 
@@ -346,10 +408,12 @@ router.post("/ewb-consolidated", async (req, res) => {
   try {
     result = await ewbProvider.consolidate({ ewbNumbers: claim.ewbNumbers, vehicleNumber: body.vehicleNumber, fromPlace: body.fromPlace.trim(), fromState: body.fromState, transMode: body.transMode, transDocNo: body.transDocNo, transDocDate: body.transDocDate }, claim.ctx);
   } catch {
-    result = { ok: false as const, code: "PROVIDER_UNAVAILABLE", message: "The provider did not respond. Nothing was created; try again." };
+    result = { ok: false as const, code: "PROVIDER_ERROR", message: "The provider returned an unexpected error." };
   }
   if (!result.ok) {
-    await withWorkspace(req.workspaceId, (workspace) => refundCredits(workspace, claim.holdId, `Rejected: ${result.code}`));
+    const unknown = UNKNOWN_OUTCOME.has(result.code);
+    await withWorkspace(req.workspaceId, (workspace) => refundCredits(workspace, claim.holdId, `${unknown ? "Outcome unknown" : "Rejected"}: ${result.code}`));
+    if (unknown) return res.status(502).json({ error: "outcome_unknown", message: "We could not confirm the consolidated bill with the e-way bill portal. Check the portal before trying again. No credits were used." });
     return res.status(422).json({ error: result.code, message: result.message });
   }
 

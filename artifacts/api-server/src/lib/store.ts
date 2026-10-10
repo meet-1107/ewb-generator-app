@@ -60,10 +60,14 @@ export type EwbRequest = {
   id: string;
   idempotencyKey: string;
   invoiceId: string;
-  state: "pending" | "generated" | "rejected";
+  /** "unknown": the provider call failed in a way that may or may not have created the bill; a retry reconciles it. */
+  state: "pending" | "generated" | "rejected" | "unknown";
   ewbId?: string;
   safeErrorCode?: string;
   createdAt: string;
+  /** When the current attempt claimed the request, and the credits it holds. */
+  claimedAt?: string;
+  holdId?: string;
   completedAt?: string;
 };
 

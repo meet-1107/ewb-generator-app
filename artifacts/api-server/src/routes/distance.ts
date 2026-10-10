@@ -1,11 +1,12 @@
 import { Router, type IRouter } from "express";
 import { DistanceError, roadDistance } from "../lib/distance";
+import { rateLimit } from "../lib/rate-limit";
 
 const router: IRouter = Router();
 const PIN = /^[1-9]\d{5}$/;
 
 /** GET /distance?from=411001&to=560001 → { km } road distance between two PIN codes. */
-router.get("/distance", async (req, res) => {
+router.get("/distance", rateLimit({ windowMs: 60 * 60_000, max: 200, by: "workspace" }), async (req, res) => {
   const from = String(req.query["from"] ?? "");
   const to = String(req.query["to"] ?? "");
   if (!PIN.test(from) || !PIN.test(to)) return res.status(400).json({ error: "bad_request", message: "Send two 6-digit PIN codes." });
