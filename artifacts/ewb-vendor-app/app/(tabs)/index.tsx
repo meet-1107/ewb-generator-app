@@ -16,7 +16,7 @@ import {
   relativeTime,
   today,
 } from '@/lib/domain';
-import { Card, IconButton, Notice, Page, SectionTitle, StatCard, StatusPill, TextBlock, SelectSheet } from '@/components/AppUI';
+import { Card, Notice, Page, SectionTitle, StatCard, StatusPill, TextBlock, SelectSheet } from '@/components/AppUI';
 import InvoiceCard from '@/components/InvoiceCard';
 import { AccountButton, BrandBar } from '@/components/Brand';
 
@@ -74,7 +74,17 @@ export default function DashboardScreen() {
   return (
     <Page contentStyle={styles.page} onRefresh={refresh} refreshing={refreshing}>
       <BrandBar right={<>
-        <IconButton icon="help-circle" accessibilityLabel="Help and support" onPress={() => router.push('/help')} filled />
+        <Pressable
+          onPress={() => router.push('/help')}
+          accessibilityRole="button"
+          accessibilityLabel="Help and support"
+          testID="dashboard-help"
+          hitSlop={6}
+          style={({ pressed }) => [styles.help, { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 }]}
+        >
+          <Feather name="headphones" size={16} color={colors.primary} />
+          <TextBlock size={13} weight="semibold" color={colors.primary}>Help</TextBlock>
+        </Pressable>
         <AccountButton />
       </>} />
       <View style={styles.topline}>
@@ -202,6 +212,7 @@ function EwbActivity({ ewb }: { ewb: Parameters<typeof liveEwbStatus>[0] }) {
 }
 
 const styles = StyleSheet.create({
+  help: { height: 40, paddingHorizontal: 12, borderRadius: 20, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },
   page: { gap: 16 },
   topline: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   gstinRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },

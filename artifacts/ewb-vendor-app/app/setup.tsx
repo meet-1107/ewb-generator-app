@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -8,7 +8,7 @@ import { useAppStore } from '@/state/app-store';
 import { useAuth } from '@/state/auth';
 import { useColors } from '@/hooks/useColors';
 import { useGstinVerify } from '@/hooks/useGstinVerify';
-import { gstinProblem, STATES, stateForGstin, type Business } from '@/lib/domain';
+import { businessNameOf, gstinProblem, STATES, stateForGstin, type Business } from '@/lib/domain';
 
 const stateOptions = STATES.map((state) => ({ value: state.name, label: state.name, detail: `State code ${state.code}` }));
 
@@ -32,12 +32,12 @@ export default function BusinessSetupScreen() {
   const { verify, verifying } = useGstinVerify();
   const canVerify = store.config?.gstinVerification !== false;
 
-  const verifyGstin = async () => {
-    const details = await verify(form.gstin);
+  const verifyGstin = async (gstin = form.gstin) => {
+    const details = await verify(gstin);
     if (!details) return;
     setForm((current) => ({
       ...current,
-      name: details.legalName || current.name,
+      name: businessNameOf(details) || current.name,
       address: details.address || current.address,
       pincode: details.pincode || current.pincode,
       state: details.state || current.state,
@@ -49,6 +49,16 @@ export default function BusinessSetupScreen() {
   useEffect(() => {
     if (!auth.signedIn) router.replace('/');
   }, [auth.signedIn]);
+
+  // Fetch the registered details as soon as a complete, valid GSTIN is entered (once per GSTIN).
+  const autoVerified = useRef('');
+  useEffect(() => {
+    const gstin = form.gstin.toUpperCase();
+    if (!canVerify || form.verified || gstin.length !== 15 || gstinProblem(gstin) || autoVerified.current === gstin) return;
+    autoVerified.current = gstin;
+    void verifyGstin(gstin);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [form.gstin, form.verified, canVerify]);
 
   const change = (key: keyof Business) => (value: string) => {
     setForm((current) => {
@@ -64,7 +74,7 @@ export default function BusinessSetupScreen() {
 
   const save = async () => {
     const next: typeof errors = {};
-    if (!form.name.trim()) next.name = 'Enter your legal business name.';
+    if (!form.name.trim()) next.name = 'Enter your business name.';
     const gstin = form.gstin.trim().toUpperCase();
     if (!gstin) next.gstin = 'GSTIN is needed to prepare e-way bills.';
     else if (gstinProblem(gstin)) next.gstin = gstinProblem(gstin)!;
@@ -106,26 +116,26 @@ export default function BusinessSetupScreen() {
       {auth.previewMode ? <Notice title="Preview workspace" body="Use test details. Drafts sync to the sandbox service only and nothing is sent to the government portal." tone="warning" /> : null}
       <Card>
         <TextBlock size={15} weight="semibold">Registration</TextBlock>
-        <Field label="Legal business name" required value={form.name} onChangeText={change('name')} placeholder="As shown on your GST registration" autoCapitalize="words" error={errors.name} testID="setup-name" />
         <Field
           label="GSTIN"
           required
           value={form.gstin}
           onChangeText={(value) => change('gstin')(value.toUpperCase().replace(/\s/g, ''))}
-          placeholder="27AAPFU0939F1ZV"
+          placeholder="Enter GSTIN to fill the details"
           autoCapitalize="characters"
           maxLength={15}
           error={errors.gstin}
-          hint={form.verified ? undefined : canVerify ? 'Tap Verify to fetch your registered name and address.' : 'We check the format and check digit.'}
-          right={canVerify && form.gstin.length === 15 && !form.verified ? <Button title="Verify" size="sm" variant="outline" onPress={() => void verifyGstin()} loading={verifying} testID="setup-verify" /> : undefined}
+          hint={form.verified ? undefined : canVerify ? (verifying ? 'Getting details from the GST network…' : 'Name, address, state and PIN fill in automatically.') : 'We check the format and check digit.'}
+          right={canVerify && form.gstin.length === 15 && !form.verified && !verifying ? <Button title="Retry" size="sm" variant="outline" onPress={() => void verifyGstin()} testID="setup-verify" /> : undefined}
           testID="setup-gstin"
         />
         {form.verified ? (
           <View style={styles.verified}>
             <StatusPill label={`Verified · ${form.verified.status}`} tone={form.verified.status.toLowerCase() === 'active' ? 'green' : 'red'} icon="check" />
-            {form.verified.tradeName && form.verified.tradeName !== form.verified.legalName ? <TextBlock size={12} color={colors.mutedForeground}>Trade name: {form.verified.tradeName}</TextBlock> : null}
+            {form.verified.legalName && form.verified.legalName !== form.name.trim() ? <TextBlock size={12} color={colors.mutedForeground}>Owner / legal name: {form.verified.legalName}</TextBlock> : null}
           </View>
         ) : null}
+        <Field label="Business name" required value={form.name} onChangeText={change('name')} placeholder="Your company / trade name" autoCapitalize="words" error={errors.name} testID="setup-name" />
         <SelectField label="State / union territory" required value={form.state} placeholder="Choose state" options={stateOptions} onSelect={change('state')} error={errors.state} />
       </Card>
       <Card>
@@ -134,9 +144,6 @@ export default function BusinessSetupScreen() {
         <Field label="PIN code" value={form.pincode} onChangeText={(value) => change('pincode')(value.replace(/\D/g, '').slice(0, 6))} placeholder="411001" keyboardType="number-pad" error={errors.pincode} />
         <Field label="Mobile number" value={form.phone} onChangeText={change('phone')} placeholder="98765 43210" keyboardType="phone-pad" error={errors.phone} />
         <Field label="Billing email" value={form.email} onChangeText={change('email')} placeholder="billing@business.com" keyboardType="email-address" autoCapitalize="none" error={errors.email} />
-      </Card>
-      <Card>
-        <TextBlock size={15} weight="semibold">Invoice numbering</TextBlock>
       </Card>
       <Button title="Save and continue" icon="arrow-right" onPress={save} loading={saving} testID="setup-save" />
     </KeyboardAwareScrollViewCompat>
