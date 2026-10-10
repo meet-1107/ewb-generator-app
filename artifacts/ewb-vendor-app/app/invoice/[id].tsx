@@ -444,10 +444,11 @@ export default function InvoiceEditorScreen() {
     buyer: (
       <EditorSection key="buyer" title="Buyer" icon="users" open={open.buyer} onToggle={() => setOpen((c) => ({ ...c, buyer: !c.buyer }))} errors={sectionErrors('buyer')} summary={invoice.buyerName || 'Not set'}>
         {store.parties.length ? <Button title="Choose a saved buyer" icon="user-check" variant="outline" size="sm" onPress={() => setPicker('buyer')} /> : null}
-        <Field label="Name" required value={invoice.buyerName} onChangeText={set('buyerName')} placeholder="Business or person" autoCapitalize="words" error={errorFor('buyerName')} confidence={fromPdf('buyerName')} testID="buyer-name" />
-        <Field label="GSTIN" value={invoice.buyerGstin} onChangeText={onGstinChange('buyerGstin', 'buyerState')} placeholder="Leave empty or URP if unregistered" autoCapitalize="characters" maxLength={15} error={errorFor('buyerGstin')} confidence={fromPdf('buyerGstin')}
+        <Field label="GSTIN" value={invoice.buyerGstin} onChangeText={onGstinChange('buyerGstin', 'buyerState')} placeholder="Enter GSTIN to fill the details" autoCapitalize="characters" maxLength={15} error={errorFor('buyerGstin')} confidence={fromPdf('buyerGstin')}
           right={canVerify && invoice.buyerGstin.length === 15 && !store.parties.some((party) => party.gstin === invoice.buyerGstin && party.verified) ? <Button title="Verify" size="sm" variant="outline" onPress={() => void verifyBuyer()} loading={verifying} testID="buyer-verify" /> : undefined}
-          hint={store.parties.some((party) => party.gstin === invoice.buyerGstin && party.verified) ? 'Verified buyer' : undefined} />
+          hint={store.parties.some((party) => party.gstin === invoice.buyerGstin && party.verified) ? 'Verified buyer' : verifying ? 'Getting details from the GST network…' : canVerify ? 'Name, address, state and PIN fill in automatically. Leave empty if unregistered.' : 'Leave empty if unregistered.'}
+          testID="buyer-gstin" />
+        <Field label="Business name" required value={invoice.buyerName} onChangeText={set('buyerName')} placeholder="Business or person" autoCapitalize="words" error={errorFor('buyerName')} confidence={fromPdf('buyerName')} testID="buyer-name" />
         <Field label="Address" value={invoice.buyerAddress} onChangeText={set('buyerAddress')} placeholder="Billing address" multiline />
         <View style={styles.row}>
           <View style={{ flex: 1.4 }}><SelectField label="State" required value={invoice.buyerState} placeholder="Choose" options={stateOptions} onSelect={set('buyerState')} error={errorFor('buyerState')} testID="buyer-state" /></View>

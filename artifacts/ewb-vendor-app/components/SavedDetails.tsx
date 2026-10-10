@@ -2,10 +2,11 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Button, Card, Divider, EmptyState, Field, IconButton, ListRow, MoneyField, ScreenHeader, SearchBar, SelectField, Sheet, StatusPill, TextBlock } from '@/components/AppUI';
+import { Button, Card, Divider, EmptyState, Field, IconButton, ListRow, LoadMore, MoneyField, ScreenHeader, SearchBar, SelectField, Sheet, StatusPill, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
 import { useColors } from '@/hooks/useColors';
 import { useGstinVerify } from '@/hooks/useGstinVerify';
+import { nearEnd, useLoadMore } from '@/hooks/useLoadMore';
 import { businessNameOf, formatInr, GST_RATES, gstinProblem, STATES, stateForGstin, transporterIdProblem, UNITS, VEHICLE_PATTERN, type Party, type Product, type Transporter } from '@/lib/domain';
 import { useAppStore } from '@/state/app-store';
 import { AccountButton } from '@/components/Brand';
@@ -29,6 +30,7 @@ export default function SavedDetails({ kind, tab = false }: { kind: Kind; tab?: 
   const store = useAppStore();
   const dialog = useDialog();
   const [query, setQuery] = useState('');
+  const list = useLoadMore(20);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const { verify, verifying } = useGstinVerify();
@@ -112,11 +114,11 @@ export default function SavedDetails({ kind, tab = false }: { kind: Kind; tab?: 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <ScreenHeader back={!tab} title={meta.title} subtitle={`${items.length} saved · synced to your account`} right={tab ? <AccountButton /> : undefined} />
-      <ScrollView contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + (tab ? 180 : 100) }]} keyboardShouldPersistTaps="handled">
-        {items.length > 5 ? <SearchBar value={query} onChangeText={setQuery} placeholder={`Search ${meta.title.toLowerCase()}`} /> : null}
+      <ScrollView contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + (tab ? 180 : 100) }]} keyboardShouldPersistTaps="handled" onScroll={(event) => { if (nearEnd(event.nativeEvent)) list.more(filtered.length); }} scrollEventThrottle={120}>
+        {items.length > 5 ? <SearchBar value={query} onChangeText={(value) => { setQuery(value); list.reset(); }} placeholder={`Search ${meta.title.toLowerCase()}`} /> : null}
         {filtered.length ? (
           <Card style={{ padding: 0, gap: 0 }}>
-            {filtered.map((item, index) => (
+            {filtered.slice(0, list.limit).map((item, index) => (
               <React.Fragment key={item.id}>
                 {index ? <Divider inset={64} /> : null}
                 <ListRow
@@ -128,7 +130,8 @@ export default function SavedDetails({ kind, tab = false }: { kind: Kind; tab?: 
               </React.Fragment>
             ))}
           </Card>
-        ) : (
+        ) : null}
+        {filtered.length ? <LoadMore remaining={filtered.length - list.limit} loading={list.loading} onPress={() => list.more(filtered.length)} noun={`more ${meta.title.toLowerCase()}`} /> : (
           <Card><EmptyState icon={meta.icon} title={query ? 'No matches' : `No ${meta.title.toLowerCase()} yet`} body={query ? 'Try another search.' : meta.empty} action={!query ? <Button title={`Add ${meta.singular}`} icon="plus" onPress={() => setDraft(blank())} /> : undefined} /></Card>
         )}
       </ScrollView>

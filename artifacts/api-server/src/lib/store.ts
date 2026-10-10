@@ -159,8 +159,13 @@ export type Workspace = {
 
 export const SECTIONS = ["ewbs", "requests", "gst", "cewbs", "sync"] as const;
 export type Section = (typeof SECTIONS)[number];
-/** Which records of each large section a call needs; `sync` can only be loaded whole. */
-export type SectionSpec = { [K in Exclude<Section, "sync">]?: "all" | string[] } & { sync?: "all" };
+/**
+ * Which records of each large section a call needs. `sync` is loaded whole
+ * ("all"), or as the records named in `keys` ("collection/id") plus every
+ * record changed after `since`, so a sync reads only what changed.
+ */
+export type SyncSpec = "all" | { keys: string[]; since?: string };
+export type SectionSpec = { [K in Exclude<Section, "sync">]?: "all" | string[] } & { sync?: SyncSpec };
 type Core = Omit<Workspace, Section>;
 
 const backend = process.env["STORE"] === "firestore" ? "firestore" : "file";
@@ -336,12 +341,12 @@ function docId(key: string) {
 }
 
 /** One stored record of a large section. `name` is the sync collection, for `sync` only. */
-type RecordDoc = { key: string; name?: string; json: string };
+type RecordDoc = { key: string; name?: string; json: string; updatedAt?: string };
 
 function sectionEntries(workspace: Workspace, section: Section): { id: string; doc: RecordDoc }[] {
   if (section === "sync") {
     return Object.entries(workspace.sync).flatMap(([name, records]) =>
-      Object.entries(records).map(([key, record]) => ({ id: docId(`${name}/${key}`), doc: { key, name, json: JSON.stringify(record) } })),
+      Object.entries(records).map(([key, record]) => ({ id: docId(`${name}/${key}`), doc: { key, name, json: JSON.stringify(record), updatedAt: record.updatedAt } })),
     );
   }
   return Object.entries(workspace[section] as Record<string, unknown>).map(([key, record]) => ({ id: docId(key), doc: { key, json: JSON.stringify(record) } }));
@@ -363,6 +368,13 @@ async function firestoreWorkspace<T>(id: string, fn: (workspace: Workspace) => T
     const loaded = await Promise.all(sections.map(async (section) => {
       const wanted = spec[section]!;
       if (wanted === "all") return (await tx.get(root.collection(section))).docs;
+      if (!Array.isArray(wanted)) {
+        // sync: the named records plus those changed after `since`, read once each.
+        const named = wanted.keys.length ? await tx.getAll(...[...new Set(wanted.keys)].map((key) => root.collection(section).doc(docId(key)))) : [];
+        const changed = wanted.since ? (await tx.get(root.collection(section).where("updatedAt", ">", wanted.since))).docs : (await tx.get(root.collection(section))).docs;
+        const seen = new Set<string>();
+        return [...named, ...changed].filter((snap) => snap.exists && !seen.has(snap.id) && seen.add(snap.id));
+      }
       if (!wanted.length) return [];
       return (await tx.getAll(...[...new Set(wanted)].map((key) => root.collection(section).doc(docId(key))))).filter((snap) => snap.exists);
     }));
@@ -373,7 +385,8 @@ async function firestoreWorkspace<T>(id: string, fn: (workspace: Workspace) => T
     sections.forEach((section, index) => {
       for (const snap of loaded[index]!) {
         const doc = snap.data() as RecordDoc;
-        before.set(`${section}/${snap.id}`, doc.json);
+        // Sync records saved before `updatedAt` was stored are rewritten once, so the `since` query finds them.
+        before.set(`${section}/${snap.id}`, section === "sync" && doc.updatedAt === undefined ? "" : doc.json);
         const value = JSON.parse(doc.json) as never;
         if (section === "sync") (workspace.sync[doc.name!] ??= {})[doc.key] = value;
         else (workspace[section] as Record<string, unknown>)[doc.key] = value;

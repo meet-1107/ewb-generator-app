@@ -3,9 +3,10 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
+import { useLoadMore } from '@/hooks/useLoadMore';
 import { formatInr, invoiceTotals, type Invoice } from '@/lib/domain';
 import { useAppStore, useScopedRecords } from '@/state/app-store';
-import { Button, Card, Chip, ChipRow, EmptyState, Field, Heading, Notice, Page, SearchBar, SectionTitle, SelectSheet, Sheet, TextBlock } from '@/components/AppUI';
+import { Button, Card, Chip, ChipRow, EmptyState, Field, Heading, LoadMore, Notice, Page, SearchBar, SectionTitle, SelectSheet, Sheet, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
 import InvoiceCard from '@/components/InvoiceCard';
 import { AccountButton } from '@/components/Brand';
@@ -26,7 +27,7 @@ export default function InvoicesScreen() {
   const [party, setParty] = useState('');
   const [partyPicker, setPartyPicker] = useState(false);
   const [sheet, setSheet] = useState(false);
-  const [limit, setLimit] = useState(PAGE);
+  const list = useLoadMore(PAGE);
 
   useEffect(() => {
     if (params.period && /^\d{4}-\d{2}$/.test(params.period)) {
@@ -94,7 +95,7 @@ export default function InvoicesScreen() {
   };
 
   return (
-    <Page contentStyle={styles.page} onRefresh={() => void store.syncNow()} refreshing={store.syncState === 'syncing'}>
+    <Page contentStyle={styles.page} onRefresh={() => void store.syncNow()} refreshing={store.syncState === 'syncing'} onEndReached={() => list.more(filtered.length)}>
       <Heading
         eyebrow="Sales"
         title="Invoices"
@@ -114,7 +115,7 @@ export default function InvoicesScreen() {
       ) : null}
       <SearchBar
         value={search}
-        onChangeText={(value) => { setSearch(value); setLimit(PAGE); }}
+        onChangeText={(value) => { setSearch(value); list.reset(); }}
         placeholder="Invoice no., buyer, GSTIN or date"
         testID="invoice-search"
         right={
@@ -146,10 +147,10 @@ export default function InvoicesScreen() {
       <SectionTitle title={party ? `Invoices of ${party}` : search || dateFiltered || party ? 'Matching invoices' : 'All invoices'} count={filtered.length} />
       {filtered.length ? (
         <View style={{ gap: 10 }}>
-          {filtered.slice(0, limit).map((invoice) => (
+          {filtered.slice(0, list.limit).map((invoice) => (
             <InvoiceCard key={invoice.id} invoice={invoice} onPress={() => openInvoice(invoice)} onLongPress={() => void actions(invoice)} />
           ))}
-          {filtered.length > limit ? <Button title={`Show more (${filtered.length - limit})`} variant="outline" onPress={() => setLimit((current) => current + PAGE)} /> : null}
+          <LoadMore remaining={filtered.length - list.limit} loading={list.loading} onPress={() => list.more(filtered.length)} noun="more invoices" />
           <TextBlock size={11} color={colors.mutedForeground} style={{ textAlign: 'center' }}>Tip: long-press an invoice to edit it or delete a draft.</TextBlock>
         </View>
       ) : (
@@ -172,7 +173,7 @@ export default function InvoicesScreen() {
         value={party}
         emptyText="No invoices with a buyer yet."
         options={[{ value: '', label: 'All parties', detail: `${invoices.length} invoices` }, ...parties.map((item) => ({ value: item.name, label: item.name, detail: `${item.count} invoice${item.count === 1 ? '' : 's'} · ${formatInr(item.total)}` }))]}
-        onSelect={(value) => { setParty(value); setLimit(PAGE); setPartyPicker(false); }}
+        onSelect={(value) => { setParty(value); list.reset(); setPartyPicker(false); }}
       />
 
       <Sheet visible={sheet} onClose={() => setSheet(false)} title="Filter invoices" subtitle="Filters apply together with search."

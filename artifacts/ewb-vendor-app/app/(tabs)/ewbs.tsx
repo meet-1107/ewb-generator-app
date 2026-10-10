@@ -3,9 +3,10 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
+import { useLoadMore } from '@/hooks/useLoadMore';
 import { useAppStore, useScopedRecords } from '@/state/app-store';
 import { ewbStatusMeta, formatDate, formatInr, liveEwbStatus, relativeTime, type EwbRecord } from '@/lib/domain';
-import { Button, Card, Chip, ChipRow, EmptyState, Field, Heading, Notice, Page, SearchBar, SectionTitle, SelectSheet, Sheet, Skeleton, StatusPill, TextBlock } from '@/components/AppUI';
+import { Button, Card, Chip, ChipRow, EmptyState, Field, Heading, LoadMore, Notice, Page, SearchBar, SectionTitle, SelectSheet, Sheet, Skeleton, StatusPill, TextBlock } from '@/components/AppUI';
 import { ActionCard, ActionGrid } from '@/components/ActionCard';
 import { AccountButton } from '@/components/Brand';
 import { useCredits } from '@/hooks/useCredits';
@@ -38,7 +39,7 @@ export default function EwbRegisterScreen() {
   const [transporter, setTransporter] = useState('');
   const [sheet, setSheet] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
-  const [limit, setLimit] = useState(PAGE);
+  const list = useLoadMore(PAGE);
   const [picker, setPicker] = useState<'part_b' | 'cancel' | null>(null);
   const credits = useCredits();
   const partBBills = useMemo(() => ewbs.filter((ewb) => !ewb.consolidatedInto && ['active', 'part_b_pending'].includes(liveEwbStatus(ewb))), [ewbs]);
@@ -90,7 +91,7 @@ export default function EwbRegisterScreen() {
   const loading = store.ewbsFetchedAt === null && store.online !== false && !ewbs.length;
 
   return (
-    <Page contentStyle={styles.page} onRefresh={refresh} refreshing={refreshing}>
+    <Page contentStyle={styles.page} onRefresh={refresh} refreshing={refreshing} onEndReached={() => list.more(filtered.length)}>
       <Heading eyebrow="Movement" title="E-way bills" subtitle={store.ewbsFetchedAt ? `${ewbs.length} bills · updated ${relativeTime(store.ewbsFetchedAt)}` : 'Bills confirmed by your provider appear here.'} right={<AccountButton />} />
       <ActionGrid>
         <ActionCard icon="plus-circle" title="New e-way bill" detail={`From an invoice · ${credits.costs.generate} credits`} onPress={() => router.push({ pathname: '/(tabs)/invoices', params: { for: 'ewb' } })} testID="quick-new" />
@@ -111,12 +112,12 @@ export default function EwbRegisterScreen() {
       {store.online === false ? <Notice title="Offline — showing saved copy" body={store.ewbsFetchedAt ? `Last updated ${formatDate(store.ewbsFetchedAt, true)}. Status may have changed since.` : 'Nothing has been downloaded on this device yet.'} /> : null}
       <SearchBar
         value={query}
-        onChangeText={(value) => { setQuery(value); setLimit(PAGE); }}
+        onChangeText={(value) => { setQuery(value); list.reset(); }}
         placeholder="EWB, invoice, buyer or vehicle"
         right={<Pressable onPress={() => setSheet(true)} hitSlop={10} style={{ paddingLeft: 6 }} accessibilityRole="button" accessibilityLabel="More filters"><Feather name="sliders" size={18} color={period || transporter ? colors.primary : colors.mutedForeground} /></Pressable>}
       />
       <ChipRow>
-        {tabs.map((tab) => <Chip key={tab.value} label={tab.label} count={counts[tab.value]} selected={filter === tab.value} onPress={() => { setFilter(tab.value); setLimit(PAGE); }} />)}
+        {tabs.map((tab) => <Chip key={tab.value} label={tab.label} count={counts[tab.value]} selected={filter === tab.value} onPress={() => { setFilter(tab.value); list.reset(); }} />)}
         {period ? <Chip label={`Month ${period}`} icon="x" selected={false} onPress={() => setPeriod('')} /> : null}
       </ChipRow>
 
@@ -125,8 +126,8 @@ export default function EwbRegisterScreen() {
         <View style={{ gap: 10 }}>{[0, 1, 2].map((index) => <Card key={index}><Skeleton width="50%" /><Skeleton width="80%" height={12} /><Skeleton width="35%" height={12} /></Card>)}</View>
       ) : filtered.length ? (
         <View style={{ gap: 10 }}>
-          {filtered.slice(0, limit).map((ewb) => <EwbRow key={ewb.id} ewb={ewb} />)}
-          {filtered.length > limit ? <Button title={`Show more (${filtered.length - limit})`} variant="outline" onPress={() => setLimit((current) => current + PAGE)} /> : null}
+          {filtered.slice(0, list.limit).map((ewb) => <EwbRow key={ewb.id} ewb={ewb} />)}
+          <LoadMore remaining={filtered.length - list.limit} loading={list.loading} onPress={() => list.more(filtered.length)} noun="more e-way bills" />
         </View>
       ) : (
         <Card>

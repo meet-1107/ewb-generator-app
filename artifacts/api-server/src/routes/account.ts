@@ -98,7 +98,7 @@ router.post("/sync", async (req, res) => {
       out[name] = Object.values(records).filter((record) => !since || record.updatedAt > since);
     }
     return out;
-  }, { sync: "all" });
+  }, { sync: since ? { since, keys: Object.entries(collections).flatMap(([name, records]) => records.map((record) => `${name}/${record.id}`)) } : "all" });
   return res.json({ serverTime, changes });
 });
 

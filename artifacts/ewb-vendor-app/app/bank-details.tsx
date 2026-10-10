@@ -1,13 +1,16 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ScrollView, Share, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Button, Card, Checkbox, Divider, EmptyState, Field, IconButton, ListRow, ScreenHeader, Segmented, Sheet, StatusPill, TextBlock } from '@/components/AppUI';
+import { Button, Card, Checkbox, Divider, EmptyState, Field, IconButton, ListRow, ScreenHeader, Segmented, SelectSheet, Sheet, StatusPill, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
 import { useColors } from '@/hooks/useColors';
-import { BANK_ACCOUNT_TYPES, bankAccountProblems, bankShareText, defaultBank, uid, type BankAccount } from '@/lib/domain';
+import { BANK_ACCOUNT_TYPES, bankAccountProblems, bankShareText, defaultBank, IFSC_PATTERN, uid, type BankAccount } from '@/lib/domain';
+import { BANKS, bankForIfsc, lookupIfsc } from '@/lib/banks';
 import { useAppStore } from '@/state/app-store';
 
 type Draft = Omit<BankAccount, 'id' | 'updatedAt'> & { id?: string; isDefault: boolean };
+
+const bankOptions = BANKS.map((bank) => ({ value: bank.name, label: bank.name }));
 
 const blank = (isDefault: boolean): Draft => ({ accountName: '', bankName: '', accountNumber: '', ifsc: '', branch: '', accountType: 'Current', upiId: '', isDefault });
 
@@ -22,9 +25,15 @@ export default function BankDetailsScreen() {
   const current = defaultBank(business);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const [bankPicker, setBankPicker] = useState(false);
+  /** What the IFSC lookup found, shown under the IFSC field. */
+  const [ifscNote, setIfscNote] = useState('');
+  const lookedUp = useRef('');
 
   const open = (bank?: BankAccount) => {
     setErrors({});
+    setIfscNote('');
+    lookedUp.current = bank?.ifsc ?? '';
     setDraft(bank ? { ...bank, upiId: bank.upiId ?? '', isDefault: bank.id === current?.id } : { ...blank(!banks.length), accountName: business?.name ?? '' });
   };
 
@@ -36,6 +45,36 @@ export default function BankDetailsScreen() {
       setErrors((existing) => ({ ...existing, [key]: '' }));
     },
   });
+
+  // A complete IFSC fills in the branch (and the bank, when not chosen yet).
+  const draftIfsc = draft?.ifsc ?? '';
+  useEffect(() => {
+    if (!IFSC_PATTERN.test(draftIfsc) || lookedUp.current === draftIfsc) return;
+    lookedUp.current = draftIfsc;
+    const known = bankForIfsc(draftIfsc);
+    setIfscNote('Finding the branch…');
+    let live = true;
+    lookupIfsc(draftIfsc).then((details) => {
+      if (!live) return;
+      if (!details) {
+        setIfscNote('');
+        setErrors((current) => ({ ...current, ifsc: 'This IFSC was not found. Please check it.' }));
+        return;
+      }
+      setDraft((current) => current && current.ifsc === draftIfsc ? {
+        ...current,
+        branch: details.branch || current.branch,
+        bankName: current.bankName.trim() || known?.name || details.bank,
+      } : current);
+      setErrors((current) => ({ ...current, branch: '', bankName: '' }));
+      setIfscNote(`${details.bank}${details.branch ? ` · ${details.branch}` : ''}${details.city ? `, ${details.city}` : ''}`);
+    }).catch(() => {
+      if (!live) return;
+      if (known) setDraft((current) => current && current.ifsc === draftIfsc && !current.bankName.trim() ? { ...current, bankName: known.name } : current);
+      setIfscNote('Could not get the branch right now. Please type it.');
+    });
+    return () => { live = false; };
+  }, [draftIfsc]);
 
   const save = async () => {
     if (!draft || !business) return;
@@ -137,12 +176,21 @@ export default function BankDetailsScreen() {
         {draft ? (
           <View style={{ paddingHorizontal: 18, gap: 12 }}>
             <Field label="Account holder name" required {...field('accountName')} autoCapitalize="words" testID="bank-account-name" />
-            <Field label="Bank name" required {...field('bankName')} placeholder="State Bank of India" autoCapitalize="words" testID="bank-name" />
+            <Field
+              label="Bank name"
+              required
+              {...field('bankName')}
+              placeholder="Choose from the list or type"
+              autoCapitalize="words"
+              right={<Button title="List" icon="list" size="sm" variant="outline" onPress={() => setBankPicker(true)} testID="bank-name-list" />}
+              testID="bank-name"
+            />
             <Field label="Account number" required {...field('accountNumber', (value) => value.replace(/\D/g, ''))} keyboardType="number-pad" maxLength={18} testID="bank-account-number" />
             <View style={{ flexDirection: 'row', gap: 10 }}>
-              <View style={{ flex: 1 }}><Field label="IFSC" required {...field('ifsc', (value) => value.toUpperCase().replace(/\s/g, ''))} placeholder="SBIN0001234" autoCapitalize="characters" maxLength={11} testID="bank-ifsc" /></View>
-              <View style={{ flex: 1 }}><Field label="Branch" {...field('branch')} autoCapitalize="words" /></View>
+              <View style={{ flex: 1 }}><Field label="IFSC" required {...field('ifsc', (value) => { setIfscNote(''); return value.toUpperCase().replace(/\s/g, ''); })} placeholder="SBIN0001234" autoCapitalize="characters" maxLength={11} testID="bank-ifsc" /></View>
+              <View style={{ flex: 1 }}><Field label="Branch" {...field('branch')} placeholder="Fills from IFSC" autoCapitalize="words" testID="bank-branch" /></View>
             </View>
+            {ifscNote && !errors.ifsc ? <TextBlock size={12} color={colors.mutedForeground}>{ifscNote}</TextBlock> : null}
             <View style={{ gap: 7 }}>
               <TextBlock size={13} weight="semibold">Account type</TextBlock>
               <Segmented options={BANK_ACCOUNT_TYPES.map((type) => ({ label: type, value: type }))} value={draft.accountType} onChange={(accountType) => setDraft({ ...draft, accountType })} />
@@ -152,6 +200,20 @@ export default function BankDetailsScreen() {
           </View>
         ) : null}
       </Sheet>
+
+      <SelectSheet
+        visible={bankPicker}
+        onClose={() => setBankPicker(false)}
+        title="Choose bank"
+        options={bankOptions}
+        value={draft?.bankName}
+        onSelect={(bankName) => {
+          setDraft((current) => (current ? { ...current, bankName } : current));
+          setErrors((current) => ({ ...current, bankName: '' }));
+          setBankPicker(false);
+        }}
+        footer={<Button title="Bank not in the list? Type it" variant="outline" onPress={() => setBankPicker(false)} />}
+      />
     </View>
   );
 }

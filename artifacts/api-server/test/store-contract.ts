@@ -44,6 +44,24 @@ export function storeContract(name: string, load: () => Promise<typeof Store>) {
       assert.equal(sync["parties"]!["1"]!.updatedAt, "2026-01-02");
     });
 
+    it("loads sync records named or changed after `since`, and saves updates to them", async () => {
+      const { withWorkspace } = await load();
+      const id = workspaceId();
+      await withWorkspace(id, (ws) => {
+        ws.sync["invoices"] = { old: { id: "old", updatedAt: "2026-01-01T00:00:00.000Z" }, mine: { id: "mine", updatedAt: "2026-01-02T00:00:00.000Z" }, recent: { id: "recent", updatedAt: "2026-03-01T00:00:00.000Z" } };
+        ws.sync["parties"] = { p: { id: "p", updatedAt: "2026-03-02T00:00:00.000Z" } };
+      }, { sync: "all" });
+      const spec = { sync: { keys: ["invoices/mine", "invoices/missing"], since: "2026-02-01T00:00:00.000Z" } };
+      const loaded = await withWorkspace(id, (ws) => Object.entries(ws.sync).flatMap(([name, records]) => Object.keys(records).map((key) => `${name}/${key}`)).sort(), spec);
+      for (const key of ["invoices/mine", "invoices/recent", "parties/p"]) assert.ok(loaded.includes(key), key);
+      if (name === "firestore") assert.deepEqual(loaded, ["invoices/mine", "invoices/recent", "parties/p"]);
+      await withWorkspace(id, (ws) => { ws.sync["invoices"]!["mine"] = { id: "mine", updatedAt: "2026-04-01T00:00:00.000Z" }; ws.sync["invoices"]!["new"] = { id: "new", updatedAt: "2026-04-02T00:00:00.000Z" }; }, spec);
+      const all = await withWorkspace(id, (ws) => Object.values(ws.sync["invoices"]!).map((r) => `${r.id}@${r.updatedAt.slice(0, 7)}`).sort(), { sync: "all" });
+      assert.deepEqual(all, ["mine@2026-04", "new@2026-04", "old@2026-01", "recent@2026-03"]);
+      const later = await withWorkspace(id, (ws) => Object.keys(ws.sync["invoices"] ?? {}).sort(), { sync: { keys: [], since: "2026-03-15T00:00:00.000Z" } });
+      if (name === "firestore") assert.deepEqual(later, ["mine", "new"]);
+    });
+
     it("refuses sections that were not requested and saves nothing when fn throws", async () => {
       const { withWorkspace } = await load();
       const id = workspaceId();

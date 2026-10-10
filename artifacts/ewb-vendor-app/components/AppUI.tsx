@@ -20,13 +20,14 @@ import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
+import { nearEnd } from '@/hooks/useLoadMore';
 import { paiseToInput, parseRupees } from '@/lib/domain';
 
 type IconName = keyof typeof Feather.glyphMap;
 export type Tone = 'neutral' | 'green' | 'amber' | 'red' | 'blue';
 
 /** Scrollable tab page. Adds safe-area top padding and room for the tab bar. */
-export function Page({ children, contentStyle, onRefresh, refreshing = false, tab = true }: { children: ReactNode; contentStyle?: ViewStyle; onRefresh?: () => void; refreshing?: boolean; tab?: boolean }) {
+export function Page({ children, contentStyle, onRefresh, refreshing = false, tab = true, onEndReached }: { children: ReactNode; contentStyle?: ViewStyle; onRefresh?: () => void; refreshing?: boolean; tab?: boolean; onEndReached?: () => void }) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   return (
@@ -39,10 +40,24 @@ export function Page({ children, contentStyle, onRefresh, refreshing = false, ta
       ]}
       keyboardShouldPersistTaps="handled"
       showsVerticalScrollIndicator={false}
+      onScroll={onEndReached ? (event) => { if (nearEnd(event.nativeEvent)) onEndReached(); } : undefined}
+      scrollEventThrottle={onEndReached ? 120 : undefined}
       refreshControl={onRefresh ? <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} /> : undefined}
     >
       {children}
     </ScrollView>
+  );
+}
+
+/** End of a paged list: a loader while the next page loads, otherwise a tap target for it. */
+export function LoadMore({ remaining, loading, onPress, noun = 'more' }: { remaining: number; loading: boolean; onPress: () => void; noun?: string }) {
+  const colors = useColors();
+  if (remaining <= 0) return null;
+  return (
+    <Pressable onPress={onPress} disabled={loading} accessibilityRole="button" accessibilityLabel={loading ? 'Loading more' : `Load ${remaining} ${noun}`} testID="load-more" style={styles.loadMore}>
+      {loading ? <ActivityIndicator size="small" color={colors.primary} /> : <Feather name="chevrons-down" size={16} color={colors.primary} />}
+      <TextBlock size={13} weight="semibold" color={colors.primary}>{loading ? 'Loading more…' : `${remaining} ${noun} · scroll to load`}</TextBlock>
+    </Pressable>
   );
 }
 
@@ -617,6 +632,7 @@ export function SearchBar({ value, onChangeText, placeholder, right, testID }: {
 }
 
 const styles = StyleSheet.create({
+  loadMore: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 8, paddingVertical: 14 },
   page: { paddingHorizontal: 20, gap: 18 },
   screenHeader: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 8, paddingBottom: 8, borderBottomWidth: StyleSheet.hairlineWidth },
   headingRow: { flexDirection: 'row', alignItems: 'flex-start', gap: 12 },
