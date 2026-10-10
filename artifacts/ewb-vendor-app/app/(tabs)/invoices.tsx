@@ -19,7 +19,7 @@ const filters: { label: string; value: InvoiceStatus | 'all' }[] = [
 
 export default function InvoicesScreen() {
   const colors = useColors();
-  const params = useLocalSearchParams<{ status?: string; period?: string }>();
+  const params = useLocalSearchParams<{ status?: string; period?: string; from?: string; to?: string }>();
   const store = useAppStore();
   const dialog = useDialog();
   const { invoices } = useScopedRecords();
@@ -36,7 +36,11 @@ export default function InvoicesScreen() {
       setDateFrom(`${params.period}-01`);
       setDateTo(`${params.period}-31`);
     }
-  }, [params.status, params.period]);
+    if (params.from && params.to && /^\d{4}-\d{2}-\d{2}$/.test(params.from) && /^\d{4}-\d{2}-\d{2}$/.test(params.to)) {
+      setDateFrom(params.from);
+      setDateTo(params.to);
+    }
+  }, [params.status, params.period, params.from, params.to]);
 
   const counts = useMemo(() => ({
     all: invoices.length,

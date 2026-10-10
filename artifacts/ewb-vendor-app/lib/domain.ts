@@ -487,6 +487,18 @@ export function financialYearPrefix(date = new Date()) {
 }
 
 /** Return period for GST: `YYYY-MM`. Returns are filed for the previous month. */
+/** Indian financial year (1 April – 31 March) containing `date` (YYYY-MM-DD, IST). */
+export function financialYear(date = today()) {
+  const year = Number(date.slice(0, 4));
+  const start = Number(date.slice(5, 7)) >= 4 ? year : year - 1;
+  return { label: `FY ${start}-${String(start + 1).slice(2)}`, from: `${start}-04-01`, to: `${start + 1}-03-31` };
+}
+
+/** IST calendar date (YYYY-MM-DD) of an ISO timestamp. */
+export function istDate(iso: string) {
+  return new Date(Date.parse(iso) + 5.5 * 3_600_000).toISOString().slice(0, 10);
+}
+
 export function previousPeriod(offset = 1, from = new Date()) {
   const date = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth() - offset, 1));
   return date.toISOString().slice(0, 7);

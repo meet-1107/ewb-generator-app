@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { router } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
@@ -8,17 +8,16 @@ import { useAppStore, useScopedRecords } from '@/state/app-store';
 import { useAuth } from '@/state/auth';
 import {
   ewbStatusMeta,
+  financialYear,
+  formatDate,
   formatInr,
-  GST_STATUS_META,
   invoiceTotals,
+  istDate,
   liveEwbStatus,
-  periodLabel,
-  previousPeriod,
   relativeTime,
   today,
 } from '@/lib/domain';
-import { api } from '@/lib/api';
-import { Card, Divider, IconButton, Notice, Page, SectionTitle, StatCard, StatusPill, TextBlock, SelectSheet } from '@/components/AppUI';
+import { Card, IconButton, Notice, Page, SectionTitle, StatCard, StatusPill, TextBlock, SelectSheet } from '@/components/AppUI';
 import InvoiceCard from '@/components/InvoiceCard';
 
 export default function DashboardScreen() {
@@ -28,46 +27,30 @@ export default function DashboardScreen() {
   const { invoices, ewbs } = useScopedRecords();
   const [refreshing, setRefreshing] = useState(false);
   const [gstinPicker, setGstinPicker] = useState(false);
-  const period = today().slice(0, 7);
-  const gstPeriod = previousPeriod();
-  const gstKey = `${store.activeGstin}:${gstPeriod}`;
-  const gstCached = store.gstCache[gstKey];
+  const fy = financialYear();
   const registrations = store.business?.gstRegistrations ?? [];
 
+  // Current financial year (1 April – 31 March). Drafts are not sales yet.
   const stats = useMemo(() => {
-    const monthInvoices = invoices.filter((invoice) => invoice.invoiceDate.startsWith(period));
+    const inYear = (date: string) => date >= fy.from && date <= fy.to;
+    const fyInvoices = invoices.filter((invoice) => inYear(invoice.invoiceDate));
+    const issued = fyInvoices.filter((invoice) => invoice.status !== 'draft');
+    const fyEwbs = ewbs.filter((ewb) => inYear(istDate(ewb.generatedAt)));
     const live = ewbs.map((ewb) => ({ ewb, status: liveEwbStatus(ewb) }));
-    const expiringSoon = live.filter(({ status, ewb }) => (status === 'active' || status === 'part_b_pending') && Date.parse(ewb.validUntil) - Date.now() < 8 * 3_600_000);
     return {
-      monthCount: monthInvoices.length,
-      monthValue: monthInvoices.reduce((sum, invoice) => sum + invoiceTotals(invoice).total, 0),
-      generated: ewbs.filter((ewb) => ewb.generatedAt.slice(0, 7) === period).length,
-      active: live.filter(({ status }) => status === 'active' || status === 'part_b_pending').length,
-      expired: live.filter(({ status }) => status === 'expired').length,
-      expiringSoon,
-      drafts: invoices.filter((invoice) => invoice.status === 'draft').length,
-      ready: invoices.filter((invoice) => invoice.status === 'ready').length,
+      sales: issued.reduce((sum, invoice) => sum + invoiceTotals(invoice).total, 0),
+      invoiceCount: fyInvoices.length,
+      issuedCount: issued.length,
+      drafts: fyInvoices.length - issued.length,
+      ewbCount: fyEwbs.filter((ewb) => liveEwbStatus(ewb) !== 'cancelled').length,
+      cancelled: fyEwbs.filter((ewb) => liveEwbStatus(ewb) === 'cancelled').length,
+      expiringSoon: live.filter(({ status, ewb }) => (status === 'active' || status === 'part_b_pending') && Date.parse(ewb.validUntil) - Date.now() < 8 * 3_600_000),
     };
-  }, [invoices, ewbs, period]);
-
-  const loadGst = useCallback(async () => {
-    if (!store.activeGstin || !store.workspaceId) return;
-    try {
-      const result = await api.gstStatus(store.activeGstin, gstPeriod);
-      if (result.snapshots.length) store.setGstCache(gstKey, result.snapshots);
-    } catch {
-      // Cached / "Not checked" is shown instead.
-    }
-  }, [gstKey, gstPeriod, store]);
-
-  useEffect(() => {
-    if (!gstCached) void loadGst();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [store.activeGstin, store.workspaceId]);
+  }, [invoices, ewbs, fy.from, fy.to]);
 
   const refresh = async () => {
     setRefreshing(true);
-    await Promise.allSettled([store.refreshEwbs(), store.syncNow(), loadGst(), store.refreshServices()]);
+    await Promise.allSettled([store.refreshEwbs(), store.syncNow(), store.refreshServices()]);
     setRefreshing(false);
   };
 
@@ -101,7 +84,7 @@ export default function DashboardScreen() {
           </View>
         </Pressable>
         <IconButton icon="help-circle" accessibilityLabel="Help and support" onPress={() => router.push('/help')} filled />
-        <IconButton icon="user" accessibilityLabel="Open account" onPress={() => router.push('/(tabs)/account')} filled color={colors.primary} />
+        <IconButton icon="user" accessibilityLabel="Open account" onPress={() => router.push('/account')} filled color={colors.primary} />
       </View>
 
       <View style={{ gap: 3 }}>
@@ -114,24 +97,11 @@ export default function DashboardScreen() {
         </View>
       </View>
 
-      {sandbox ? <Notice title="Sandbox mode" body="E-way bills and GST status come from a test provider. Nothing is sent to the government portal — use test data only." tone="warning" /> : null}
-      {store.online === false ? <Notice title="You're offline" body="Drafts keep saving on this device. E-way bill generation needs a connection and is never queued." tone="info" /> : null}
-      {store.storageError ? <Notice title="Storage problem" body={store.storageError} tone="danger" /> : null}
-      {stats.expiringSoon.length ? (
-        <Notice
-          tone="danger"
-          title={`${stats.expiringSoon.length} e-way bill${stats.expiringSoon.length === 1 ? '' : 's'} expiring soon`}
-          body={`${stats.expiringSoon[0]!.ewb.ewbNumber} expires ${relativeTime(stats.expiringSoon[0]!.ewb.validUntil)}. Extend it if the goods are still in transit.`}
-          action="Review bill"
-          onAction={() => router.push(`/ewb/${stats.expiringSoon[0]!.ewb.id}`)}
-        />
-      ) : null}
-
       <LinearGradient colors={[colors.heroStart, colors.heroEnd]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
         <View style={styles.heroDecor} />
-        <TextBlock size={11} weight="bold" color={colors.heroMuted} style={{ letterSpacing: 1 }}>{new Date().toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }).toUpperCase()} · SALES</TextBlock>
-        <TextBlock size={32} weight="bold" color={colors.heroText} style={{ letterSpacing: -1 }}>{formatInr(stats.monthValue)}</TextBlock>
-        <TextBlock size={12} color={colors.heroMuted}>{stats.monthCount} invoice{stats.monthCount === 1 ? '' : 's'} this month · {stats.drafts} draft{stats.drafts === 1 ? '' : 's'} · {stats.ready} ready for EWB</TextBlock>
+        <TextBlock size={11} weight="bold" color={colors.heroMuted} style={{ letterSpacing: 1 }}>TOTAL SALES · {fy.label}</TextBlock>
+        <TextBlock size={32} weight="bold" color={colors.heroText} style={{ letterSpacing: -1 }}>{formatInr(stats.sales)}</TextBlock>
+        <TextBlock size={12} color={colors.heroMuted}>{formatDate(fy.from)} – {formatDate(today())} · {stats.issuedCount} invoice{stats.issuedCount === 1 ? '' : 's'}{stats.drafts ? ` · ${stats.drafts} draft${stats.drafts === 1 ? '' : 's'} not counted` : ''}</TextBlock>
         <View style={styles.heroActions}>
           <Pressable onPress={() => router.push('/invoice/new')} style={({ pressed }) => [styles.heroButton, { backgroundColor: colors.warmAccent, opacity: pressed ? 0.85 : 1 }]} accessibilityRole="button" testID="dashboard-new-invoice">
             <Feather name="plus" size={17} color="#1b1206" />
@@ -145,31 +115,22 @@ export default function DashboardScreen() {
       </LinearGradient>
 
       <View style={styles.stats}>
-        <StatCard label="Invoices this period" value={String(stats.monthCount)} icon="file-text" tone="blue" onPress={() => router.push({ pathname: '/(tabs)/invoices', params: { period } })} testID="stat-invoices" />
-        <StatCard label="EWB generated" value={String(stats.generated)} hint="This month" icon="check-circle" tone="green" onPress={() => router.push({ pathname: '/(tabs)/ewbs', params: { status: 'all', period } })} testID="stat-generated" />
-        <StatCard label="Active EWB" value={String(stats.active)} icon="truck" tone="amber" onPress={() => router.push({ pathname: '/(tabs)/ewbs', params: { status: 'active' } })} testID="stat-active" />
-        <StatCard label="Expired EWB" value={String(stats.expired)} icon="clock" tone="neutral" onPress={() => router.push({ pathname: '/(tabs)/ewbs', params: { status: 'expired' } })} testID="stat-expired" />
+        <StatCard label="Total invoices" value={String(stats.invoiceCount)} hint={fy.label} icon="file-text" tone="blue" onPress={() => router.push({ pathname: '/(tabs)/invoices', params: { from: fy.from, to: fy.to } })} testID="stat-invoices" />
+        <StatCard label="Total e-way bills" value={String(stats.ewbCount)} hint={stats.cancelled ? `${fy.label} · ${stats.cancelled} cancelled` : fy.label} icon="truck" tone="green" onPress={() => router.push({ pathname: '/(tabs)/ewbs', params: { status: 'all' } })} testID="stat-ewbs" />
       </View>
 
-      <SectionTitle title="GST returns" action="Details" onPress={() => router.push('/(tabs)/gst')} />
-      <Card onPress={() => router.push('/(tabs)/gst')} style={{ padding: 0, gap: 0 }} accessibilityLabel="GST return status">
-        {(['GSTR-1', 'GSTR-2B', 'GSTR-3B'] as const).map((type, index) => {
-          const snapshot = gstCached?.snapshots.find((item) => item.returnType === type);
-          const meta = snapshot ? GST_STATUS_META[snapshot.providerStatus] : null;
-          return (
-            <React.Fragment key={type}>
-              {index ? <Divider inset={16} /> : null}
-              <View style={styles.gstRow}>
-                <View style={{ flex: 1, gap: 2 }}>
-                  <TextBlock size={14} weight="semibold">{type}</TextBlock>
-                  <TextBlock size={11} color={colors.mutedForeground}>{periodLabel(gstPeriod)} · {snapshot ? `checked ${relativeTime(snapshot.checkedAt)}` : 'Not checked'}</TextBlock>
-                </View>
-                <StatusPill label={meta?.label ?? 'Not checked'} tone={meta?.tone ?? 'neutral'} />
-              </View>
-            </React.Fragment>
-          );
-        })}
-      </Card>
+      {sandbox ? <Notice title="Sandbox mode" body="E-way bills come from a test provider. Nothing is sent to the government portal — use test data only." tone="warning" /> : null}
+      {store.online === false ? <Notice title="You're offline" body="Drafts keep saving on this device. E-way bill generation needs a connection and is never queued." tone="info" /> : null}
+      {store.storageError ? <Notice title="Storage problem" body={store.storageError} tone="danger" /> : null}
+      {stats.expiringSoon.length ? (
+        <Notice
+          tone="danger"
+          title={`${stats.expiringSoon.length} e-way bill${stats.expiringSoon.length === 1 ? '' : 's'} expiring soon`}
+          body={`${stats.expiringSoon[0]!.ewb.ewbNumber} expires ${relativeTime(stats.expiringSoon[0]!.ewb.validUntil)}. Extend it if the goods are still in transit.`}
+          action="Review bill"
+          onAction={() => router.push(`/ewb/${stats.expiringSoon[0]!.ewb.id}`)}
+        />
+      ) : null}
 
       <SectionTitle title="Recent activity" action={activity.length ? 'All invoices' : undefined} onPress={() => router.push('/(tabs)/invoices')} />
       {activity.length ? (
@@ -230,7 +191,6 @@ const styles = StyleSheet.create({
   heroButton: { flex: 1, minHeight: 48, borderRadius: 14, flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 7, paddingHorizontal: 10 },
   heroGhost: { borderWidth: 1, borderColor: 'rgba(255, 253, 246, 0.28)', backgroundColor: 'rgba(255, 253, 246, 0.06)' },
   stats: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
-  gstRow: { minHeight: 60, paddingHorizontal: 16, paddingVertical: 10, flexDirection: 'row', alignItems: 'center', gap: 10 },
   emptyCard: { flexDirection: 'row', alignItems: 'center', gap: 13 },
   emptyMark: { width: 44, height: 44, borderRadius: 15, alignItems: 'center', justifyContent: 'center' },
   ewbCard: { flexDirection: 'row', alignItems: 'center', gap: 11, padding: 14 },

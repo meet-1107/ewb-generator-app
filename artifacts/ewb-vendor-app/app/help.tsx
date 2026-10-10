@@ -15,7 +15,6 @@ const FAQ = [
   { q: 'What does “Ready to generate” mean?', a: 'The invoice passed our checks and is waiting for your review. Nothing is sent until you confirm on the review screen.' },
   { q: 'Is PDF import accurate?', a: 'It reads the text in your PDF and suggests values with a confidence tag. Always check each field — scanned images without selectable text cannot be read.' },
   { q: 'Why do I see “Sandbox”?', a: 'The app is connected to a test provider. Bills it returns are not valid for moving goods. Your administrator connects a licensed GSP for live use.' },
-  { q: 'Does the app file my GST returns?', a: 'No. It shows the filing status reported by your GST data provider. File returns on the GST portal or through your tax professional.' },
 ];
 
 const PRIVACY = [
@@ -62,7 +61,6 @@ export default function HelpScreen() {
               <TextBlock size={15} weight="semibold">Service status</TextBlock>
               <KeyValue label="Connection" value={store.online === false ? 'Offline' : store.online ? 'Online' : 'Checking…'} />
               <KeyValue label="E-way bill provider" value={store.config?.ewbProvider?.label ?? 'Not configured'} />
-              <KeyValue label="GST status provider" value={store.config?.gstProvider?.label ?? 'Not configured'} />
               <KeyValue label="Service" value={API_BASE.replace(/^https?:\/\//, '')} />
               <View style={{ flexDirection: 'row' }}><StatusPill label={store.config?.authMode === 'firebase' ? 'Secure sign-in' : 'Sandbox workspace'} tone={store.config?.authMode === 'firebase' ? 'green' : 'amber'} /></View>
             </Card>

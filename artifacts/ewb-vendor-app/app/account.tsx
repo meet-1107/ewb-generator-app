@@ -7,7 +7,7 @@ import { useAppStore } from '@/state/app-store';
 import { useAuth } from '@/state/auth';
 import { setThemePreference, useThemePreference, type ThemePreference } from '@/state/theme';
 import { gstinProblem, relativeTime, STATES, stateForGstin, templates, type Business } from '@/lib/domain';
-import { Button, Card, Divider, Field, Heading, ListRow, Notice, Page, Segmented, SectionTitle, SelectField, Sheet, StatusPill, TextBlock } from '@/components/AppUI';
+import { Button, Card, Divider, Field, Heading, IconButton, ListRow, Notice, Page, Segmented, SectionTitle, SelectField, Sheet, StatusPill, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
 import { SUPPORT_EMAIL } from '@/lib/api';
 
@@ -157,8 +157,11 @@ export default function AccountScreen() {
   };
 
   return (
-    <Page contentStyle={styles.page}>
-      <Heading eyebrow="Settings" title="Account" />
+    <Page contentStyle={styles.page} tab={false}>
+      <View style={styles.titleRow}>
+        <IconButton icon="arrow-left" accessibilityLabel="Go back" onPress={() => (router.canGoBack() ? router.back() : router.replace('/(tabs)'))} />
+        <View style={{ flex: 1 }}><Heading eyebrow="Settings" title="Account" /></View>
+      </View>
 
       <Card style={styles.profile}>
         <View style={[styles.avatar, { backgroundColor: colors.primary }]}><TextBlock size={18} weight="bold" color={colors.primaryForeground}>{initials || 'U'}</TextBlock></View>
@@ -279,6 +282,7 @@ export default function AccountScreen() {
 }
 
 const styles = StyleSheet.create({
+  titleRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   page: { gap: 14 },
   profile: { flexDirection: 'row', alignItems: 'center', gap: 13 },
   avatar: { width: 50, height: 50, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },

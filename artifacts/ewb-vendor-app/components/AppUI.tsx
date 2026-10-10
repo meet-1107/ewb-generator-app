@@ -47,12 +47,12 @@ export function Page({ children, contentStyle, onRefresh, refreshing = false, ta
 }
 
 /** Top bar for stacked/modal screens. */
-export function ScreenHeader({ title, subtitle, right, onBack }: { title: string; subtitle?: string; right?: ReactNode; onBack?: () => void }) {
+export function ScreenHeader({ title, subtitle, right, onBack, back = true }: { title: string; subtitle?: string; right?: ReactNode; onBack?: () => void; back?: boolean }) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   return (
     <View style={[styles.screenHeader, { paddingTop: (Platform.OS === 'web' ? 14 : insets.top) + 6, backgroundColor: colors.background, borderBottomColor: colors.border }]}>
-      <IconButton icon="arrow-left" accessibilityLabel="Go back" onPress={onBack ?? (() => (router.canGoBack() ? router.back() : router.replace('/(tabs)')))} />
+      {back ? <IconButton icon="arrow-left" accessibilityLabel="Go back" onPress={onBack ?? (() => (router.canGoBack() ? router.back() : router.replace('/(tabs)')))} /> : null}
       <View style={{ flex: 1, gap: 2 }}>
         <TextBlock size={17} weight="semibold" numberOfLines={1}>{title}</TextBlock>
         {subtitle ? <TextBlock size={11} color={colors.mutedForeground} numberOfLines={1}>{subtitle}</TextBlock> : null}
