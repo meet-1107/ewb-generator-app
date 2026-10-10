@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Card, Checkbox, Divider, KeyValue, Notice, ProgressSteps, ScreenHeader, StatusPill, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
 import { useColors } from '@/hooks/useColors';
+import { useCredits } from '@/hooks/useCredits';
 import { api, ApiError, type ProviderIssue } from '@/lib/api';
 import { formatDate, formatInr, invoiceTotals, toEwbInput, uid, type EwbRecord } from '@/lib/domain';
 import { ewbHtml, shareHtmlAsPdf } from '@/lib/documents';
@@ -21,6 +22,7 @@ export default function EwbReviewScreen() {
   const insets = useSafeAreaInsets();
   const store = useAppStore();
   const dialog = useDialog();
+  const credits = useCredits();
   const invoice = store.invoices.find((item) => item.id === invoiceId);
   const [phase, setPhase] = useState<Phase>('checking');
   const [issues, setIssues] = useState<ProviderIssue[]>([]);
@@ -74,6 +76,8 @@ export default function EwbReviewScreen() {
     if (phase === 'uncertain' && !confirmedRetry) {
       const ok = await dialog.confirm({ title: 'Try submitting again?', message: 'We will reuse the same request ID, so the provider returns the existing bill instead of creating a duplicate if the first attempt went through.', confirmLabel: 'Submit again', icon: 'refresh-cw' });
       if (!ok) return;
+    } else if (!(await credits.confirmSpend('generate', 'Generating this e-way bill'))) {
+      return;
     }
     inFlight.current = true;
     setPhase('submitting');
@@ -86,8 +90,9 @@ export default function EwbReviewScreen() {
       store.upsertEwb(result.ewb);
       setGenerated(result.ewb);
       setPhase('generated');
-      dialog.toast(`E-way bill ${result.ewb.ewbNumber} generated`, 'success');
-      void store.refreshSubscription();
+      dialog.toast(`E-way bill ${result.ewb.ewbNumber} generated${result.replay ? '' : ` · ${credits.costs.generate} credits used`}`, 'success');
+      store.setWalletBalance(result.balance);
+      void store.refreshWallet();
     } catch (error) {
       const apiError = error instanceof ApiError ? error : null;
       if (!apiError || apiError.status === 0 || apiError.status >= 500) {
@@ -103,10 +108,9 @@ export default function EwbReviewScreen() {
         setPhase('review');
         const open = await dialog.confirm({ title: 'Bill already exists', message: apiError.message, confirmLabel: 'Open bill', cancelLabel: 'Close', icon: 'copy' });
         if (open) router.replace(`/ewb/${existing.id}`);
-      } else if (apiError.code === 'plan_limit') {
+      } else if (apiError.code === 'insufficient_credits' || apiError.code === 'credentials_missing') {
         setPhase('review');
-        const upgrade = await dialog.confirm({ title: 'Plan limit reached', message: apiError.message, confirmLabel: 'View plans', cancelLabel: 'Not now', tone: 'warning', icon: 'trending-up' });
-        if (upgrade) router.push('/subscription');
+        await credits.handleError(apiError);
       } else if (apiError.code === 'pending') {
         setPhase('uncertain');
         setProblem({ title: 'Already submitting', body: apiError.message });
@@ -217,7 +221,7 @@ export default function EwbReviewScreen() {
         ) : (
           <>
             <Button
-              title={!provider ? 'EWB provider setup required' : phase === 'submitting' ? 'Submitting…' : phase === 'checking' ? 'Checking…' : 'Generate e-way bill'}
+              title={!provider ? 'EWB provider setup required' : phase === 'submitting' ? 'Submitting…' : phase === 'checking' ? 'Checking…' : `Generate e-way bill · ${credits.costs.generate} credits`}
               icon={!provider ? 'lock' : 'send'}
               onPress={() => void submit()}
               loading={busy}

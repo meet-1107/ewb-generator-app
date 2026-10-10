@@ -2,9 +2,10 @@ import React, { useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Button, Card, Divider, EmptyState, Field, IconButton, ListRow, MoneyField, ScreenHeader, SearchBar, SelectField, Sheet, TextBlock } from '@/components/AppUI';
+import { Button, Card, Divider, EmptyState, Field, IconButton, ListRow, MoneyField, ScreenHeader, SearchBar, SelectField, Sheet, StatusPill, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
 import { useColors } from '@/hooks/useColors';
+import { useGstinVerify } from '@/hooks/useGstinVerify';
 import { formatInr, GST_RATES, gstinProblem, STATES, stateForGstin, UNITS, VEHICLE_PATTERN, type Party, type Product, type Transporter } from '@/lib/domain';
 import { useAppStore } from '@/state/app-store';
 
@@ -16,7 +17,7 @@ const META: Record<Kind, { title: string; singular: string; icon: 'users' | 'pac
 };
 const stateOptions = STATES.map((state) => ({ value: state.name, label: state.name }));
 
-type Draft = Record<string, string | number>;
+type Draft = Record<string, unknown>;
 
 export default function SavedDetailsScreen() {
   const { kind: rawKind } = useLocalSearchParams<{ kind: string }>();
@@ -29,6 +30,23 @@ export default function SavedDetailsScreen() {
   const [query, setQuery] = useState('');
   const [draft, setDraft] = useState<Draft | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});
+  const { verify, verifying } = useGstinVerify();
+  const canVerify = store.config?.gstinVerification !== false;
+
+  const verifyParty = async () => {
+    if (!draft) return;
+    const details = await verify(String(draft.gstin ?? ''));
+    if (!details) return;
+    setDraft((current) => current ? {
+      ...current,
+      name: details.legalName || current.name,
+      address: details.address || current.address,
+      pincode: details.pincode || current.pincode,
+      state: details.state || current.state,
+      verified: { legalName: details.legalName, tradeName: details.tradeName, status: details.status, verifiedAt: details.verifiedAt },
+    } : current);
+    setErrors({});
+  };
 
   const items = (kind === 'parties' ? store.parties : kind === 'products' ? store.products : store.transporters) as (Party | Product | Transporter)[];
   const filtered = useMemo(() => {
@@ -113,8 +131,12 @@ export default function SavedDetailsScreen() {
             {kind === 'parties' ? <>
               <Field label="GSTIN" {...field('gstin')} onChangeText={(value) => {
                 const gstin = value.toUpperCase().replace(/\s/g, '');
-                setDraft((current) => current ? { ...current, gstin, ...(gstin.length === 15 && !gstinProblem(gstin) ? { state: stateForGstin(gstin)?.name ?? current.state } : {}) } : current);
-              }} autoCapitalize="characters" maxLength={15} placeholder="Leave empty if unregistered" />
+                setDraft((current) => current ? { ...current, gstin, ...(gstin !== current.gstin ? { verified: undefined } : {}), ...(gstin.length === 15 && !gstinProblem(gstin) ? { state: stateForGstin(gstin)?.name ?? current.state } : {}) } : current);
+              }} autoCapitalize="characters" maxLength={15} placeholder="Leave empty if unregistered"
+                right={canVerify && String(draft.gstin ?? '').length === 15 && !draft.verified ? <Button title="Verify" size="sm" variant="outline" onPress={() => void verifyParty()} loading={verifying} testID="party-verify" /> : undefined} />
+              {draft.verified ? (
+                <StatusPill label={`Verified · ${(draft.verified as { status: string }).status}`} tone={(draft.verified as { status: string }).status.toLowerCase() === 'active' ? 'green' : 'red'} icon="check" />
+              ) : null}
               <Field label="Address" {...field('address')} multiline />
               <View style={{ flexDirection: 'row', gap: 10 }}>
                 <View style={{ flex: 1.3 }}><SelectField label="State" value={String(draft.state ?? '')} placeholder="Choose" options={stateOptions} onSelect={(value) => setDraft({ ...draft, state: value })} /></View>

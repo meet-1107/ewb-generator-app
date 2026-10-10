@@ -84,7 +84,7 @@ export default function EwbRegisterScreen() {
 
   return (
     <Page contentStyle={styles.page} onRefresh={refresh} refreshing={refreshing}>
-      <Heading eyebrow="Movement" title="E-way bills" subtitle={store.ewbsFetchedAt ? `${ewbs.length} bills · updated ${relativeTime(store.ewbsFetchedAt)}` : 'Bills confirmed by your provider appear here.'} />
+      <Heading eyebrow="Movement" title="E-way bills" subtitle={store.ewbsFetchedAt ? `${ewbs.length} bills · updated ${relativeTime(store.ewbsFetchedAt)}` : 'Bills confirmed by your provider appear here.'} right={ewbs.length ? <Button title="Consolidate" icon="layers" size="sm" variant="outline" onPress={() => router.push('/ewb/consolidate')} testID="open-consolidate" /> : undefined} />
       {store.config?.ewbProvider?.sandbox ? <Notice title="Sandbox provider" body="These bills are test records and are not valid for moving goods." tone="warning" /> : null}
       {!store.config?.ewbProvider && store.online !== false && store.config ? <Notice title="EWB provider setup required" body="Connect an authorized provider to generate bills." tone="warning" /> : null}
       {store.online === false ? <Notice title="Offline — showing saved copy" body={store.ewbsFetchedAt ? `Last updated ${formatDate(store.ewbsFetchedAt, true)}. Status may have changed since.` : 'Nothing has been downloaded on this device yet.'} /> : null}

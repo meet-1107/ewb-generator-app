@@ -86,10 +86,13 @@ export type Business = {
   defaultTemplateId?: string;
   gstRegistrations?: GstRegistration[];
   defaultGstin?: string;
+  verified?: GstinVerification;
   updatedAt?: string;
 };
 
-export type Party = { id: string; name: string; gstin: string; address: string; state: string; pincode: string; phone: string; updatedAt: string };
+/** Summary of a GSTIN verification, kept with the saved business / buyer. */
+export type GstinVerification = { legalName: string; tradeName: string; status: string; verifiedAt: string };
+export type Party = { id: string; name: string; gstin: string; address: string; state: string; pincode: string; phone: string; updatedAt: string; verified?: GstinVerification };
 export type Product = { id: string; name: string; hsn: string; unit: string; taxRate: number; unitPricePaise: number; updatedAt: string };
 export type Transporter = { id: string; name: string; transporterId: string; vehicleNumber: string; updatedAt: string };
 
@@ -120,6 +123,7 @@ export type EwbRecord = {
   history: { at: string; action: string; detail: string }[];
   cancelledAt?: string;
   cancelReason?: string;
+  consolidatedInto?: string;
   extensionCount: number;
 };
 

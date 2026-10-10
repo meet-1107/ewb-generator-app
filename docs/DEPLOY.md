@@ -87,6 +87,46 @@ Notes:
 - Keep `--max-instances 1`. The server keeps workspaces in memory and in JSON files, so two instances would overwrite each other. Moving to Postgres (README "Before production") removes this limit.
 - To redeploy after code changes, run the same `gcloud run deploy` command again.
 
+## Part 2b: gstinapi.in, wallet and credits
+
+These server settings turn on GSTIN verification, real e-way bills through gstinapi.in, and the credit wallet.
+
+| Variable | Example | What it does |
+|---|---|---|
+| `GSTINAPI_KEY` | `gak_…` | Your key from gstinapi.in → API keys. It stays on the server and never goes into the app. |
+| `EWB_PROVIDER` | `gstinapi` | Sends e-way bills through gstinapi.in. Leave unset to keep the sandbox. |
+| `GSTINAPI_TEST_MODE` | `true` (default) | Adds `test_mode: true`, so fields are validated but nothing reaches NIC and nothing is charged. Set it to `false` only after a test bill works. |
+| `GSTINAPI_PATHS_JSON` | `{"vehicle":"/…","consolidate":"/…"}` | Paths for Part-B, consolidate and extend, under `/v1/ewaybill`. Without them, those actions answer "not connected yet" and charge nothing. |
+| `EWB_CREDENTIALS_SECRET` | 32+ random characters | Encrypts each GSTIN's e-way bill portal password. Keep it safe: if it changes, saved logins must be entered again. |
+| `WALLET_START_CREDITS` | `100` | Credits each new account starts with. |
+| `CREDIT_COSTS_JSON` | `{"generate":10,"part_b":5,"consolidate":5,"cancel":5,"extend":0}` | Credits per action. These numbers are the defaults. |
+| `WALLET_ADMIN_TOKEN` | 32+ random characters | Lets you add credits to a user's wallet. |
+
+Add them to the Cloud Run service. Run this as one line; `^@^` makes `@` the separator, so the JSON's commas are kept:
+
+```bash
+gcloud run services update ewb-api --region asia-south1 --update-env-vars "^@^EWB_PROVIDER=gstinapi@GSTINAPI_KEY=gak_xxx@GSTINAPI_TEST_MODE=true@EWB_CREDENTIALS_SECRET=$(openssl rand -hex 32)@WALLET_ADMIN_TOKEN=$(openssl rand -hex 24)@WALLET_START_CREDITS=100"
+```
+
+Write down the `WALLET_ADMIN_TOKEN` value. Later you can read it in Cloud Run → ewb-api → Edit → Variables.
+
+How it works:
+
+- **GSTIN verify:** tapping **Verify** on a GSTIN (business setup, buyers, invoice buyer) calls gstinapi.in **once per GSTIN, ever**. The result is saved on the server under `gstins/` in the data bucket, and later checks by any user are served from there. Typos fail the check-digit test before any call is made.
+- **Portal login:** each user adds their e-way bill portal **API** login once per GSTIN, under Account → E-way bill portal login. The password is stored encrypted.
+- **Credits:**
+  - Credits are held before each action and charged only if it succeeds. If the portal rejects it, the credits are refunded automatically.
+  - Every action asks the user to confirm the cost first.
+  - Account → Wallet shows the balance, the number of bills generated, what each action costs, and the full history.
+
+Adding credits to a user. The user's Wallet ID is shown on their Wallet screen; it is their Firebase UID.
+
+```bash
+curl -X POST https://ewb-api-xxxxxxxx.asia-south1.run.app/api/admin/wallet/topup \
+  -H "x-admin-token: YOUR_WALLET_ADMIN_TOKEN" -H "content-type: application/json" \
+  -d '{"workspaceId":"USER_WALLET_ID","credits":100,"note":"UPI ref 1234"}'
+```
+
 ## Part 3 (optional): Web version on Firebase Hosting
 
 On your PC, from the repo root:

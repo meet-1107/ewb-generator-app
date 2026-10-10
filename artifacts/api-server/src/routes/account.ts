@@ -6,6 +6,8 @@ import { billingMode, planById, plans, plansAreSamples } from "../lib/plans";
 import { ewbProvider } from "../providers/ewb-provider";
 import { gstProvider } from "../providers/gst-provider";
 import { authMode } from "../lib/auth";
+import { gstinApiConfigured } from "../lib/gstinapi";
+import { creditCosts } from "../lib/wallet";
 
 const router: IRouter = Router();
 
@@ -16,6 +18,9 @@ router.get("/config", (_req, res) => {
     gstProvider: gstProvider ? { id: gstProvider.id, label: gstProvider.label, sandbox: gstProvider.sandbox } : null,
     billingMode,
     pdfParser: "heuristic-1",
+    gstinVerification: gstinApiConfigured,
+    ewbCredentialsRequired: Boolean(ewbProvider?.needsCredentials),
+    creditCosts,
   });
 });
 

@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Card, Divider, EmptyState, IconButton, KeyValue, Notice, ScreenHeader, StatusPill, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
 import { useColors } from '@/hooks/useColors';
+import { useCredits } from '@/hooks/useCredits';
 import { api, ApiError } from '@/lib/api';
 import {
   CANCEL_REASONS,
@@ -30,6 +31,7 @@ export default function EwbDetailScreen() {
   const insets = useSafeAreaInsets();
   const store = useAppStore();
   const dialog = useDialog();
+  const credits = useCredits();
   const cached = store.ewbs.find((item) => item.id === id) ?? null;
   const [fetched, setEwb] = useState<EwbRecord | null>(null);
   // Prefer the freshest copy: server response, else the device cache (which hydrates after first render).
@@ -84,7 +86,7 @@ export default function EwbDetailScreen() {
   const progress = Math.min(1, Math.max(0, (now - generatedAt) / totalSpan));
   const canCancel = status !== 'cancelled' && now - generatedAt <= 24 * HOUR;
   const canExtend = status !== 'cancelled' && Math.abs(now - validUntil) <= 8 * HOUR;
-  const canUpdateVehicle = status === 'active' || status === 'part_b_pending';
+  const canUpdateVehicle = (status === 'active' || status === 'part_b_pending') && !ewb.consolidatedInto;
   const invoice = store.invoices.find((item) => item.id === ewb.invoiceId);
 
   const runAction = async (label: string, body: Parameters<typeof api.ewbAction>[1], success: string) => {
@@ -93,8 +95,11 @@ export default function EwbDetailScreen() {
       const result = await api.ewbAction(ewb.id, body);
       setEwb(result.ewb);
       store.upsertEwb(result.ewb);
+      store.setWalletBalance(result.balance);
+      void store.refreshWallet();
       dialog.toast(success, 'success');
     } catch (error) {
+      if (await credits.handleError(error)) return;
       await dialog.alert({ title: `Could not ${label.toLowerCase()}`, message: error instanceof ApiError ? error.message : 'Check your connection and try again.', tone: 'danger' });
     } finally {
       setBusy(null);
@@ -104,7 +109,7 @@ export default function EwbDetailScreen() {
   const updateVehicle = async () => {
     const result = await dialog.prompt({
       title: 'Update vehicle (Part-B)',
-      message: 'Enter the new vehicle carrying these goods.',
+      message: `Enter the new vehicle carrying these goods.${credits.costs.part_b ? ` Uses ${credits.costs.part_b} credits.` : ''}`,
       choices: VEHICLE_REASONS,
       inputLabel: 'New vehicle number',
       placeholder: 'MH12AB1234',
@@ -113,7 +118,19 @@ export default function EwbDetailScreen() {
       confirmLabel: 'Update vehicle',
       validate: ({ text }) => (VEHICLE_PATTERN.test(text.replace(/[\s-]/g, '').toUpperCase()) ? null : 'Format looks wrong (e.g. MH12AB1234).'),
     });
-    if (result) await runAction('Update vehicle', { action: 'update_vehicle', reason: result.choice, vehicleNumber: result.text }, 'Vehicle updated');
+    if (!result) return;
+    const where = await dialog.prompt({
+      title: 'Where is the vehicle now?',
+      message: 'The e-way bill portal records the place the goods move from with the new vehicle.',
+      inputLabel: 'Current place (city or town)',
+      placeholder: 'e.g. Satara',
+      autoCapitalize: 'words',
+      requireInput: true,
+      confirmLabel: 'Continue',
+    });
+    if (!where) return;
+    if (!(await credits.confirmSpend('part_b', 'Updating Part-B'))) return;
+    await runAction('Update vehicle', { action: 'update_vehicle', reason: result.choice, vehicleNumber: result.text, fromPlace: where.text.trim(), fromState: ewb.fromState }, 'Vehicle updated');
   };
 
   const extend = async () => {
@@ -128,19 +145,26 @@ export default function EwbDetailScreen() {
       confirmLabel: 'Extend',
       validate: ({ text }) => (Number.isInteger(Number(text)) && Number(text) > 0 && Number(text) <= 4000 ? null : 'Enter 1–4000 km.'),
     });
-    if (result) await runAction('Extend validity', { action: 'extend', reason: result.choice, remainingKm: Number(result.text) }, 'Validity extended');
+    if (!result) return;
+    if (!(await credits.confirmSpend('extend', 'Extending validity'))) return;
+    await runAction('Extend validity', { action: 'extend', reason: result.choice, remainingKm: Number(result.text) }, 'Validity extended');
   };
 
   const cancel = async () => {
     const result = await dialog.prompt({
       title: 'Cancel this e-way bill?',
-      message: `Cancelling ${ewb.ewbNumber} is permanent and is reported to the provider. Goods cannot move on a cancelled bill. Choose a reason:`,
+      message: `Cancelling ${ewb.ewbNumber} is permanent and is reported to the provider. Goods cannot move on a cancelled bill.${credits.costs.cancel ? ` Uses ${credits.costs.cancel} credits.` : ''} Choose a reason:`,
       choices: CANCEL_REASONS,
       confirmLabel: 'Cancel bill',
       tone: 'danger',
     });
     if (!result) return;
-    const sure = await dialog.confirm({ title: 'Are you sure?', message: 'This cannot be undone. The invoice will become available to generate a new bill.', confirmLabel: 'Yes, cancel bill', cancelLabel: 'Keep bill', tone: 'danger', icon: 'x-octagon' });
+    const cost = credits.costs.cancel;
+    if (cost && credits.balance !== null && credits.balance < cost) {
+      await credits.confirmSpend('cancel', 'Cancelling an e-way bill');
+      return;
+    }
+    const sure = await dialog.confirm({ title: 'Are you sure?', message: `This cannot be undone. The invoice will become available to generate a new bill.${cost ? ` ${cost} credits will be used${credits.balance !== null ? ` (balance ${credits.balance} → ${credits.balance - cost})` : ''}.` : ''}`, confirmLabel: cost ? `Yes, cancel · ${cost} credits` : 'Yes, cancel bill', cancelLabel: 'Keep bill', tone: 'danger', icon: 'x-octagon' });
     if (sure) await runAction('Cancel', { action: 'cancel', reason: result.choice }, 'E-way bill cancelled');
   };
 
@@ -249,11 +273,11 @@ export default function EwbDetailScreen() {
         {status !== 'cancelled' ? (
           <Card>
             <SectionHead icon="sliders" title="Bill actions" />
-            <ActionRow icon="truck" title="Update vehicle" detail={canUpdateVehicle ? 'Change the vehicle carrying the goods' : 'Not available on an expired bill'} disabled={!canUpdateVehicle} busy={busy === 'Update vehicle'} onPress={() => void updateVehicle()} />
+            <ActionRow icon="truck" title="Update vehicle" detail={ewb.consolidatedInto ? `Moves under consolidated bill ${ewb.consolidatedInto}` : canUpdateVehicle ? `Part-B: change the vehicle carrying the goods${credits.costs.part_b ? ` · ${credits.costs.part_b} credits` : ''}` : 'Not available on an expired bill'} disabled={!canUpdateVehicle} busy={busy === 'Update vehicle'} onPress={() => void updateVehicle()} />
             <Divider />
             <ActionRow icon="clock" title="Extend validity" detail={canExtend ? 'Window open now' : `Available 8 h before expiry (${formatDate(new Date(validUntil - 8 * HOUR).toISOString(), true)})`} disabled={!canExtend} busy={busy === 'Extend validity'} onPress={() => void extend()} />
             <Divider />
-            <ActionRow icon="x-octagon" title="Cancel bill" detail={canCancel ? `Allowed until ${formatDate(new Date(generatedAt + 24 * HOUR).toISOString(), true)}` : 'Cancellation window (24 h) has closed'} disabled={!canCancel} busy={busy === 'Cancel'} danger onPress={() => void cancel()} />
+            <ActionRow icon="x-octagon" title="Cancel bill" detail={canCancel ? `Allowed until ${formatDate(new Date(generatedAt + 24 * HOUR).toISOString(), true)}${credits.costs.cancel ? ` · ${credits.costs.cancel} credits` : ''}` : 'Cancellation window (24 h) has closed'} disabled={!canCancel} busy={busy === 'Cancel'} danger onPress={() => void cancel()} />
           </Card>
         ) : null}
 

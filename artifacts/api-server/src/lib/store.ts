@@ -37,6 +37,8 @@ export type EwbRecord = {
   history: { at: string; action: string; detail: string }[];
   cancelledAt?: string;
   cancelReason?: string;
+  /** Consolidated e-way bill this bill was moved under, if any. */
+  consolidatedInto?: string;
   extensionCount: number;
   createdAt: string;
   updatedAt: string;
@@ -76,6 +78,41 @@ export type Subscription = {
   billingHistory: { at: string; planId: string; amountPaise: number; reference: string }[];
 };
 
+/** Consolidated e-way bill (one vehicle carrying several bills). */
+export type CewbRecord = {
+  id: string;
+  cewbNumber: string;
+  provider: string;
+  ewbIds: string[];
+  ewbNumbers: string[];
+  vehicleNumber: string;
+  fromPlace: string;
+  fromState: string;
+  transMode: string;
+  transDocNo?: string;
+  transDocDate?: string;
+  generatedAt: string;
+  createdAt: string;
+};
+
+export type WalletAction = "generate" | "part_b" | "consolidate" | "cancel" | "extend";
+export type WalletEntry = {
+  id: string;
+  at: string;
+  kind: WalletAction | "grant" | "topup";
+  /** Signed: negative for charges, positive for grants/top-ups. */
+  credits: number;
+  /** "held" while the provider call runs; "charged" on success; "refunded" on failure. */
+  status: "held" | "charged" | "refunded" | "credited";
+  ewbNumber?: string;
+  targetId?: string;
+  note?: string;
+};
+export type Wallet = { balance: number; ledger: WalletEntry[] };
+
+/** E-way bill portal API login for one GSTIN. The password is encrypted at rest. */
+export type EwbCredential = { gstin: string; username: string; passwordEnc: string; updatedAt: string };
+
 export type SyncRecord = { id: string; updatedAt: string; deleted?: boolean; data?: unknown };
 
 export type Workspace = {
@@ -86,6 +123,9 @@ export type Workspace = {
   gst: Record<string, GstSnapshot>;
   gstLastSyncAt: Record<string, string>;
   subscription: Subscription;
+  wallet: Wallet;
+  cewbs: Record<string, CewbRecord>;
+  ewbCredentials: Record<string, EwbCredential>;
   audit: { at: string; actor: string; action: string; targetId: string; outcome: string }[];
   sync: Record<string, Record<string, SyncRecord>>;
 };
@@ -93,6 +133,12 @@ export type Workspace = {
 const dataDir = path.resolve(process.env["DATA_DIR"] ?? path.join(process.cwd(), ".data"));
 const cache = new Map<string, Workspace>();
 const queues = new Map<string, Promise<unknown>>();
+
+/** Credits a new workspace starts with (WALLET_START_CREDITS, default 100). */
+function startCredits() {
+  const value = Number(process.env["WALLET_START_CREDITS"] ?? 100);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
 
 export function currentPeriod(date = new Date()) {
   return date.toISOString().slice(0, 7);
@@ -116,6 +162,9 @@ function freshWorkspace(id: string): Workspace {
       updatedAt: now.toISOString(),
       billingHistory: [],
     },
+    wallet: { balance: startCredits(), ledger: startCredits() ? [{ id: `grant-${id}`, at: now.toISOString(), kind: "grant", credits: startCredits(), status: "credited", note: "Welcome credits" }] : [] },
+    cewbs: {},
+    ewbCredentials: {},
     audit: [],
     sync: {},
   };
@@ -158,6 +207,11 @@ export function withWorkspace<T>(id: string, fn: (workspace: Workspace) => T | P
   });
   queues.set(id, next);
   return next;
+}
+
+/** Shared (not per-workspace) JSON documents, e.g. the verified-GSTIN registry. */
+export function sharedFile(...parts: string[]) {
+  return path.join(dataDir, ...parts);
 }
 
 export function readWorkspace(id: string) {

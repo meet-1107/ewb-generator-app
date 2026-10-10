@@ -6,7 +6,7 @@ import { useColors } from '@/hooks/useColors';
 import { useAppStore } from '@/state/app-store';
 import { useAuth } from '@/state/auth';
 import { setThemePreference, useThemePreference, type ThemePreference } from '@/state/theme';
-import { formatDate, gstinProblem, relativeTime, STATES, stateForGstin, templates, type Business } from '@/lib/domain';
+import { gstinProblem, relativeTime, STATES, stateForGstin, templates, type Business } from '@/lib/domain';
 import { Button, Card, Divider, Field, Heading, ListRow, Notice, Page, Segmented, SectionTitle, SelectField, Sheet, StatusPill, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
 import { SUPPORT_EMAIL } from '@/lib/api';
@@ -24,7 +24,7 @@ export default function AccountScreen() {
   const [formError, setFormError] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    void store.refreshSubscription();
+    void store.refreshWallet();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -32,8 +32,6 @@ export default function AccountScreen() {
   const registrations = business?.gstRegistrations ?? [];
   const name = auth.user?.displayName || (auth.previewMode ? 'Preview workspace' : auth.user?.email) || 'Your account';
   const initials = name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase();
-  const sub = store.subscription;
-  const usagePct = sub?.plan.ewbLimit ? Math.min(1, sub.subscription.usageCount / sub.plan.ewbLimit) : 0;
 
   const saveProfile = async () => {
     if (!form || !business) return;
@@ -188,7 +186,7 @@ export default function AccountScreen() {
             <ListRow
               icon="shield"
               title={registration.gstin}
-              detail={`${registration.state || 'State not set'} · format checked`}
+              detail={`${registration.state || 'State not set'} · ${business?.verified && registration.gstin === business.gstin ? `verified · ${business.verified.status}` : 'format checked'}`}
               onPress={() => void registrationActions(registration.gstin)}
               right={<View style={{ gap: 4, alignItems: 'flex-end' }}>
                 {registration.isDefault ? <StatusPill label="Default" tone="green" /> : null}
@@ -210,21 +208,20 @@ export default function AccountScreen() {
         <ListRow icon="layout" title="Default invoice layout" detail={templates.find((item) => item.id === (business?.defaultTemplateId ?? 'classic'))?.name} onPress={() => void chooseLayout()} />
       </Card>
 
-      <SectionTitle title="Plan & usage" action="Manage" onPress={() => router.push('/subscription')} />
-      <Card onPress={() => router.push('/subscription')} accessibilityLabel="Open subscription">
+      <SectionTitle title="Wallet" action="Open" onPress={() => router.push('/wallet')} />
+      <Card onPress={() => router.push('/wallet')} accessibilityLabel="Open wallet">
         <View style={styles.planTop}>
           <View style={{ flex: 1, gap: 2 }}>
-            <TextBlock size={16} weight="bold">{sub?.plan.name ?? 'Plan'}</TextBlock>
-            <TextBlock size={12} color={colors.mutedForeground}>{sub ? `${sub.subscription.entitlementState === 'trial' ? 'Trial ends' : 'Renews'} ${formatDate(sub.subscription.renewalAt)}` : store.online === false ? 'Offline' : 'Loading…'}</TextBlock>
+            <TextBlock size={16} weight="bold">{store.wallet ? `${store.wallet.balance} credits` : 'Credits'}</TextBlock>
+            <TextBlock size={12} color={colors.mutedForeground}>
+              {store.wallet ? `${store.wallet.counts.generate} e-way bill${store.wallet.counts.generate === 1 ? '' : 's'} generated · ${store.wallet.costs.generate} credits each` : store.online === false ? 'Offline' : 'Loading…'}
+            </TextBlock>
           </View>
-          {sub ? <StatusPill label={sub.subscription.entitlementState === 'trial' ? 'Trial' : sub.subscription.entitlementState === 'active' ? 'Active' : sub.subscription.entitlementState} tone={sub.subscription.entitlementState === 'expired' ? 'red' : 'green'} /> : null}
+          {store.wallet ? <StatusPill label={store.wallet.balance < store.wallet.costs.generate ? 'Low' : 'OK'} tone={store.wallet.balance < store.wallet.costs.generate ? 'amber' : 'green'} icon="credit-card" /> : null}
         </View>
-        {sub ? (
-          <View style={{ gap: 6 }}>
-            <View style={[styles.meter, { backgroundColor: colors.muted }]}><View style={[styles.meterFill, { width: `${usagePct * 100}%`, backgroundColor: usagePct > 0.85 ? colors.destructive : colors.primary }]} /></View>
-            <TextBlock size={12} color={colors.mutedForeground}>{sub.subscription.usageCount} of {sub.plan.ewbLimit ?? 'unlimited'} e-way bills used this month</TextBlock>
-          </View>
-        ) : null}
+      </Card>
+      <Card style={{ padding: 0, gap: 0 }}>
+        <ListRow icon="key" title="E-way bill portal login" detail="API username & password for each GSTIN" onPress={() => router.push('/ewb-login')} testID="ewb-login" />
       </Card>
 
       <SectionTitle title="Preferences" />
@@ -286,6 +283,4 @@ const styles = StyleSheet.create({
   profile: { flexDirection: 'row', alignItems: 'center', gap: 13 },
   avatar: { width: 50, height: 50, borderRadius: 17, alignItems: 'center', justifyContent: 'center' },
   planTop: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  meter: { height: 8, borderRadius: 4, overflow: 'hidden' },
-  meterFill: { height: 8, borderRadius: 4 },
 });

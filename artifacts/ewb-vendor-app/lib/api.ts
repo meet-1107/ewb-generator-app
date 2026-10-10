@@ -78,7 +78,59 @@ async function request<T>(path: string, init: { method?: string; body?: unknown;
 }
 
 export type ProviderInfo = { id: string; label: string; sandbox: boolean } | null;
-export type ServiceConfig = { authMode: string; ewbProvider: ProviderInfo; gstProvider: ProviderInfo; billingMode: string; pdfParser: string };
+export type WalletAction = 'generate' | 'part_b' | 'consolidate' | 'cancel' | 'extend';
+export type CreditCosts = Record<WalletAction, number>;
+export type ServiceConfig = {
+  authMode: string;
+  ewbProvider: ProviderInfo;
+  gstProvider: ProviderInfo;
+  billingMode: string;
+  pdfParser: string;
+  gstinVerification?: boolean;
+  ewbCredentialsRequired?: boolean;
+  creditCosts?: CreditCosts;
+};
+/** Registered details for a GSTIN, from the server's verified-GSTIN registry. */
+export type VerifiedGstin = {
+  gstin: string;
+  legalName: string;
+  tradeName: string;
+  status: string;
+  taxpayerType: string;
+  registrationDate: string | null;
+  cancellationDate: string | null;
+  stateCode: string;
+  state: string;
+  address: string;
+  pincode: string;
+  blockStatus: string | null;
+  verifiedAt: string;
+};
+export type WalletEntry = {
+  id: string;
+  at: string;
+  kind: WalletAction | 'grant' | 'topup';
+  credits: number;
+  status: 'charged' | 'refunded' | 'credited';
+  label: string;
+  ewbNumber?: string;
+  note?: string;
+};
+export type WalletSummary = { balance: number; costs: CreditCosts; counts: Record<WalletAction, number>; creditsUsed: number; ledger: WalletEntry[] };
+export type CewbRecord = {
+  id: string;
+  cewbNumber: string;
+  provider: string;
+  ewbIds: string[];
+  ewbNumbers: string[];
+  vehicleNumber: string;
+  fromPlace: string;
+  fromState: string;
+  transMode: string;
+  generatedAt: string;
+};
+export type EwbCredential = { gstin: string; username: string; updatedAt: string };
+type Movement = { fromPlace?: string; fromState?: string };
 export type ProviderIssue = { field: string; section: 'seller' | 'buyer' | 'invoice' | 'items' | 'transport'; message: string };
 export type Plan = { id: string; name: string; pricePaise: number; cadence: string; ewbLimit: number | null; gstins: number; users: number; features: string[] };
 export type Subscription = {
@@ -104,11 +156,21 @@ export const api = {
   health: () => request<{ status: string }>('/healthz', { timeoutMs: 6000 }),
   config: () => request<ServiceConfig>('/config', { timeoutMs: 8000 }),
   validateEwb: (input: unknown) => request<{ issues: ProviderIssue[]; warnings: string[]; provider: ProviderInfo }>('/ewb/validate', { body: { input } }),
-  generateEwb: (idempotencyKey: string, input: unknown) => request<{ ewb: EwbRecord; replay?: boolean }>('/ewb/generate', { body: { idempotencyKey, input }, timeoutMs: 45_000 }),
+  generateEwb: (idempotencyKey: string, input: unknown) => request<{ ewb: EwbRecord; replay?: boolean; balance?: number }>('/ewb/generate', { body: { idempotencyKey, input }, timeoutMs: 45_000 }),
   listEwbs: () => request<{ ewbs: EwbRecord[]; provider: ProviderInfo }>('/ewb'),
   getEwb: (id: string) => request<{ ewb: EwbRecord }>(`/ewb/${encodeURIComponent(id)}`),
-  ewbAction: (id: string, body: { action: 'cancel'; reason: string } | { action: 'extend'; reason: string; remainingKm: number } | { action: 'update_vehicle'; reason: string; vehicleNumber: string }) =>
-    request<{ ewb: EwbRecord }>(`/ewb/${encodeURIComponent(id)}/actions`, { body, timeoutMs: 30_000 }),
+  ewbAction: (id: string, body: { action: 'cancel'; reason: string } | ({ action: 'extend'; reason: string; remainingKm: number } & Movement) | ({ action: 'update_vehicle'; reason: string; vehicleNumber: string } & Movement)) =>
+    request<{ ewb: EwbRecord; balance?: number }>(`/ewb/${encodeURIComponent(id)}/actions`, { body, timeoutMs: 45_000 }),
+  listConsolidated: () => request<{ cewbs: CewbRecord[] }>('/ewb-consolidated'),
+  consolidate: (body: { ewbIds: string[]; vehicleNumber: string; fromPlace: string; fromState: string; transMode?: string }) =>
+    request<{ cewb: CewbRecord; balance: number }>('/ewb-consolidated', { body, timeoutMs: 45_000 }),
+  ewbCredentials: () => request<{ credentials: EwbCredential[]; required: boolean; canStore: boolean }>('/ewb-credentials'),
+  saveEwbCredential: (gstin: string, username: string, password: string) =>
+    request<{ credential: EwbCredential }>('/ewb-credentials', { method: 'PUT', body: { gstin, username, password } }),
+  deleteEwbCredential: (gstin: string) => request<{ ok: true }>(`/ewb-credentials/${encodeURIComponent(gstin)}`, { method: 'DELETE' }),
+  verifyGstin: (gstin: string) => request<{ gstin: VerifiedGstin; cached: boolean }>('/gstin/verify', { body: { gstin }, timeoutMs: 30_000 }),
+  wallet: () => request<WalletSummary>('/wallet'),
+  addTestCredits: () => request<WalletSummary>('/wallet/test-credits', { body: {} }),
   gstStatus: (gstin: string, period: string) => request<{ snapshots: GstSnapshot[]; provider: ProviderInfo }>(`/gst/status?gstin=${encodeURIComponent(gstin)}&period=${encodeURIComponent(period)}`),
   refreshGst: (gstin: string, period: string) => request<{ snapshots: GstSnapshot[]; provider: ProviderInfo }>('/gst/refresh', { body: { gstin, period } }),
   parsePdf: (fileName: string, contentBase64: string) => request<{ fields: ExtractedInvoice; parserVersion: string; retention: string }>('/pdf/parse', { body: { fileName, contentBase64 }, timeoutMs: 60_000 }),

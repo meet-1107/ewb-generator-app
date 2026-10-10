@@ -1,5 +1,7 @@
 import { randomInt } from "node:crypto";
-import { computeValidity, validateEwb, type EwbInput, type FieldIssue } from "../lib/validation";
+import { gstinApiConfigured, type EwbCredentials } from "../lib/gstinapi";
+import { computeValidity, validateEwb, VEHICLE_PATTERN, type EwbInput, type FieldIssue } from "../lib/validation";
+import { GstinApiEwbProvider } from "./gstinapi-ewb-provider";
 
 /**
  * Provider adapter boundary. Screens and routes only see these normalized
@@ -12,16 +14,26 @@ export type GenerateResult =
   | { ok: false; code: string; message: string; issues: FieldIssue[] };
 
 export type ActionResult = { ok: true; validUntil?: Date } | { ok: false; code: string; message: string };
+export type ConsolidateResult = { ok: true; cewbNumber: string; generatedAt: Date } | { ok: false; code: string; message: string };
+
+/** Taxpayer's e-way bill portal API login for the seller GSTIN; null for providers that don't need it. */
+export type ProviderContext = { credentials: EwbCredentials | null };
+
+/** Where the goods are when Part-B / consolidation happens. */
+export type Movement = { fromPlace: string; fromState: string; transMode: string; transDocNo?: string; transDocDate?: string };
 
 export interface EwbProvider {
   readonly id: string;
   readonly label: string;
   readonly sandbox: boolean;
+  /** True when calls need the seller GSTIN's e-way bill portal credentials. */
+  readonly needsCredentials: boolean;
   validate(input: EwbInput): { issues: FieldIssue[]; warnings: string[] };
-  generate(input: EwbInput): Promise<GenerateResult>;
-  extend(args: { validUntil: Date; distanceKm: number; remainingKm: number; reason: string }): Promise<ActionResult>;
-  cancel(args: { generatedAt: Date; reason: string }): Promise<ActionResult>;
-  updateVehicle(args: { vehicleNumber: string; reason: string }): Promise<ActionResult>;
+  generate(input: EwbInput, ctx: ProviderContext): Promise<GenerateResult>;
+  extend(args: { ewbNumber: string; validUntil: Date; distanceKm: number; remainingKm: number; reason: string; vehicleNumber?: string } & Movement, ctx: ProviderContext): Promise<ActionResult>;
+  cancel(args: { ewbNumber: string; generatedAt: Date; reason: string }, ctx: ProviderContext): Promise<ActionResult>;
+  updateVehicle(args: { ewbNumber: string; vehicleNumber: string; reason: string } & Movement, ctx: ProviderContext): Promise<ActionResult>;
+  consolidate(args: { ewbNumbers: string[]; vehicleNumber: string } & Movement, ctx: ProviderContext): Promise<ConsolidateResult>;
 }
 
 const latency = () => new Promise((resolve) => setTimeout(resolve, 350 + randomInt(400)));
@@ -30,6 +42,7 @@ class SandboxEwbProvider implements EwbProvider {
   readonly id = "sandbox";
   readonly label = "Sandbox provider (test only — not sent to NIC)";
   readonly sandbox = true;
+  readonly needsCredentials = false;
 
   validate(input: EwbInput) {
     return validateEwb(input);
@@ -77,16 +90,26 @@ class SandboxEwbProvider implements EwbProvider {
 
   async updateVehicle({ vehicleNumber, reason }: { vehicleNumber: string; reason: string }): Promise<ActionResult> {
     await latency();
-    if (!/^([A-Z]{2}\d{1,2}[A-Z]{0,3}\d{4}|\d{2}BH\d{4}[A-Z]{1,2})$/.test(vehicleNumber)) {
+    if (!VEHICLE_PATTERN.test(vehicleNumber)) {
       return { ok: false, code: "VEHICLE_FORMAT", message: "Vehicle number format looks wrong (example: MH12AB1234)." };
     }
     if (!reason.trim()) return { ok: false, code: "REASON_REQUIRED", message: "Choose a reason for the vehicle change." };
     return { ok: true };
   }
+
+  async consolidate({ ewbNumbers, vehicleNumber, fromPlace }: { ewbNumbers: string[]; vehicleNumber: string } & Movement): Promise<ConsolidateResult> {
+    await latency();
+    if (!ewbNumbers.length) return { ok: false, code: "NO_BILLS", message: "Choose at least one e-way bill." };
+    if (!VEHICLE_PATTERN.test(vehicleNumber)) return { ok: false, code: "VEHICLE_FORMAT", message: "Vehicle number format looks wrong (example: MH12AB1234)." };
+    if (!fromPlace.trim()) return { ok: false, code: "PLACE_REQUIRED", message: "Enter the place the vehicle starts from." };
+    return { ok: true, cewbNumber: `9${String(randomInt(10 ** 9, 10 ** 10 - 1))}`, generatedAt: new Date() };
+  }
 }
 
-const providers: Record<string, () => EwbProvider> = {
+const providers: Record<string, () => EwbProvider | null> = {
   sandbox: () => new SandboxEwbProvider(),
+  // Without GSTINAPI_KEY the routes answer "provider not configured" instead of failing at startup.
+  gstinapi: () => (gstinApiConfigured ? new GstinApiEwbProvider() : null),
 };
 
 const selected = process.env["EWB_PROVIDER"] ?? "sandbox";

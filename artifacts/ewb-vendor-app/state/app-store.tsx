@@ -21,7 +21,7 @@ import {
   type Product,
   type Transporter,
 } from '@/lib/domain';
-import { api, ApiError, setApiIdentity, type Plan, type ServiceConfig, type Subscription, type SyncEnvelope } from '@/lib/api';
+import { api, ApiError, setApiIdentity, type Plan, type ServiceConfig, type Subscription, type SyncEnvelope, type WalletSummary } from '@/lib/api';
 import { useAuth } from '@/state/auth';
 
 /**
@@ -71,6 +71,11 @@ type StoreValue = Omit<Persisted, 'tombstones'> & {
   setGstCache: (key: string, snapshots: GstSnapshot[]) => void;
   refreshServices: () => Promise<void>;
   refreshSubscription: () => Promise<void>;
+  /** Credit wallet (balance, costs, history); null until loaded. */
+  wallet: WalletSummary | null;
+  refreshWallet: () => Promise<void>;
+  /** Applies a balance returned by an action without refetching the whole wallet. */
+  setWalletBalance: (balance: number | undefined) => void;
   syncNow: () => Promise<void>;
   clearLocalData: () => Promise<void>;
   exportData: () => string;
@@ -137,6 +142,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const [syncState, setSyncState] = useState<SyncState>('idle');
   const [config, setConfig] = useState<ServiceConfig | null>(null);
   const [subscription, setSubscription] = useState<StoreValue['subscription']>(null);
+  const [wallet, setWallet] = useState<WalletSummary | null>(null);
   const dataRef = useRef(data);
   dataRef.current = data;
   const syncing = useRef(false);
@@ -305,12 +311,27 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     }
   }, [handleError, workspaceId]);
 
+  const refreshWallet = useCallback(async () => {
+    if (!workspaceId) return;
+    try {
+      setWallet(await api.wallet());
+      setOnline(true);
+    } catch (error) {
+      handleError(error);
+    }
+  }, [handleError, workspaceId]);
+
+  const setWalletBalance = useCallback((balance: number | undefined) => {
+    if (typeof balance === 'number') setWallet((current) => (current ? { ...current, balance } : current));
+  }, []);
+
   // Initial online work once hydrated with an identity.
   const ready = Boolean(scope && hydratedScope === scope && workspaceId);
   useEffect(() => {
     if (!ready) return;
     void refreshServices();
     void refreshSubscription();
+    void refreshWallet();
     void refreshEwbs().catch(() => undefined);
     void syncNow();
     const subscriptionHandle = AppState.addEventListener('change', (state) => {
@@ -320,7 +341,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       }
     });
     return () => subscriptionHandle.remove();
-  }, [ready, refreshEwbs, refreshServices, refreshSubscription, syncNow]);
+  }, [ready, refreshEwbs, refreshServices, refreshSubscription, refreshWallet, syncNow]);
 
   // Debounced background sync after local edits.
   const syncKey = `${data.invoices.length}:${data.invoices[0]?.updatedAt}:${data.parties.length}:${data.products.length}:${data.transporters.length}:${data.business?.updatedAt}:${Object.keys(data.tombstones).length}`;
@@ -445,10 +466,13 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     setGstCache,
     refreshServices,
     refreshSubscription,
+    wallet,
+    refreshWallet,
+    setWalletBalance,
     syncNow,
     clearLocalData,
     exportData,
-  }), [data, scope, hydratedScope, previewMode, storageError, workspaceId, online, syncState, config, subscription, saveBusiness, setActiveGstin, saveInvoice, removeInvoice, saveParty, removeParty, saveProduct, removeProduct, saveTransporter, removeTransporter, upsertEwb, refreshEwbs, setGstCache, refreshServices, refreshSubscription, syncNow, clearLocalData, exportData]);
+  }), [data, scope, hydratedScope, previewMode, storageError, workspaceId, online, syncState, config, subscription, wallet, saveBusiness, setActiveGstin, saveInvoice, removeInvoice, saveParty, removeParty, saveProduct, removeProduct, saveTransporter, removeTransporter, upsertEwb, refreshEwbs, setGstCache, refreshServices, refreshSubscription, refreshWallet, setWalletBalance, syncNow, clearLocalData, exportData]);
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }

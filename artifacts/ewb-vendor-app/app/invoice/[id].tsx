@@ -24,6 +24,7 @@ import {
 } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
 import { useColors } from '@/hooks/useColors';
+import { useGstinVerify } from '@/hooks/useGstinVerify';
 import {
   expectedSupplyType,
   formatDate,
@@ -139,6 +140,31 @@ export default function InvoiceEditorScreen() {
     const changes: Partial<Invoice> = { [key]: value };
     if (value.length === 15 && !gstinProblem(value)) changes[stateKey] = stateForGstin(value)?.name ?? '';
     patch(changes);
+  };
+
+  const { verify, verifying } = useGstinVerify();
+  const canVerify = store.config?.gstinVerification !== false;
+  const verifyBuyer = async () => {
+    if (!invoice) return;
+    const details = await verify(invoice.buyerGstin);
+    if (!details) return;
+    patch({
+      buyerName: details.legalName || invoice.buyerName,
+      buyerAddress: details.address || invoice.buyerAddress,
+      buyerPincode: details.pincode || invoice.buyerPincode,
+      buyerState: details.state || invoice.buyerState,
+    });
+    // Remember the verified buyer for next time.
+    const existing = store.parties.find((party) => party.gstin === details.gstin);
+    await store.saveParty({
+      ...(existing ?? { phone: '' }),
+      name: details.legalName,
+      gstin: details.gstin,
+      address: details.address,
+      state: details.state,
+      pincode: details.pincode,
+      verified: { legalName: details.legalName, tradeName: details.tradeName, status: details.status, verifiedAt: details.verifiedAt },
+    });
   };
 
   const saveDraft = async () => {
@@ -257,7 +283,9 @@ export default function InvoiceEditorScreen() {
       <EditorSection key="buyer" title="Buyer / receiver" icon="users" open={open.buyer} onToggle={() => setOpen((c) => ({ ...c, buyer: !c.buyer }))} errors={sectionErrors('buyer')} summary={invoice.buyerName || 'Not set'}>
         {store.parties.length ? <Button title="Choose a saved buyer" icon="user-check" variant="outline" size="sm" onPress={() => setPicker('buyer')} /> : null}
         <Field label="Name" required value={invoice.buyerName} onChangeText={set('buyerName')} placeholder="Business or person" autoCapitalize="words" error={errorFor('buyerName')} confidence={fromPdf('buyerName')} testID="buyer-name" />
-        <Field label="GSTIN" value={invoice.buyerGstin} onChangeText={onGstinChange('buyerGstin', 'buyerState')} placeholder="Leave empty or URP if unregistered" autoCapitalize="characters" maxLength={15} error={errorFor('buyerGstin')} confidence={fromPdf('buyerGstin')} />
+        <Field label="GSTIN" value={invoice.buyerGstin} onChangeText={onGstinChange('buyerGstin', 'buyerState')} placeholder="Leave empty or URP if unregistered" autoCapitalize="characters" maxLength={15} error={errorFor('buyerGstin')} confidence={fromPdf('buyerGstin')}
+          right={canVerify && invoice.buyerGstin.length === 15 && !store.parties.some((party) => party.gstin === invoice.buyerGstin && party.verified) ? <Button title="Verify" size="sm" variant="outline" onPress={() => void verifyBuyer()} loading={verifying} testID="buyer-verify" /> : undefined}
+          hint={store.parties.some((party) => party.gstin === invoice.buyerGstin && party.verified) ? 'Verified buyer' : undefined} />
         <Field label="Address" value={invoice.buyerAddress} onChangeText={set('buyerAddress')} placeholder="Billing address" multiline />
         <View style={styles.row}>
           <View style={{ flex: 1.4 }}><SelectField label="State" required value={invoice.buyerState} placeholder="Choose" options={stateOptions} onSelect={set('buyerState')} error={errorFor('buyerState')} testID="buyer-state" /></View>

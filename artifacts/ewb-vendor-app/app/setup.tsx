@@ -3,10 +3,11 @@ import { Platform, StyleSheet, View } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
-import { Button, Card, Field, Heading, Notice, ProgressSteps, SelectField, TextBlock } from '@/components/AppUI';
+import { Button, Card, Field, Heading, Notice, ProgressSteps, SelectField, StatusPill, TextBlock } from '@/components/AppUI';
 import { useAppStore } from '@/state/app-store';
 import { useAuth } from '@/state/auth';
 import { useColors } from '@/hooks/useColors';
+import { useGstinVerify } from '@/hooks/useGstinVerify';
 import { financialYearPrefix, gstinProblem, STATES, stateForGstin, type Business } from '@/lib/domain';
 
 const stateOptions = STATES.map((state) => ({ value: state.name, label: state.name, detail: `State code ${state.code}` }));
@@ -29,6 +30,22 @@ export default function BusinessSetupScreen() {
   });
   const [errors, setErrors] = useState<Partial<Record<keyof Business, string>>>({});
   const [saving, setSaving] = useState(false);
+  const { verify, verifying } = useGstinVerify();
+  const canVerify = store.config?.gstinVerification !== false;
+
+  const verifyGstin = async () => {
+    const details = await verify(form.gstin);
+    if (!details) return;
+    setForm((current) => ({
+      ...current,
+      name: details.legalName || current.name,
+      address: details.address || current.address,
+      pincode: details.pincode || current.pincode,
+      state: details.state || current.state,
+      verified: { legalName: details.legalName, tradeName: details.tradeName, status: details.status, verifiedAt: details.verifiedAt },
+    }));
+    setErrors({});
+  };
 
   useEffect(() => {
     if (!auth.signedIn) router.replace('/');
@@ -37,6 +54,8 @@ export default function BusinessSetupScreen() {
   const change = (key: keyof Business) => (value: string) => {
     setForm((current) => {
       const next = { ...current, [key]: value };
+      // A different GSTIN needs a fresh verification.
+      if (key === 'gstin' && value.toUpperCase() !== current.gstin.toUpperCase()) next.verified = undefined;
       // A valid GSTIN tells us the registered state.
       if (key === 'gstin' && value.length === 15 && !gstinProblem(value)) next.state = stateForGstin(value.toUpperCase())?.name ?? next.state;
       return next;
@@ -89,7 +108,25 @@ export default function BusinessSetupScreen() {
       <Card>
         <TextBlock size={15} weight="semibold">Registration</TextBlock>
         <Field label="Legal business name" required value={form.name} onChangeText={change('name')} placeholder="As shown on your GST registration" autoCapitalize="words" error={errors.name} testID="setup-name" />
-        <Field label="GSTIN" required value={form.gstin} onChangeText={(value) => change('gstin')(value.toUpperCase().replace(/\s/g, ''))} placeholder="27AAPFU0939F1ZV" autoCapitalize="characters" maxLength={15} error={errors.gstin} hint="We check the format and check digit. It is not verified with the GST portal." testID="setup-gstin" />
+        <Field
+          label="GSTIN"
+          required
+          value={form.gstin}
+          onChangeText={(value) => change('gstin')(value.toUpperCase().replace(/\s/g, ''))}
+          placeholder="27AAPFU0939F1ZV"
+          autoCapitalize="characters"
+          maxLength={15}
+          error={errors.gstin}
+          hint={form.verified ? undefined : canVerify ? 'Tap Verify to fetch your registered name and address.' : 'We check the format and check digit.'}
+          right={canVerify && form.gstin.length === 15 && !form.verified ? <Button title="Verify" size="sm" variant="outline" onPress={() => void verifyGstin()} loading={verifying} testID="setup-verify" /> : undefined}
+          testID="setup-gstin"
+        />
+        {form.verified ? (
+          <View style={styles.verified}>
+            <StatusPill label={`Verified · ${form.verified.status}`} tone={form.verified.status.toLowerCase() === 'active' ? 'green' : 'red'} icon="check" />
+            {form.verified.tradeName && form.verified.tradeName !== form.verified.legalName ? <TextBlock size={12} color={colors.mutedForeground}>Trade name: {form.verified.tradeName}</TextBlock> : null}
+          </View>
+        ) : null}
         <SelectField label="State / union territory" required value={form.state} placeholder="Choose state" options={stateOptions} onSelect={change('state')} error={errors.state} />
       </Card>
       <Card>
@@ -110,4 +147,5 @@ export default function BusinessSetupScreen() {
 
 const styles = StyleSheet.create({
   content: { paddingHorizontal: 20, gap: 16, maxWidth: 640, width: '100%', alignSelf: 'center' },
+  verified: { gap: 6, alignItems: 'flex-start' },
 });

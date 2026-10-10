@@ -30,6 +30,7 @@ Firebase Auth + Cloud Run + optional Firebase Hosting, and building/installing t
 | PDF import | Pick PDF → server extracts fields with confidence tags → review in editor |
 | E-way bill | Server re-validation, acknowledgement, idempotent generate, timeout reconciliation, success screen, detail with validity bar, update vehicle / extend / cancel (legal time windows), print / PDF / share |
 | GST status | Per GSTIN + period, refresh (rate-limited), return details with ARN |
+| Wallet | Credit balance, bills generated, cost per action, history; credits held and refunded on failure |
 | Account | Profile, multiple GST registrations, saved details, plan & usage, appearance (system/light/dark), cloud sync, data export, deletion request, sign out |
 
 ## Architecture
@@ -50,6 +51,9 @@ Firebase Auth + Cloud Run + optional Firebase Hosting, and building/installing t
 | `EWB_PROVIDER`, `GST_PROVIDER` | server | Provider adapter (default `sandbox`) |
 | `PLANS_JSON`, `BILLING_PROVIDER` | server | Real plans / billing (defaults are labelled samples) |
 | `DATA_DIR`, `PORT` | server | Storage directory, port (dev default 5000) |
+| `GSTINAPI_KEY`, `EWB_PROVIDER=gstinapi`, `GSTINAPI_TEST_MODE`, `GSTINAPI_PATHS_JSON` | server | GSTIN verification (cached once per GSTIN) and e-way bills via gstinapi.in |
+| `EWB_CREDENTIALS_SECRET` | server | Encrypts each GSTIN's e-way bill portal password |
+| `WALLET_START_CREDITS`, `CREDIT_COSTS_JSON`, `WALLET_ADMIN_TOKEN` | server | Credit wallet: starting credits, cost per action (default generate 10, Part-B / consolidate / cancel 5), admin top-up |
 
 ## Before production (launch blockers)
 
