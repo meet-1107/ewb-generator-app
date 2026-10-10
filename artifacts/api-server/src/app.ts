@@ -36,7 +36,8 @@ app.use((_req, res, next) => {
 app.use(cors());
 app.use(rateLimit({ windowMs: 60_000, max: 240 }));
 // PDF imports arrive base64-encoded (8 MB file ≈ 11 MB body).
-app.use(express.json({ limit: "12mb" }));
+// The raw body is kept for webhook signature checks (Razorpay signs the exact bytes).
+app.use(express.json({ limit: "12mb", verify: (req, _res, buf) => { (req as Request & { rawBody?: Buffer }).rawBody = buf; } }));
 app.use(express.urlencoded({ extended: true }));
 
 app.use("/api", router);

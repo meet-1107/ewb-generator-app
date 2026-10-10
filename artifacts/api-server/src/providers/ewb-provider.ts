@@ -30,7 +30,7 @@ export interface EwbProvider {
   readonly needsCredentials: boolean;
   validate(input: EwbInput): { issues: FieldIssue[]; warnings: string[] };
   generate(input: EwbInput, ctx: ProviderContext): Promise<GenerateResult>;
-  extend(args: { ewbNumber: string; validUntil: Date; distanceKm: number; remainingKm: number; reason: string; vehicleNumber?: string } & Movement, ctx: ProviderContext): Promise<ActionResult>;
+  extend(args: { ewbNumber: string; validUntil: Date; distanceKm: number; remainingKm: number; reason: string; vehicleNumber?: string; fromPincode?: string } & Movement, ctx: ProviderContext): Promise<ActionResult>;
   cancel(args: { ewbNumber: string; generatedAt: Date; reason: string }, ctx: ProviderContext): Promise<ActionResult>;
   updateVehicle(args: { ewbNumber: string; vehicleNumber: string; reason: string } & Movement, ctx: ProviderContext): Promise<ActionResult>;
   consolidate(args: { ewbNumbers: string[]; vehicleNumber: string } & Movement, ctx: ProviderContext): Promise<ConsolidateResult>;

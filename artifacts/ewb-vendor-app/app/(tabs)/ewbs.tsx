@@ -5,7 +5,9 @@ import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { useAppStore, useScopedRecords } from '@/state/app-store';
 import { ewbStatusMeta, formatDate, formatInr, liveEwbStatus, relativeTime, type EwbRecord } from '@/lib/domain';
-import { Button, Card, Chip, ChipRow, EmptyState, Field, Heading, Notice, Page, SearchBar, SectionTitle, Sheet, Skeleton, StatusPill, TextBlock } from '@/components/AppUI';
+import { Button, Card, Chip, ChipRow, EmptyState, Field, Heading, Notice, Page, SearchBar, SectionTitle, SelectSheet, Sheet, Skeleton, StatusPill, TextBlock } from '@/components/AppUI';
+import { ActionCard, ActionGrid } from '@/components/ActionCard';
+import { useCredits } from '@/hooks/useCredits';
 import { useDialog } from '@/components/Dialog';
 
 type Filter = 'all' | 'active' | 'expired' | 'cancelled' | 'check';
@@ -36,6 +38,10 @@ export default function EwbRegisterScreen() {
   const [sheet, setSheet] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [limit, setLimit] = useState(PAGE);
+  const [picker, setPicker] = useState<'part_b' | 'cancel' | null>(null);
+  const credits = useCredits();
+  const partBBills = useMemo(() => ewbs.filter((ewb) => !ewb.consolidatedInto && ['active', 'part_b_pending'].includes(liveEwbStatus(ewb))), [ewbs]);
+  const cancellable = useMemo(() => ewbs.filter((ewb) => liveEwbStatus(ewb) !== 'cancelled' && Date.now() - Date.parse(ewb.generatedAt) <= 24 * 3_600_000), [ewbs]);
 
   useEffect(() => {
     if (params.status && tabs.some((tab) => tab.value === params.status)) setFilter(params.status as Filter);
@@ -84,7 +90,21 @@ export default function EwbRegisterScreen() {
 
   return (
     <Page contentStyle={styles.page} onRefresh={refresh} refreshing={refreshing}>
-      <Heading eyebrow="Movement" title="E-way bills" subtitle={store.ewbsFetchedAt ? `${ewbs.length} bills · updated ${relativeTime(store.ewbsFetchedAt)}` : 'Bills confirmed by your provider appear here.'} right={ewbs.length ? <Button title="Consolidate" icon="layers" size="sm" variant="outline" onPress={() => router.push('/ewb/consolidate')} testID="open-consolidate" /> : undefined} />
+      <Heading eyebrow="Movement" title="E-way bills" subtitle={store.ewbsFetchedAt ? `${ewbs.length} bills · updated ${relativeTime(store.ewbsFetchedAt)}` : 'Bills confirmed by your provider appear here.'} />
+      <ActionGrid>
+        <ActionCard icon="plus-circle" title="New e-way bill" detail={`From an invoice · ${credits.costs.generate} credits`} onPress={() => router.push('/invoice/new')} testID="quick-new" />
+        <ActionCard icon="truck" title="Part-B" detail={`Update vehicle · ${credits.costs.part_b} credits`} disabled={!partBBills.length} onPress={() => setPicker('part_b')} testID="quick-partb" />
+        <ActionCard icon="layers" title="Consolidate" detail={`Several bills, one vehicle · ${credits.costs.consolidate} credits`} disabled={!partBBills.length} onPress={() => router.push('/ewb/consolidate')} testID="open-consolidate" />
+        <ActionCard icon="x-octagon" title="Cancel" danger detail={`Within 24 h · ${credits.costs.cancel} credits`} disabled={!cancellable.length} onPress={() => setPicker('cancel')} testID="quick-cancel" />
+      </ActionGrid>
+      <SelectSheet
+        visible={picker !== null}
+        onClose={() => setPicker(null)}
+        title={picker === 'cancel' ? 'Choose a bill to cancel' : 'Choose a bill for Part-B'}
+        options={(picker === 'cancel' ? cancellable : partBBills).map((ewb) => ({ value: ewb.id, label: ewb.ewbNumber, detail: `${ewb.invoiceNumber} · ${ewb.buyerName} · ${ewb.transport.vehicleNumber || 'no vehicle'}` }))}
+        onSelect={(id) => { const next = picker; setPicker(null); router.push({ pathname: '/ewb/[id]', params: { id, action: next ?? '' } }); }}
+        emptyText="No bills available for this action."
+      />
       {store.config?.ewbProvider?.sandbox ? <Notice title="Sandbox provider" body="These bills are test records and are not valid for moving goods." tone="warning" /> : null}
       {!store.config?.ewbProvider && store.online !== false && store.config ? <Notice title="EWB provider setup required" body="Connect an authorized provider to generate bills." tone="warning" /> : null}
       {store.online === false ? <Notice title="Offline — showing saved copy" body={store.ewbsFetchedAt ? `Last updated ${formatDate(store.ewbsFetchedAt, true)}. Status may have changed since.` : 'Nothing has been downloaded on this device yet.'} /> : null}

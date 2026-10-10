@@ -163,7 +163,7 @@ export default function InvoiceEditorScreen() {
       address: details.address,
       state: details.state,
       pincode: details.pincode,
-      verified: { legalName: details.legalName, tradeName: details.tradeName, status: details.status, verifiedAt: details.verifiedAt },
+      verified: { legalName: details.legalName, tradeName: details.tradeName, status: details.status, verifiedAt: details.verifiedAt, city: details.city },
     });
   };
 

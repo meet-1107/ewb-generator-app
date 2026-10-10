@@ -102,6 +102,7 @@ export type VerifiedGstin = {
   stateCode: string;
   state: string;
   address: string;
+  city: string;
   pincode: string;
   blockStatus: string | null;
   verifiedAt: string;
@@ -116,7 +117,9 @@ export type WalletEntry = {
   ewbNumber?: string;
   note?: string;
 };
-export type WalletSummary = { balance: number; costs: CreditCosts; counts: Record<WalletAction, number>; creditsUsed: number; ledger: WalletEntry[] };
+export type WalletPricing = { creditPricePaise: number; packs: number[]; min: number; max: number; payments: 'razorpay' | 'sandbox' | 'off' };
+export type WalletSummary = { balance: number; costs: CreditCosts; counts: Record<WalletAction, number>; creditsUsed: number; ledger: WalletEntry[]; pricing?: WalletPricing };
+export type CreditPurchase = { id: string; provider: 'razorpay' | 'sandbox'; credits: number; amountPaise: number; status: 'created' | 'paid' | 'expired' | 'cancelled'; shortUrl?: string; createdAt: string };
 export type CewbRecord = {
   id: string;
   cewbNumber: string;
@@ -159,18 +162,19 @@ export const api = {
   generateEwb: (idempotencyKey: string, input: unknown) => request<{ ewb: EwbRecord; replay?: boolean; balance?: number }>('/ewb/generate', { body: { idempotencyKey, input }, timeoutMs: 45_000 }),
   listEwbs: () => request<{ ewbs: EwbRecord[]; provider: ProviderInfo }>('/ewb'),
   getEwb: (id: string) => request<{ ewb: EwbRecord }>(`/ewb/${encodeURIComponent(id)}`),
-  ewbAction: (id: string, body: { action: 'cancel'; reason: string } | ({ action: 'extend'; reason: string; remainingKm: number } & Movement) | ({ action: 'update_vehicle'; reason: string; vehicleNumber: string } & Movement)) =>
+  ewbAction: (id: string, body: { action: 'cancel'; reason: string } | ({ action: 'extend'; reason: string; remainingKm: number; fromPincode?: string } & Movement) | ({ action: 'update_vehicle'; reason: string; vehicleNumber: string } & Movement)) =>
     request<{ ewb: EwbRecord; balance?: number }>(`/ewb/${encodeURIComponent(id)}/actions`, { body, timeoutMs: 45_000 }),
   listConsolidated: () => request<{ cewbs: CewbRecord[] }>('/ewb-consolidated'),
   consolidate: (body: { ewbIds: string[]; vehicleNumber: string; fromPlace: string; fromState: string; transMode?: string }) =>
     request<{ cewb: CewbRecord; balance: number }>('/ewb-consolidated', { body, timeoutMs: 45_000 }),
   ewbCredentials: () => request<{ credentials: EwbCredential[]; required: boolean; canStore: boolean }>('/ewb-credentials'),
   saveEwbCredential: (gstin: string, username: string, password: string) =>
-    request<{ credential: EwbCredential }>('/ewb-credentials', { method: 'PUT', body: { gstin, username, password } }),
+    request<{ credential: EwbCredential; checked: boolean; message: string }>('/ewb-credentials', { method: 'PUT', body: { gstin, username, password }, timeoutMs: 30_000 }),
   deleteEwbCredential: (gstin: string) => request<{ ok: true }>(`/ewb-credentials/${encodeURIComponent(gstin)}`, { method: 'DELETE' }),
   verifyGstin: (gstin: string) => request<{ gstin: VerifiedGstin; cached: boolean }>('/gstin/verify', { body: { gstin }, timeoutMs: 30_000 }),
   wallet: () => request<WalletSummary>('/wallet'),
-  addTestCredits: () => request<WalletSummary>('/wallet/test-credits', { body: {} }),
+  buyCredits: (credits: number) => request<{ purchase: CreditPurchase; balance?: number }>('/wallet/purchase', { body: { credits }, timeoutMs: 30_000 }),
+  purchaseStatus: (id: string) => request<{ purchase: CreditPurchase; balance: number }>(`/wallet/purchase/${encodeURIComponent(id)}`, { timeoutMs: 30_000 }),
   gstStatus: (gstin: string, period: string) => request<{ snapshots: GstSnapshot[]; provider: ProviderInfo }>(`/gst/status?gstin=${encodeURIComponent(gstin)}&period=${encodeURIComponent(period)}`),
   refreshGst: (gstin: string, period: string) => request<{ snapshots: GstSnapshot[]; provider: ProviderInfo }>('/gst/refresh', { body: { gstin, period } }),
   parsePdf: (fileName: string, contentBase64: string) => request<{ fields: ExtractedInvoice; parserVersion: string; retention: string }>('/pdf/parse', { body: { fileName, contentBase64 }, timeoutMs: 60_000 }),

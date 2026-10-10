@@ -38,6 +38,7 @@ export default function EwbLoginScreen() {
   }, [saved, store.business]);
 
   const load = useCallback(async () => {
+    if (!store.workspaceId) return;
     try {
       const result = await api.ewbCredentials();
       setSaved(result.credentials);
@@ -48,8 +49,9 @@ export default function EwbLoginScreen() {
     } finally {
       setLoaded(true);
     }
-  }, [dialog]);
+  }, [dialog, store.workspaceId]);
 
+  // Waits for the account to be ready (a deep link can open this screen first).
   useEffect(() => {
     void load();
   }, [load]);
@@ -72,8 +74,8 @@ export default function EwbLoginScreen() {
     if (!username.trim() || !password) return dialog.toast('Enter the API username and password.', 'danger');
     setBusy(true);
     try {
-      await api.saveEwbCredential(gstin, username.trim(), password);
-      dialog.toast('Login saved securely', 'success');
+      const result = await api.saveEwbCredential(gstin, username.trim(), password);
+      dialog.toast(result.checked ? 'Login checked with the portal and saved' : result.message || 'Login saved securely', result.checked ? 'success' : 'default');
       setEditing(null);
       setNewGstin('');
       await load();
@@ -100,7 +102,7 @@ export default function EwbLoginScreen() {
         {!canStore ? <Notice tone="warning" title="Server setup needed" body="The server cannot store passwords securely yet (EWB_CREDENTIALS_SECRET is not set)." /> : null}
         <Card>
           <TextBlock size={13} color={colors.mutedForeground}>
-            To generate e-way bills from this app, create API credentials once on ewaybillgst.gov.in → Registration → For GSP, choosing the GSP named in gstinapi.in's setup guide. These are different from your normal portal login.
+            One-time setup per GSTIN: log in to ewaybillgst.gov.in → Registration → For GSP → choose the GSP gstinapi.in tells you → create an API username and password (different from your normal login). Enter them here; we check them with the portal before saving.
           </TextBlock>
         </Card>
         <Card style={{ padding: 0, gap: 0 }}>

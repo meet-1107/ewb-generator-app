@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Router, type IRouter, type Response } from "express";
 import { z } from "zod";
 import { ewbProvider, type ProviderContext } from "../providers/ewb-provider";
+import { testCredentials } from "../providers/gstinapi-ewb-provider";
 import { audit, currentPeriod, withWorkspace, type CewbRecord, type EwbRecord, type Workspace } from "../lib/store";
 import { decryptSecret, encryptSecret, secretsConfigured } from "../lib/secrets";
 import { holdCredits, refundCredits, settleCredits, walletSummary } from "../lib/wallet";
@@ -218,7 +219,7 @@ router.get("/ewb/:id", async (req, res) => {
 const movement = { fromPlace: z.string().max(50).optional(), fromState: z.string().max(60).optional() };
 const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("cancel"), reason: z.string().min(1).max(100) }),
-  z.object({ action: z.literal("extend"), reason: z.string().min(1).max(100), remainingKm: z.number().int(), ...movement }),
+  z.object({ action: z.literal("extend"), reason: z.string().min(1).max(100), remainingKm: z.number().int(), fromPincode: z.string().max(6).optional(), ...movement }),
   z.object({ action: z.literal("update_vehicle"), reason: z.string().min(1).max(100), vehicleNumber: z.string().max(15), ...movement }),
 ]);
 const WALLET_ACTION = { cancel: "cancel", extend: "extend", update_vehicle: "part_b" } as const;
@@ -254,7 +255,7 @@ router.post("/ewb/:id/actions", async (req, res) => {
   let result;
   try {
     if (body.action === "cancel") result = await ewbProvider.cancel({ ewbNumber: current.ewbNumber, generatedAt: new Date(current.generatedAt), reason: body.reason }, hold.ctx);
-    else if (body.action === "extend") result = await ewbProvider.extend({ ewbNumber: current.ewbNumber, validUntil: new Date(current.validUntil), distanceKm: Number(current.transport.distanceKm), remainingKm: body.remainingKm, reason: body.reason, vehicleNumber: current.transport.vehicleNumber, ...where }, hold.ctx);
+    else if (body.action === "extend") result = await ewbProvider.extend({ ewbNumber: current.ewbNumber, validUntil: new Date(current.validUntil), distanceKm: Number(current.transport.distanceKm), remainingKm: body.remainingKm, reason: body.reason, vehicleNumber: current.transport.vehicleNumber, fromPincode: body.fromPincode, ...where }, hold.ctx);
     else result = await ewbProvider.updateVehicle({ ewbNumber: current.ewbNumber, vehicleNumber: body.vehicleNumber.replace(/[\s-]/g, "").toUpperCase(), reason: body.reason, ...where }, hold.ctx);
   } catch {
     result = { ok: false as const, code: "PROVIDER_UNAVAILABLE", message: "The provider did not respond. Nothing was changed; try again." };
@@ -282,6 +283,7 @@ router.post("/ewb/:id/actions", async (req, res) => {
       const vehicle = body.vehicleNumber.replace(/[\s-]/g, "").toUpperCase();
       record.history.push({ at: now, action: "Vehicle updated", detail: `${record.transport.vehicleNumber || "None"} → ${vehicle} · ${body.reason}` });
       record.transport = { ...record.transport, vehicleNumber: vehicle };
+      if (result.validUntil) record.validUntil = result.validUntil.toISOString();
       if (record.status === "part_b_pending") record.status = "active";
     }
     record.updatedAt = now;
@@ -395,13 +397,23 @@ router.put("/ewb-credentials", async (req, res) => {
   const gstin = parsed.data.gstin.toUpperCase();
   if (gstinProblem(gstin)) return res.status(400).json({ error: "bad_request", message: gstinProblem(gstin) });
   if (!secretsConfigured) return res.status(503).json({ error: "not_configured", message: "The server cannot store passwords securely yet (EWB_CREDENTIALS_SECRET is not set)." });
+  // Check the login with the portal first so a typo is caught now, not at generation.
+  let check: { valid: boolean | null; message: string } = { valid: null, message: "" };
+  if (ewbProvider?.id === "gstinapi") {
+    try {
+      check = await testCredentials({ gstin, username: parsed.data.username.trim(), password: parsed.data.password });
+    } catch {
+      check = { valid: null, message: "Could not check the login right now; it was saved and will be checked on first use." };
+    }
+    if (check.valid === false) return res.status(400).json({ error: "credentials_invalid", message: `The portal refused this login: ${check.message}` });
+  }
   const saved = await withWorkspace(req.workspaceId, (workspace) => {
     const updatedAt = new Date().toISOString();
     workspace.ewbCredentials[gstin] = { gstin, username: parsed.data.username.trim(), passwordEnc: encryptSecret(parsed.data.password), updatedAt };
     audit(workspace, req.actor, "ewb.credentials.save", gstin, "ok");
     return { gstin, username: parsed.data.username.trim(), updatedAt };
   });
-  return res.json({ credential: saved });
+  return res.json({ credential: saved, checked: check.valid === true, message: check.message });
 });
 
 router.delete("/ewb-credentials/:gstin", async (req, res) => {

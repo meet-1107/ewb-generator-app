@@ -5,8 +5,9 @@
  *   secret and never reaches the app.
  * - GSTIN lookup: GET /v1/gstin/{gstin} → { success, gstin, data, credits_remaining }.
  * - E-way bills: POST /v1/ewaybill[/…] with { gstin, gstin_username, password,
- *   payload, test_mode }. `gstin_username` / `password` are the taxpayer's
- *   e-way bill portal API credentials, not the gstinapi key.
+ *   …fields, test_mode }. `gstin_username` / `password` are the taxpayer's
+ *   e-way bill portal API credentials, not the gstinapi key. Failures carry
+ *   { success: false, error, error_code }.
  * - Status codes: 400 invalid, 401 bad key, 402 out of credits, 403
  *   deactivated, 404 not found, 429 rate limited (60/min), 502 provider down.
  */
@@ -67,7 +68,8 @@ async function call<T>(method: "GET" | "POST", path: string, body?: unknown, { t
       await sleep(2 ** attempt * 500);
       continue;
     }
-    const message = typeof json["error"] === "string" ? json["error"] : typeof json["message"] === "string" ? json["message"] : `gstinapi.in request failed (${response.status}).`;
+    const reason = typeof json["error"] === "string" ? json["error"] : typeof json["message"] === "string" ? json["message"] : `gstinapi.in request failed (${response.status}).`;
+    const message = json["error_code"] ? `${reason} (code ${String(json["error_code"])})` : reason;
     throw new GstinApiError(message, response.status, CODES[response.status] ?? (response.ok ? "REJECTED" : "HTTP_ERROR"), json);
   }
 }
@@ -82,6 +84,8 @@ export type GstinApiTaxpayer = {
   cancellation_date: string | null;
   state_code: string | null;
   address: string | null;
+  city?: string | null;
+  address_details?: { building_number: string | null; building_name: string | null; floor: string | null; street: string | null; locality: string | null; pincode: string | null } | null;
   pincode: string | null;
   block_status: string | null;
 };
@@ -93,17 +97,17 @@ export function lookupGstin(gstin: string) {
 export type EwbCredentials = { gstin: string; username: string; password: string };
 
 /**
- * POST an e-way bill operation. `path` is relative to /v1/ewaybill; `extra`
- * adds top-level fields such as `ewaybill_no`. Never retried: a repeat could
- * create a second bill.
+ * POST an e-way bill operation. `path` is relative to /v1/ewaybill; `fields`
+ * are sent at the top level next to the credentials (generate puts the NIC
+ * JSON under `payload`). Retried only when the caller says it is safe.
  */
-export function ewaybillCall<T = Record<string, unknown>>(path: string, credentials: EwbCredentials, payload: Record<string, unknown>, extra: Record<string, unknown> = {}) {
+export function ewaybillCall<T = Record<string, unknown>>(path: string, credentials: EwbCredentials, fields: Record<string, unknown>, options: { retries?: number; testMode?: boolean } = {}) {
+  const testMode = options.testMode ?? gstinApiTestMode;
   return call<T>("POST", `/v1/ewaybill${path}`, {
     gstin: credentials.gstin,
     gstin_username: credentials.username,
     password: credentials.password,
-    ...extra,
-    payload,
-    ...(gstinApiTestMode ? { test_mode: true } : {}),
-  }, { timeoutMs: 40_000, retries: 0 });
+    ...fields,
+    ...(testMode ? { test_mode: true } : {}),
+  }, { timeoutMs: 45_000, retries: options.retries ?? 0 });
 }

@@ -87,45 +87,89 @@ Notes:
 - Keep `--max-instances 1`. The server keeps workspaces in memory and in JSON files, so two instances would overwrite each other. Moving to Postgres (README "Before production") removes this limit.
 - To redeploy after code changes, run the same `gcloud run deploy` command again.
 
-## Part 2b: gstinapi.in, wallet and credits
+## Part 2b: gstinapi.in key, credits and payments
 
-These server settings turn on GSTIN verification, real e-way bills through gstinapi.in, and the credit wallet.
+### Where the API key goes
+
+The gstinapi.in key is a password, so it lives only on the server, never in the app or in `eas.json`.
+
+| Where the server runs | Put the key here |
+|---|---|
+| On your PC (testing) | `artifacts/api-server/.env`. Copy `artifacts/api-server/.env.example` to `.env` and fill it in. `pnpm --filter @workspace/api-server run start` loads it automatically. The file is git-ignored. |
+| Cloud Run (live) | Environment variables on the `ewb-api` service (command below). The `.env` file is not uploaded. |
+
+All settings:
 
 | Variable | Example | What it does |
 |---|---|---|
-| `GSTINAPI_KEY` | `gak_…` | Your key from gstinapi.in → API keys. It stays on the server and never goes into the app. |
-| `EWB_PROVIDER` | `gstinapi` | Sends e-way bills through gstinapi.in. Leave unset to keep the sandbox. |
-| `GSTINAPI_TEST_MODE` | `true` (default) | Adds `test_mode: true`, so fields are validated but nothing reaches NIC and nothing is charged. Set it to `false` only after a test bill works. |
-| `GSTINAPI_PATHS_JSON` | `{"vehicle":"/…","consolidate":"/…"}` | Paths for Part-B, consolidate and extend, under `/v1/ewaybill`. Without them, those actions answer "not connected yet" and charge nothing. |
-| `EWB_CREDENTIALS_SECRET` | 32+ random characters | Encrypts each GSTIN's e-way bill portal password. Keep it safe: if it changes, saved logins must be entered again. |
-| `WALLET_START_CREDITS` | `100` | Credits each new account starts with. |
-| `CREDIT_COSTS_JSON` | `{"generate":10,"part_b":5,"consolidate":5,"cancel":5,"extend":0}` | Credits per action. These numbers are the defaults. |
-| `WALLET_ADMIN_TOKEN` | 32+ random characters | Lets you add credits to a user's wallet. |
+| `GSTINAPI_KEY` | `gak_…` | Your key from gstinapi.in → API keys. |
+| `EWB_PROVIDER` | `gstinapi` | Real e-way bills through gstinapi.in. Leave unset for fake sandbox bills. |
+| `GSTINAPI_TEST_MODE` | `true` | Sends `test_mode: true`, so gstinapi.in validates but files nothing and charges nothing. Set it to `false` to go live. |
+| `EWB_CREDENTIALS_SECRET` | 64 random characters | Encrypts each GSTIN's portal password. Never change it after users have saved logins. |
+| `WALLET_START_CREDITS` | `0` | Free credits for a new account. With 0, nothing can be done without buying credits. |
+| `CREDIT_COSTS_JSON` | `{"generate":10,"part_b":5,"consolidate":5,"cancel":5,"extend":5}` | Credits per action. These numbers are the defaults. |
+| `CREDIT_PRICE_PAISE` | `100` | Price of 1 credit in paise (100 = ₹1). |
+| `CREDIT_PACKS_JSON` | `[100,250,500,1000,2500]` | Pack buttons shown in the Wallet. |
+| `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` | `rzp_live_…` | Razorpay → Account & Settings → API keys. |
+| `RAZORPAY_WEBHOOK_SECRET` | any long string | The secret you type when creating the Razorpay webhook (below). |
+| `WALLET_ADMIN_TOKEN` | 48 random characters | Lets you add credits by hand, for example for a bank transfer. |
 
-Add them to the Cloud Run service. Run this as one line; `^@^` makes `@` the separator, so the JSON's commas are kept:
+Set them on Cloud Run. Run this as one line; `^@^` makes `@` the separator so the JSON's commas are kept:
 
 ```bash
-gcloud run services update ewb-api --region asia-south1 --update-env-vars "^@^EWB_PROVIDER=gstinapi@GSTINAPI_KEY=gak_xxx@GSTINAPI_TEST_MODE=true@EWB_CREDENTIALS_SECRET=$(openssl rand -hex 32)@WALLET_ADMIN_TOKEN=$(openssl rand -hex 24)@WALLET_START_CREDITS=100"
+gcloud run services update ewb-api --region asia-south1 --update-env-vars "^@^EWB_PROVIDER=gstinapi@GSTINAPI_KEY=gak_xxx@GSTINAPI_TEST_MODE=true@EWB_CREDENTIALS_SECRET=$(openssl rand -hex 32)@WALLET_ADMIN_TOKEN=$(openssl rand -hex 24)@WALLET_START_CREDITS=0@RAZORPAY_KEY_ID=rzp_live_xxx@RAZORPAY_KEY_SECRET=xxx@RAZORPAY_WEBHOOK_SECRET=xxx"
 ```
 
-Write down the `WALLET_ADMIN_TOKEN` value. Later you can read it in Cloud Run → ewb-api → Edit → Variables.
+### gstinapi.in endpoints the server uses
 
-How it works:
+| App action | Endpoint | gstinapi.in charges you | App charges the user |
+|---|---|---|---|
+| Verify GSTIN (once per GSTIN, then saved) | `GET /v1/gstin/{gstin}` | 1 credit, first time only | free |
+| Check portal login | `POST /v1/ewaybill/credentials/test` | free | free |
+| Generate e-way bill | `POST /v1/ewaybill` | 3 | 10 credits = ₹10 |
+| Part-B / vehicle | `POST /v1/ewaybill/update-vehicle` | 3 | 5 = ₹5 |
+| Consolidated e-way bill | `POST /v1/ewaybill/consolidated` | 3 | 5 = ₹5 |
+| Cancel | `POST /v1/ewaybill/cancel` | 3 | 5 = ₹5 |
+| Extend validity | `POST /v1/ewaybill/extend-validity` | 3 | 5 = ₹5 |
 
-- **GSTIN verify:** tapping **Verify** on a GSTIN (business setup, buyers, invoice buyer) calls gstinapi.in **once per GSTIN, ever**. The result is saved on the server under `gstins/` in the data bucket, and later checks by any user are served from there. Typos fail the check-digit test before any call is made.
-- **Portal login:** each user adds their e-way bill portal **API** login once per GSTIN, under Account → E-way bill portal login. The password is stored encrypted.
-- **Credits:**
-  - Credits are held before each action and charged only if it succeeds. If the portal rejects it, the credits are refunded automatically.
-  - Every action asks the user to confirm the cost first.
-  - Account → Wallet shows the balance, the number of bills generated, what each action costs, and the full history.
+How credits work:
+- Credits are held before each call and charged only if the action succeeds.
+- A rejection or outage refunds them automatically. gstinapi.in doesn't charge for rejections either.
+- A generate that times out can be retried safely: gstinapi.in returns the original bill (`already_existed`), so a second bill is never created.
 
-Adding credits to a user. The user's Wallet ID is shown on their Wallet screen; it is their Firebase UID.
+### Going live with e-way bills
+
+1. **Ask gstinapi.in which GSP to pick.** Contact gstinapi.in support. They tell you which GSP to choose, and you send them each GSTIN to enable.
+2. **Create the API login.** For each GSTIN: on ewaybillgst.gov.in go to Registration → For GSP, choose that GSP, and create an API username and password.
+3. **Save the login in the app.** In the app, go to Account → E-way bill portal login. The server checks the login with `/credentials/test` before saving it.
+4. **Test.** Generate a test bill with `GSTINAPI_TEST_MODE=true`. Its number starts with `TEST-`.
+5. **Go live.** Set `GSTINAPI_TEST_MODE=false`.
+
+### Selling credits with Razorpay (1 credit = ₹1)
+
+1. **Create and activate a Razorpay account.** Sign up at https://razorpay.com. Activation needs business KYC: PAN, bank account and GST.
+2. **Get the API keys.** Dashboard → Account & Settings → API keys → generate. Put them in `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET`.
+3. **Create the webhook.** Dashboard → Webhooks → Add:
+   - URL: `https://ewb-api-xxxxxxxx.asia-south1.run.app/api/payments/razorpay/webhook`
+   - Secret: the same value as `RAZORPAY_WEBHOOK_SECRET`
+   - Event: **payment_link.paid**
+4. **Buy credits in the app.** In the app, go to Wallet → Buy credits → choose a pack, then pay on Razorpay with UPI, card or net banking. Credits are added when Razorpay confirms the payment, through the webhook or when the app re-checks. Each payment is credited once.
+
+Test first with Razorpay **test mode** keys (`rzp_test_…`); no real money moves.
+
+Without Razorpay keys, the Wallet shows **Request credits** instead. You can then add credits by hand:
 
 ```bash
 curl -X POST https://ewb-api-xxxxxxxx.asia-south1.run.app/api/admin/wallet/topup \
   -H "x-admin-token: YOUR_WALLET_ADMIN_TOKEN" -H "content-type: application/json" \
-  -d '{"workspaceId":"USER_WALLET_ID","credits":100,"note":"UPI ref 1234"}'
+  -d '{"workspaceId":"USER_WALLET_ID","credits":500,"note":"UPI ref 1234"}'
 ```
+
+The user's Wallet ID is shown on their Wallet screen. It is their Firebase UID.
+
+Before you sell credits:
+- **GST:** selling credits is a taxable supply. Decide whether ₹1 per credit includes GST, and issue invoices from Razorpay or your accounting software.
+- **Play Store:** credits sold inside an app on Google Play may need Google Play Billing, or Play's user-choice billing in India. A sideloaded APK isn't affected.
 
 ## Part 3 (optional): Web version on Firebase Hosting
 
@@ -224,6 +268,8 @@ Alternative (USB): download the `.apk` to your PC, enable **Developer options �
 | App says "offline / service unreachable" | `EXPO_PUBLIC_API_URL` is wrong or not `https://`. Rebuild after fixing `eas.json`. |
 | "Sign in again to continue" on every screen | `FIREBASE_PROJECT_ID` on Cloud Run doesn't match the app's project ID. |
 | Sign-in screen shows **Open local preview** | Native Firebase is missing: you are in Expo Go (Google sign-in needs a real build), or `GOOGLE_SERVICES_JSON` was not available to the build. |
+| "Online payment is not set up yet" in the Wallet | Add `RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` to the server (Part 2b). |
+| Paid, but credits did not arrive | Check the Razorpay webhook URL, its secret, and the event `payment_link.paid`. Re-opening the Wallet also re-checks pending payments. |
 | "Google sign-in is not set up yet. Enable Google…" | The `google-services.json` used for the build has no Web client ID. Enable the Google provider, download the file again, update `GOOGLE_SERVICES_JSON`, and rebuild. |
 | "Google sign-in is not set up for this app build yet (SHA fingerprints…)" | The keystore's SHA-1/SHA-256 is not in Firebase (Part 4, step 2). Adding it doesn't need a rebuild. |
 | "This sign-in method is not enabled" | Enable **Google** (or Email/Password) in Authentication → Sign-in method. |

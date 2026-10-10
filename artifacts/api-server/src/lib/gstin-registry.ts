@@ -21,6 +21,8 @@ export type VerifiedGstin = {
   stateCode: string;
   state: string;
   address: string;
+  /** Locality as the GST network records it, e.g. "Saidapet, Chennai". */
+  city: string;
   pincode: string;
   blockStatus: string | null;
   verifiedAt: string;
@@ -77,7 +79,8 @@ export function verifyGstin(gstin: string): Promise<{ record: VerifiedGstin; cac
       stateCode,
       state: STATES.find((state) => state.code === stateCode)?.name ?? "",
       address: data.address ?? "",
-      pincode: data.pincode ?? "",
+      city: data.city ?? data.address_details?.locality ?? "",
+      pincode: data.pincode ?? data.address_details?.pincode ?? "",
       blockStatus: data.block_status,
       verifiedAt: new Date().toISOString(),
       source: "gstinapi.in",

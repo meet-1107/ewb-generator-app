@@ -43,7 +43,7 @@ export default function SavedDetailsScreen() {
       address: details.address || current.address,
       pincode: details.pincode || current.pincode,
       state: details.state || current.state,
-      verified: { legalName: details.legalName, tradeName: details.tradeName, status: details.status, verifiedAt: details.verifiedAt },
+      verified: { legalName: details.legalName, tradeName: details.tradeName, status: details.status, verifiedAt: details.verifiedAt, city: details.city },
     } : current);
     setErrors({});
   };

@@ -1,10 +1,11 @@
 import React, { useEffect, useState } from 'react';
-import { Linking, RefreshControl, ScrollView, Share, StyleSheet, View } from 'react-native';
+import * as WebBrowser from 'expo-web-browser';
+import { Linking, Pressable, RefreshControl, ScrollView, Share, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Button, Card, Divider, EmptyState, KeyValue, ListRow, Notice, ScreenHeader, SectionTitle, StatCard, TextBlock } from '@/components/AppUI';
+import { Button, Card, Divider, EmptyState, Field, KeyValue, ListRow, Notice, ScreenHeader, SectionTitle, StatCard, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
 import { useColors } from '@/hooks/useColors';
-import { api, ApiError, SUPPORT_EMAIL, type WalletAction } from '@/lib/api';
+import { api, ApiError, SUPPORT_EMAIL, type CreditPurchase, type WalletAction } from '@/lib/api';
 import { formatDate } from '@/lib/domain';
 import { useAppStore } from '@/state/app-store';
 
@@ -22,9 +23,11 @@ export default function WalletScreen() {
   const store = useAppStore();
   const dialog = useDialog();
   const [refreshing, setRefreshing] = useState(false);
-  const [adding, setAdding] = useState(false);
+  const [buying, setBuying] = useState<number | null>(null);
+  const [custom, setCustom] = useState('');
   const wallet = store.wallet;
-  const testMode = store.config?.authMode === 'sandbox';
+  const pricing = wallet?.pricing;
+  const rupees = (credits: number) => `₹${((credits * (pricing?.creditPricePaise ?? 100)) / 100).toLocaleString('en-IN')}`;
 
   useEffect(() => {
     void store.refreshWallet();
@@ -37,16 +40,44 @@ export default function WalletScreen() {
     setRefreshing(false);
   };
 
-  const addTestCredits = async () => {
-    setAdding(true);
+  /** Waits for Razorpay to report the payment (the webhook may also credit it first). */
+  const confirmPaid = async (purchase: CreditPurchase) => {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const { purchase: latest, balance } = await api.purchaseStatus(purchase.id);
+      if (latest.status === 'paid') {
+        store.setWalletBalance(balance);
+        dialog.toast(`${latest.credits} credits added`, 'success');
+        return;
+      }
+      if (latest.status !== 'created') break;
+      await new Promise((resolve) => setTimeout(resolve, 2500));
+    }
+    dialog.toast('Payment not confirmed yet. Credits are added automatically once it is.', 'default');
+  };
+
+  const buy = async (credits: number) => {
+    if (!pricing || pricing.payments === 'off') return requestCredits();
+    if (!Number.isInteger(credits) || credits < pricing.min || credits > pricing.max) {
+      return dialog.toast(`Choose between ${pricing.min} and ${pricing.max.toLocaleString('en-IN')} credits.`, 'danger');
+    }
+    const ok = await dialog.confirm({ title: `Buy ${credits} credits?`, message: `You pay ${rupees(credits)} (1 credit = ${rupees(1)}).${pricing.payments === 'sandbox' ? ' Test workspace: no real payment is taken.' : ' You will finish the payment on Razorpay (UPI, card or net banking).'}`, confirmLabel: `Pay ${rupees(credits)}`, icon: 'credit-card' });
+    if (!ok) return;
+    setBuying(credits);
     try {
-      await api.addTestCredits();
+      const { purchase, balance } = await api.buyCredits(credits);
+      if (purchase.status === 'paid') {
+        store.setWalletBalance(balance);
+        dialog.toast(`${credits} credits added`, 'success');
+      } else if (purchase.shortUrl) {
+        await WebBrowser.openBrowserAsync(purchase.shortUrl).catch(() => Linking.openURL(purchase.shortUrl!));
+        await confirmPaid(purchase);
+      }
       await store.refreshWallet();
-      dialog.toast('100 test credits added', 'success');
+      setCustom('');
     } catch (error) {
-      dialog.toast(error instanceof ApiError ? error.message : 'Could not add credits', 'danger');
+      dialog.toast(error instanceof ApiError ? error.message : 'Could not start the payment', 'danger');
     } finally {
-      setAdding(false);
+      setBuying(null);
     }
   };
 
@@ -97,21 +128,39 @@ export default function WalletScreen() {
           <TextBlock size={11} color={colors.mutedForeground}>Credits are taken only when the action succeeds. If the government portal rejects it, they are refunded automatically.</TextBlock>
         </Card>
 
-        <SectionTitle title="Add credits" />
-        <Card>
-          {testMode ? (
-            <>
-              <TextBlock size={13} color={colors.mutedForeground}>Test workspace: add free test credits to try the flow.</TextBlock>
-              <Button title="Add 100 test credits" icon="plus" variant="outline" onPress={() => void addTestCredits()} loading={adding} />
-            </>
-          ) : (
-            <>
-              <TextBlock size={13} color={colors.mutedForeground}>Send a request with your wallet ID and we will add credits after payment.</TextBlock>
-              <KeyValue label="Wallet ID" value={store.workspaceId ?? '—'} mono />
-              <Button title="Request credits" icon="mail" variant="outline" onPress={() => void requestCredits()} />
-            </>
-          )}
-        </Card>
+        <SectionTitle title="Buy credits" />
+        {pricing && pricing.payments !== 'off' ? (
+          <>
+            <View style={styles.packs}>
+              {pricing.packs.map((credits) => (
+                <Pressable
+                  key={credits}
+                  onPress={() => void buy(credits)}
+                  disabled={buying !== null}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Buy ${credits} credits for ${rupees(credits)}`}
+                  style={({ pressed }) => [styles.pack, { backgroundColor: colors.card, borderColor: colors.border }, pressed && { opacity: 0.8 }, buying === credits && { borderColor: colors.primary }]}
+                >
+                  <TextBlock size={22} weight="bold">{credits.toLocaleString('en-IN')}</TextBlock>
+                  <TextBlock size={11} color={colors.mutedForeground}>credits</TextBlock>
+                  <TextBlock size={14} weight="semibold" color={colors.primary}>{buying === credits ? 'Opening…' : rupees(credits)}</TextBlock>
+                  <TextBlock size={10} color={colors.mutedForeground}>≈ {Math.floor(credits / (wallet?.costs.generate || 10))} e-way bills</TextBlock>
+                </Pressable>
+              ))}
+            </View>
+            <Card>
+              <Field label="Other amount (credits)" value={custom} onChangeText={(value) => setCustom(value.replace(/\D/g, '').slice(0, 6))} keyboardType="number-pad" placeholder={`${pricing.min} or more`} hint={custom ? `You pay ${rupees(Number(custom))}` : `1 credit = ${rupees(1)}`} />
+              <Button title={custom ? `Buy ${custom} credits` : 'Buy'} icon="credit-card" onPress={() => void buy(Number(custom))} disabled={!custom || buying !== null} loading={buying === Number(custom)} />
+              {pricing.payments === 'sandbox' ? <TextBlock size={11} color={colors.mutedForeground}>Test workspace: purchases are instant and free.</TextBlock> : <TextBlock size={11} color={colors.mutedForeground}>Secure payment by Razorpay. Credits are added as soon as the payment succeeds and never expire.</TextBlock>}
+            </Card>
+          </>
+        ) : (
+          <Card>
+            <TextBlock size={13} color={colors.mutedForeground}>Online payment is not switched on yet. Send a request with your wallet ID and credits will be added after payment.</TextBlock>
+            <KeyValue label="Wallet ID" value={store.workspaceId ?? '—'} mono />
+            <Button title="Request credits" icon="mail" variant="outline" onPress={() => void requestCredits()} />
+          </Card>
+        )}
 
         <SectionTitle title="History" count={wallet?.ledger.length} />
         {wallet?.ledger.length ? (
@@ -145,4 +194,6 @@ const styles = StyleSheet.create({
   balance: { gap: 4, borderWidth: 0 },
   stats: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   stat: { flexBasis: '47%', flexGrow: 1 },
+  packs: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
+  pack: { flexBasis: '30%', flexGrow: 1, borderWidth: 1, borderRadius: 16, padding: 12, gap: 2, alignItems: 'center' },
 });

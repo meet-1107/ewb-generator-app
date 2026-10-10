@@ -1,10 +1,12 @@
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, ScrollView, Share, StyleSheet, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Card, Divider, EmptyState, IconButton, KeyValue, Notice, ScreenHeader, StatusPill, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
+import { ActionCard, ActionGrid } from '@/components/ActionCard';
+import { EwbPreview } from '@/components/EwbPreview';
 import { useColors } from '@/hooks/useColors';
 import { useCredits } from '@/hooks/useCredits';
 import { api, ApiError } from '@/lib/api';
@@ -26,7 +28,7 @@ import { useAppStore } from '@/state/app-store';
 const HOUR = 3_600_000;
 
 export default function EwbDetailScreen() {
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, action } = useLocalSearchParams<{ id: string; action?: string }>();
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const store = useAppStore();
@@ -40,6 +42,10 @@ export default function EwbDetailScreen() {
   const [fresh, setFresh] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
+  const [preview, setPreview] = useState(false);
+  // Lets the E-way bills tab open a bill straight into Part-B or cancel (?action=part_b|cancel).
+  const actions = useRef<Record<string, () => void>>({});
+  const actionDone = useRef(false);
 
   const refresh = useCallback(async (announce = false) => {
     if (!store.workspaceId) return;
@@ -62,6 +68,15 @@ export default function EwbDetailScreen() {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  // Keyed on the bill ID so a refresh (new object, same bill) does not cancel the pending action.
+  const loadedId = ewb?.id;
+  useEffect(() => {
+    if (!action || actionDone.current || !loadedId) return;
+    actionDone.current = true;
+    const timer = setTimeout(() => actions.current[action]?.(), 400);
+    return () => clearTimeout(timer);
+  }, [action, loadedId]);
 
   if (!ewb) {
     return (
@@ -124,6 +139,7 @@ export default function EwbDetailScreen() {
       message: 'The e-way bill portal records the place the goods move from with the new vehicle.',
       inputLabel: 'Current place (city or town)',
       placeholder: 'e.g. Satara',
+      defaultValue: store.business?.verified?.city ?? '',
       autoCapitalize: 'words',
       requireInput: true,
       confirmLabel: 'Continue',
@@ -146,8 +162,29 @@ export default function EwbDetailScreen() {
       validate: ({ text }) => (Number.isInteger(Number(text)) && Number(text) > 0 && Number(text) <= 4000 ? null : 'Enter 1–4000 km.'),
     });
     if (!result) return;
+    const place = await dialog.prompt({
+      title: 'Where are the goods now?',
+      inputLabel: 'Current place (city or town)',
+      placeholder: 'e.g. Satara',
+      defaultValue: store.business?.verified?.city ?? '',
+      autoCapitalize: 'words',
+      requireInput: true,
+      confirmLabel: 'Continue',
+    });
+    if (!place) return;
+    const pin = await dialog.prompt({
+      title: 'PIN code of that place',
+      inputLabel: 'PIN code',
+      placeholder: '415001',
+      defaultValue: store.business?.pincode ?? '',
+      keyboardType: 'number-pad',
+      requireInput: true,
+      confirmLabel: 'Continue',
+      validate: ({ text }) => (/^[1-9]\d{5}$/.test(text.trim()) ? null : 'Enter a 6-digit PIN code.'),
+    });
+    if (!pin) return;
     if (!(await credits.confirmSpend('extend', 'Extending validity'))) return;
-    await runAction('Extend validity', { action: 'extend', reason: result.choice, remainingKm: Number(result.text) }, 'Validity extended');
+    await runAction('Extend validity', { action: 'extend', reason: result.choice, remainingKm: Number(result.text), fromPlace: place.text.trim(), fromState: ewb.fromState, fromPincode: pin.text.trim() }, 'Validity extended');
   };
 
   const cancel = async () => {
@@ -183,8 +220,12 @@ export default function EwbDetailScreen() {
     }
   };
 
+  actions.current = { part_b: () => void updateVehicle(), cancel: () => void cancel(), extend: () => void extend() };
+  const consolidate = () => router.push({ pathname: '/ewb/consolidate', params: { ids: ewb.id } });
+
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <EwbPreview ewb={ewb} visible={preview} onClose={() => setPreview(false)} sandbox={sandbox} />
       <ScreenHeader title="E-way bill" subtitle={`${ewb.invoiceNumber} · ${ewb.buyerName}`} right={<IconButton icon="share-2" accessibilityLabel="Share bill summary" onPress={() => void shareText()} />} />
       <ScrollView contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 30 }]}>
         {sandbox ? <Notice tone="warning" title="Sandbox bill — not valid for transport" body="Generated by the test provider. Connect an authorized GSP before real use." /> : null}
@@ -212,12 +253,12 @@ export default function EwbDetailScreen() {
           ) : <Notice tone="danger" title={`Cancelled ${formatDate(ewb.cancelledAt ?? ewb.generatedAt, true)}`} body={`Reason: ${ewb.cancelReason ?? '—'}`} />}
         </Card>
 
-        <View style={styles.docActions}>
-          <DocAction icon="printer" label="Print" onPress={() => void docAction('print')} />
-          <DocAction icon="download" label={Platform.OS === 'web' ? 'Save PDF' : 'Download'} onPress={() => void docAction('share')} />
-          <DocAction icon="share" label="Share" onPress={() => void docAction('share')} />
-          <DocAction icon="refresh-cw" label={refreshing ? 'Checking' : 'Refresh'} onPress={() => void refresh(true)} />
-        </View>
+        <ActionGrid>
+          <ActionCard icon="download" title={Platform.OS === 'web' ? 'Save PDF' : 'Download'} detail="PDF to save or share" onPress={() => void docAction('share')} testID="ewb-download" />
+          <ActionCard icon="printer" title="Print" detail="Print a paper copy" onPress={() => void docAction('print')} testID="ewb-print" />
+          <ActionCard icon="eye" title="Preview" detail="See the bill as it prints" onPress={() => setPreview(true)} testID="ewb-preview" />
+          <ActionCard icon="x-octagon" title="Cancel" danger detail={status === 'cancelled' ? 'Already cancelled' : canCancel ? `${credits.costs.cancel} credits · within 24 h` : '24-hour window closed'} disabled={!canCancel} busy={busy === 'Cancel'} onPress={() => void cancel()} testID="ewb-cancel" />
+        </ActionGrid>
 
         {ewb.status === 'part_b_pending' && status !== 'expired' ? <Notice tone="warning" title="Vehicle details pending" body="Goods cannot move until a vehicle number is added (Part-B)." action="Add vehicle" onAction={() => void updateVehicle()} /> : null}
 
@@ -271,14 +312,18 @@ export default function EwbDetailScreen() {
         </Card>
 
         {status !== 'cancelled' ? (
-          <Card>
-            <SectionHead icon="sliders" title="Bill actions" />
-            <ActionRow icon="truck" title="Update vehicle" detail={ewb.consolidatedInto ? `Moves under consolidated bill ${ewb.consolidatedInto}` : canUpdateVehicle ? `Part-B: change the vehicle carrying the goods${credits.costs.part_b ? ` · ${credits.costs.part_b} credits` : ''}` : 'Not available on an expired bill'} disabled={!canUpdateVehicle} busy={busy === 'Update vehicle'} onPress={() => void updateVehicle()} />
-            <Divider />
-            <ActionRow icon="clock" title="Extend validity" detail={canExtend ? 'Window open now' : `Available 8 h before expiry (${formatDate(new Date(validUntil - 8 * HOUR).toISOString(), true)})`} disabled={!canExtend} busy={busy === 'Extend validity'} onPress={() => void extend()} />
-            <Divider />
-            <ActionRow icon="x-octagon" title="Cancel bill" detail={canCancel ? `Allowed until ${formatDate(new Date(generatedAt + 24 * HOUR).toISOString(), true)}${credits.costs.cancel ? ` · ${credits.costs.cancel} credits` : ''}` : 'Cancellation window (24 h) has closed'} disabled={!canCancel} busy={busy === 'Cancel'} danger onPress={() => void cancel()} />
-          </Card>
+          <View style={{ gap: 10 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+              <SectionHead icon="sliders" title="Bill actions" />
+              <TextBlock size={12} color={colors.mutedForeground}>{credits.balance !== null ? `${credits.balance} credits` : ''}</TextBlock>
+            </View>
+            <ActionGrid>
+              <ActionCard icon="truck" title="Part-B" detail={ewb.consolidatedInto ? `In consolidated bill ${ewb.consolidatedInto}` : canUpdateVehicle ? `Update vehicle · ${credits.costs.part_b} credits` : 'Not on an expired bill'} disabled={!canUpdateVehicle} busy={busy === 'Update vehicle'} onPress={() => void updateVehicle()} testID="ewb-partb" />
+              <ActionCard icon="layers" title="Consolidate" detail={ewb.consolidatedInto ? 'Already consolidated' : `With other bills · ${credits.costs.consolidate} credits`} disabled={Boolean(ewb.consolidatedInto) || status === 'expired'} onPress={consolidate} testID="ewb-consolidate" />
+              <ActionCard icon="clock" title="Extend" detail={canExtend ? `Window open · ${credits.costs.extend} credits` : `From ${formatDate(new Date(validUntil - 8 * HOUR).toISOString(), true)}`} disabled={!canExtend} busy={busy === 'Extend validity'} onPress={() => void extend()} testID="ewb-extend" />
+              <ActionCard icon="refresh-cw" title="Refresh" detail={refreshing ? 'Checking…' : 'Reload status'} busy={refreshing} onPress={() => void refresh(true)} />
+            </ActionGrid>
+          </View>
         ) : null}
 
         <Card>
@@ -308,31 +353,6 @@ function SectionHead({ icon, title }: { icon: keyof typeof Feather.glyphMap; tit
   return <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}><Feather name={icon} size={16} color={colors.primary} /><TextBlock size={15} weight="semibold">{title}</TextBlock></View>;
 }
 
-function DocAction({ icon, label, onPress }: { icon: keyof typeof Feather.glyphMap; label: string; onPress: () => void }) {
-  const colors = useColors();
-  return (
-    <Pressable onPress={onPress} accessibilityRole="button" accessibilityLabel={label} style={({ pressed }) => [styles.docAction, { backgroundColor: colors.card, borderColor: colors.border }, pressed && { opacity: 0.75 }]}>
-      <View style={[styles.docIcon, { backgroundColor: colors.accent }]}><Feather name={icon} size={17} color={colors.primary} /></View>
-      <TextBlock size={12} weight="semibold">{label}</TextBlock>
-    </Pressable>
-  );
-}
-
-function ActionRow({ icon, title, detail, onPress, disabled, busy, danger }: { icon: keyof typeof Feather.glyphMap; title: string; detail: string; onPress: () => void; disabled?: boolean; busy?: boolean; danger?: boolean }) {
-  const colors = useColors();
-  const fg = danger ? colors.dangerForeground : colors.primary;
-  return (
-    <Pressable onPress={onPress} disabled={disabled || busy} accessibilityRole="button" accessibilityState={{ disabled: disabled || busy }} style={({ pressed }) => [styles.actionRow, (disabled || busy) && { opacity: 0.5 }, pressed && { opacity: 0.7 }]}>
-      <View style={[styles.docIcon, { backgroundColor: danger ? colors.dangerBackground : colors.accent }]}><Feather name={icon} size={16} color={fg} /></View>
-      <View style={{ flex: 1, gap: 2 }}>
-        <TextBlock size={14} weight="semibold" color={danger ? colors.dangerForeground : undefined}>{busy ? `${title}…` : title}</TextBlock>
-        <TextBlock size={12} color={colors.mutedForeground}>{detail}</TextBlock>
-      </View>
-      <Feather name="chevron-right" size={17} color={colors.mutedForeground} />
-    </Pressable>
-  );
-}
-
 const styles = StyleSheet.create({
   body: { padding: 16, gap: 14, maxWidth: 720, width: '100%', alignSelf: 'center' },
   hero: { gap: 10 },
@@ -340,12 +360,8 @@ const styles = StyleSheet.create({
   track: { height: 8, borderRadius: 4, overflow: 'hidden' },
   fill: { height: 8, borderRadius: 4 },
   trackLabels: { flexDirection: 'row', justifyContent: 'space-between' },
-  docActions: { flexDirection: 'row', gap: 8 },
-  docAction: { flex: 1, borderWidth: 1, borderRadius: 16, paddingVertical: 12, alignItems: 'center', gap: 7, minHeight: 76 },
-  docIcon: { width: 36, height: 36, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
   route: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   item: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  actionRow: { flexDirection: 'row', alignItems: 'center', gap: 12, minHeight: 56 },
   event: { flexDirection: 'row', gap: 10, alignItems: 'flex-start' },
   eventDot: { width: 10, height: 10, borderRadius: 5, marginTop: 4 },
 });

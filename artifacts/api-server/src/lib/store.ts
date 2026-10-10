@@ -110,6 +110,19 @@ export type WalletEntry = {
 };
 export type Wallet = { balance: number; ledger: WalletEntry[] };
 
+/** A credit purchase through a Razorpay payment link (or an instant sandbox purchase). */
+export type CreditPurchase = {
+  id: string;
+  provider: "razorpay" | "sandbox";
+  credits: number;
+  amountPaise: number;
+  status: "created" | "paid" | "expired" | "cancelled";
+  shortUrl?: string;
+  paymentId?: string;
+  createdAt: string;
+  paidAt?: string;
+};
+
 /** E-way bill portal API login for one GSTIN. The password is encrypted at rest. */
 export type EwbCredential = { gstin: string; username: string; passwordEnc: string; updatedAt: string };
 
@@ -126,6 +139,7 @@ export type Workspace = {
   wallet: Wallet;
   cewbs: Record<string, CewbRecord>;
   ewbCredentials: Record<string, EwbCredential>;
+  purchases: Record<string, CreditPurchase>;
   audit: { at: string; actor: string; action: string; targetId: string; outcome: string }[];
   sync: Record<string, Record<string, SyncRecord>>;
 };
@@ -134,9 +148,9 @@ const dataDir = path.resolve(process.env["DATA_DIR"] ?? path.join(process.cwd(),
 const cache = new Map<string, Workspace>();
 const queues = new Map<string, Promise<unknown>>();
 
-/** Credits a new workspace starts with (WALLET_START_CREDITS, default 100). */
+/** Credits a new workspace starts with (WALLET_START_CREDITS, default 0: every action is paid). */
 function startCredits() {
-  const value = Number(process.env["WALLET_START_CREDITS"] ?? 100);
+  const value = Number(process.env["WALLET_START_CREDITS"] ?? 0);
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
 }
 
@@ -165,6 +179,7 @@ function freshWorkspace(id: string): Workspace {
     wallet: { balance: startCredits(), ledger: startCredits() ? [{ id: `grant-${id}`, at: now.toISOString(), kind: "grant", credits: startCredits(), status: "credited", note: "Welcome credits" }] : [] },
     cewbs: {},
     ewbCredentials: {},
+    purchases: {},
     audit: [],
     sync: {},
   };

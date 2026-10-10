@@ -9,7 +9,8 @@ The product spec is in git history under `.conversation/attached_assets/` (READM
 ```bash
 pnpm install
 pnpm --filter @workspace/api-server run build
-node artifacts/api-server/dist/index.mjs          # API on http://localhost:5000
+cp artifacts/api-server/.env.example artifacts/api-server/.env   # add your keys
+pnpm --filter @workspace/api-server run start     # API on http://localhost:5000 (loads .env)
 cd artifacts/ewb-vendor-app && npx expo start      # press w (web), a (Android), i (iOS)
 ```
 
@@ -51,9 +52,10 @@ Firebase Auth + Cloud Run + optional Firebase Hosting, and building/installing t
 | `EWB_PROVIDER`, `GST_PROVIDER` | server | Provider adapter (default `sandbox`) |
 | `PLANS_JSON`, `BILLING_PROVIDER` | server | Real plans / billing (defaults are labelled samples) |
 | `DATA_DIR`, `PORT` | server | Storage directory, port (dev default 5000) |
-| `GSTINAPI_KEY`, `EWB_PROVIDER=gstinapi`, `GSTINAPI_TEST_MODE`, `GSTINAPI_PATHS_JSON` | server | GSTIN verification (cached once per GSTIN) and e-way bills via gstinapi.in |
+| `GSTINAPI_KEY`, `EWB_PROVIDER=gstinapi`, `GSTINAPI_TEST_MODE` | server | GSTIN verification (cached once per GSTIN) and e-way bills via gstinapi.in. Local: `artifacts/api-server/.env` (see `.env.example`) |
 | `EWB_CREDENTIALS_SECRET` | server | Encrypts each GSTIN's e-way bill portal password |
-| `WALLET_START_CREDITS`, `CREDIT_COSTS_JSON`, `WALLET_ADMIN_TOKEN` | server | Credit wallet: starting credits, cost per action (default generate 10, Part-B / consolidate / cancel 5), admin top-up |
+| `WALLET_START_CREDITS`, `CREDIT_COSTS_JSON`, `WALLET_ADMIN_TOKEN` | server | Credit wallet: starting credits (default 0), cost per action (generate 10; Part-B, consolidate, cancel, extend 5), admin top-up |
+| `CREDIT_PRICE_PAISE`, `CREDIT_PACKS_JSON`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | server | Buying credits (1 credit = ₹1) through Razorpay payment links |
 
 ## Before production (launch blockers)
 

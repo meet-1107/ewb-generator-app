@@ -6,3 +6,4 @@
 attached_assets
 .conversation
 .agents
+**/.env

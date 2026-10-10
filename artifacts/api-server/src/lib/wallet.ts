@@ -6,11 +6,11 @@ import type { Wallet, WalletAction, WalletEntry, Workspace } from "./store";
  * (success) or refunded (rejection / error), so a failed call never costs the
  * user anything and two parallel calls cannot overspend the balance.
  *
- * Costs default to generate 10, Part-B 5, consolidate 5, cancel 5, extend 0;
+ * Costs default to generate 10, Part-B 5, consolidate 5, cancel 5, extend 5;
  * override with CREDIT_COSTS_JSON, e.g. {"generate":10,"extend":5}.
  */
 
-const defaults: Record<WalletAction, number> = { generate: 10, part_b: 5, consolidate: 5, cancel: 5, extend: 0 };
+const defaults: Record<WalletAction, number> = { generate: 10, part_b: 5, consolidate: 5, cancel: 5, extend: 5 };
 
 export const creditCosts: Record<WalletAction, number> = {
   ...defaults,

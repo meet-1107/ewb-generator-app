@@ -56,3 +56,6 @@ artifacts/ewb-vendor-app/android
 artifacts/ewb-vendor-app/ios
 artifacts/ewb-vendor-app/google-services.json
 artifacts/ewb-vendor-app/GoogleService-Info.plist
+
+# Server secrets
+artifacts/api-server/.env

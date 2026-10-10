@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { ScrollView, StyleSheet, View } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Card, Checkbox, Divider, EmptyState, Field, KeyValue, Notice, ScreenHeader, SectionTitle, SelectField, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
@@ -20,7 +20,8 @@ export default function ConsolidateScreen() {
   const dialog = useDialog();
   const credits = useCredits();
   const { ewbs } = useScopedRecords();
-  const [selected, setSelected] = useState<string[]>([]);
+  const params = useLocalSearchParams<{ ids?: string }>();
+  const [selected, setSelected] = useState<string[]>(() => (params.ids ? params.ids.split(',').filter(Boolean) : []));
   const [vehicle, setVehicle] = useState('');
   const [place, setPlace] = useState('');
   const [state, setState] = useState(store.business?.state ?? '');
@@ -34,8 +35,9 @@ export default function ConsolidateScreen() {
   );
 
   useEffect(() => {
+    if (!store.workspaceId) return;
     api.listConsolidated().then((result) => setHistory(result.cewbs)).catch(() => undefined);
-  }, [created]);
+  }, [created, store.workspaceId]);
 
   const toggle = (id: string) => setSelected((current) => (current.includes(id) ? current.filter((item) => item !== id) : [...current, id]));
   const vehicleNumber = vehicle.replace(/[\s-]/g, '').toUpperCase();
