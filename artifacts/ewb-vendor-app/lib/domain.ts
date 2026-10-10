@@ -58,6 +58,8 @@ export type Invoice = {
   ewbId?: string;
   ewbNumber?: string;
   idempotencyKey?: string;
+  /** Bank details printed on the invoice; empty means none. */
+  bank?: InvoiceBank | null;
   status: InvoiceStatus;
   createdAt: string;
   updatedAt: string;
@@ -87,8 +89,63 @@ export type Business = {
   gstRegistrations?: GstRegistration[];
   defaultGstin?: string;
   verified?: GstinVerification;
+  /** Bank accounts that can be printed on invoices; `defaultBankId` fills new invoices. */
+  bankAccounts?: BankAccount[];
+  defaultBankId?: string;
   updatedAt?: string;
 };
+
+export const BANK_ACCOUNT_TYPES = ['Current', 'Savings', 'Cash credit / OD'] as const;
+export type BankAccount = {
+  id: string;
+  accountName: string;
+  bankName: string;
+  accountNumber: string;
+  ifsc: string;
+  branch: string;
+  accountType: (typeof BANK_ACCOUNT_TYPES)[number];
+  upiId?: string;
+  updatedAt: string;
+};
+/** The bank details printed on one invoice (a copy, so later edits do not change it). */
+export type InvoiceBank = Omit<BankAccount, 'updatedAt'>;
+
+export const IFSC_PATTERN = /^[A-Z]{4}0[A-Z0-9]{6}$/;
+
+/** Field problems in a bank account form, keyed by field. */
+export function bankAccountProblems(bank: Partial<BankAccount>) {
+  const problems: Partial<Record<keyof BankAccount, string>> = {};
+  if (!bank.accountName?.trim()) problems.accountName = 'Account holder name is required.';
+  if (!bank.bankName?.trim()) problems.bankName = 'Bank name is required.';
+  if (!/^\d{9,18}$/.test(bank.accountNumber ?? '')) problems.accountNumber = 'Account number must be 9 to 18 digits.';
+  if (!IFSC_PATTERN.test(bank.ifsc ?? '')) problems.ifsc = 'IFSC is 11 characters, like SBIN0001234.';
+  if (bank.upiId && !/^[\w.-]{2,}@[A-Za-z]{2,}$/.test(bank.upiId)) problems.upiId = 'UPI ID looks wrong (e.g. business@okhdfc).';
+  return problems;
+}
+
+export function invoiceBank(bank: BankAccount): InvoiceBank {
+  const { updatedAt: _updatedAt, ...rest } = bank;
+  return rest;
+}
+
+/** Bank details as plain text, for sharing on WhatsApp, SMS or email. */
+export function bankShareText(bank: Omit<BankAccount, 'id' | 'updatedAt'>) {
+  return [
+    'Bank details',
+    `Account name: ${bank.accountName}`,
+    `Bank: ${bank.bankName}${bank.branch ? `, ${bank.branch}` : ''}`,
+    `Account number: ${bank.accountNumber}`,
+    `IFSC: ${bank.ifsc}`,
+    `Account type: ${bank.accountType}`,
+    bank.upiId ? `UPI: ${bank.upiId}` : '',
+  ].filter(Boolean).join('\n');
+}
+
+/** The business's default bank account, or its first one. */
+export function defaultBank(business: Business | null | undefined) {
+  const banks = business?.bankAccounts ?? [];
+  return banks.find((bank) => bank.id === business?.defaultBankId) ?? banks[0] ?? null;
+}
 
 /** Summary of a GSTIN verification, kept with the saved business / buyer. */
 export type GstinVerification = { legalName: string; tradeName: string; status: string; verifiedAt: string; city?: string };
@@ -530,5 +587,6 @@ export function draftForBusiness(business: Business, activeGstin: string, invoic
     sellerAddress: business.address,
     sellerState: registration?.state || business.state,
     sellerPincode: business.pincode ?? '',
+    bank: defaultBank(business) ? invoiceBank(defaultBank(business)!) : null,
   };
 }

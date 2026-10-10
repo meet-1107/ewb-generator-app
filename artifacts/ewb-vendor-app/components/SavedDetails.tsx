@@ -11,8 +11,8 @@ import { useAppStore } from '@/state/app-store';
 export type SavedKind = 'parties' | 'products' | 'transporters';
 type Kind = SavedKind;
 const META: Record<Kind, { title: string; singular: string; icon: 'users' | 'package' | 'truck'; empty: string }> = {
-  parties: { title: 'Buyers & receivers', singular: 'buyer', icon: 'users', empty: 'Buyers are saved automatically when you review an invoice, or add one here.' },
-  products: { title: 'Products & services', singular: 'product', icon: 'package', empty: 'Save products with HSN, unit and GST rate to fill invoice lines in one tap.' },
+  parties: { title: 'Buyers', singular: 'buyer', icon: 'users', empty: 'Buyers are saved automatically when you review an invoice, or add one here.' },
+  products: { title: 'Products', singular: 'product', icon: 'package', empty: 'Save products with HSN, unit and GST rate to fill invoice lines in one tap.' },
   transporters: { title: 'Transporters', singular: 'transporter', icon: 'truck', empty: 'Save transporters and their usual vehicle to speed up e-way bills.' },
 };
 const stateOptions = STATES.map((state) => ({ value: state.name, label: state.name }));

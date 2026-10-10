@@ -69,6 +69,13 @@ export function invoiceHtml(invoice: Invoice) {
       ${[...groups.entries()].map(([key, group]) => `<tr><td>${esc(key.split('@')[0])}</td><td class="num">${formatInr(group.taxable)}</td><td class="num">${group.rate}%</td>${invoice.supplyType === 'intra' ? `<td class="num">${formatInr(Math.round(group.tax / 2))}</td><td class="num">${formatInr(group.tax - Math.round(group.tax / 2))}</td>` : `<td class="num">${formatInr(group.tax)}</td>`}<td class="num">${formatInr(group.tax)}</td></tr>`).join('')}</table>`;
   })();
 
+  const bank = invoice.bank ? `<div class="label" style="margin-top:10px">Bank details</div>
+    <div><strong>${esc(invoice.bank.accountName)}</strong></div>
+    <div>${esc(invoice.bank.bankName)}${invoice.bank.branch ? `, ${esc(invoice.bank.branch)}` : ''}</div>
+    <div>A/c no: <strong>${esc(invoice.bank.accountNumber)}</strong> · ${esc(invoice.bank.accountType)}</div>
+    <div>IFSC: <strong>${esc(invoice.bank.ifsc)}</strong></div>
+    ${invoice.bank.upiId ? `<div>UPI: <strong>${esc(invoice.bank.upiId)}</strong></div>` : ''}` : '';
+
   return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(invoice.invoiceNumber || 'Invoice')}</title><style>${baseCss(accent, compact)}</style></head><body>
   <div class="head"><div><h1 class="${minimal ? '' : 'accent'}">${esc(invoice.sellerName)}</h1>
     <div class="muted">${esc(invoice.sellerAddress)}</div><div class="muted">${esc(invoice.sellerState)} ${esc(invoice.sellerPincode)} · GSTIN ${esc(invoice.sellerGstin)}</div></div>
@@ -86,6 +93,7 @@ export function invoiceHtml(invoice: Invoice) {
   </table>
   ${template.id === 'tax-summary' ? hsnSummary : ''}
   <div class="row" style="margin-top:12px"><div class="col"><div class="label">Amount in words</div><div>${esc(amountInWords(totals.total))}</div>
+    ${bank}
     ${invoice.notes ? `<div class="label" style="margin-top:10px">Notes</div><div class="muted">${esc(invoice.notes)}</div>` : ''}</div>
     <div class="col"><table class="totals">
       <tr><td class="muted">Taxable value</td><td class="num">${formatInr(totals.taxable)}</td></tr>

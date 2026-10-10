@@ -6,7 +6,7 @@ import { useColors } from '@/hooks/useColors';
 import { useAppStore } from '@/state/app-store';
 import { useAuth } from '@/state/auth';
 import { setThemePreference, useThemePreference, type ThemePreference } from '@/state/theme';
-import { gstinProblem, relativeTime, STATES, stateForGstin, templates, type Business } from '@/lib/domain';
+import { defaultBank, gstinProblem, relativeTime, STATES, stateForGstin, templates, type Business } from '@/lib/domain';
 import { Button, Card, Divider, Field, Heading, IconButton, ListRow, Notice, Page, Segmented, SectionTitle, SelectField, Sheet, StatusPill, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
 import { SUPPORT_EMAIL } from '@/lib/api';
@@ -202,9 +202,11 @@ export default function AccountScreen() {
 
       <SectionTitle title="Saved details" />
       <Card style={{ padding: 0, gap: 0 }}>
-        <ListRow icon="users" title="Buyers & receivers" detail={`${store.parties.length} saved`} onPress={() => router.push('/saved/parties')} testID="saved-parties" />
+        <ListRow icon="users" title="Buyers" detail={`${store.parties.length} saved`} onPress={() => router.push('/saved/parties')} testID="saved-parties" />
         <Divider inset={64} />
-        <ListRow icon="package" title="Products & services" detail={`${store.products.length} saved`} onPress={() => router.push('/saved/products')} testID="saved-products" />
+        <ListRow icon="package" title="Products" detail={`${store.products.length} saved`} onPress={() => router.push('/saved/products')} testID="saved-products" />
+        <Divider inset={64} />
+        <ListRow icon="credit-card" title="Bank details" detail={business?.bankAccounts?.length ? `${business.bankAccounts.length} saved · ${defaultBank(business)?.bankName ?? ''} on new invoices` : 'Not added'} onPress={() => router.push('/bank-details')} testID="saved-banks" />
         <Divider inset={64} />
         <ListRow icon="truck" title="Transporters" detail={`${store.transporters.length} saved`} onPress={() => router.push('/saved/transporters')} />
         <Divider inset={64} />

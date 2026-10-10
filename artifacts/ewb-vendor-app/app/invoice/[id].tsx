@@ -44,6 +44,7 @@ import {
   TRANSPORT_MODES,
   uid,
   UNITS,
+  invoiceBank,
   type Invoice,
   type InvoiceLine,
   type Section,
@@ -61,6 +62,7 @@ export default function InvoiceEditorScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const store = useAppStore();
+  const banks = store.business?.bankAccounts ?? [];
   const dialog = useDialog();
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [open, setOpen] = useState<Record<Section, boolean>>({ seller: false, buyer: true, invoice: true, items: true, transport: false });
@@ -382,7 +384,29 @@ export default function InvoiceEditorScreen() {
           </ChipRow>
         </View>
         {sectionOrder(invoice.templateId).map((section) => sections[section])}
-        <Field label="Notes (printed on invoice)" value={invoice.notes} onChangeText={set('notes')} placeholder="Payment terms, bank details…" multiline />
+        {banks.length ? (
+          <SelectField
+            label="Bank details on invoice"
+            value={invoice.bank?.id ?? NO_BANK}
+            placeholder="Choose bank account"
+            title="Bank details on invoice"
+            options={[...banks.map((bank) => ({ value: bank.id, label: bank.bankName, detail: `A/c ${bank.accountNumber} · ${bank.ifsc}` })), { value: NO_BANK, label: 'Do not print bank details' }]}
+            onSelect={(id) => {
+              const bank = banks.find((item) => item.id === id);
+              patch({ bank: bank ? invoiceBank(bank) : null });
+            }}
+            testID="invoice-bank"
+          />
+        ) : (
+          <Card style={styles.bankEmpty}>
+            <View style={{ flex: 1, gap: 2 }}>
+              <TextBlock size={14} weight="semibold">Bank details</TextBlock>
+              <TextBlock size={12} color={colors.mutedForeground}>Add a bank account to print it on your invoices.</TextBlock>
+            </View>
+            <Button title="Add bank" icon="plus" size="sm" variant="outline" onPress={() => router.push('/bank-details')} testID="invoice-add-bank" />
+          </Card>
+        )}
+        <Field label="Notes (printed on invoice)" value={invoice.notes} onChangeText={set('notes')} placeholder="Payment terms, delivery notes…" multiline />
         {attempted && issues.length ? <Notice tone="danger" title={`${issues.length} item${issues.length === 1 ? '' : 's'} to fix before review`} body={issues.slice(0, 4).map((issue) => issue.message).join(' · ')} /> : null}
       </KeyboardAwareScrollViewCompat>
 
@@ -491,7 +515,10 @@ function LineEditor({ line, index, service, supplyType, canRemove, hasProducts, 
   );
 }
 
+const NO_BANK = 'none';
+
 const styles = StyleSheet.create({
+  bankEmpty: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   loading: { flex: 1, alignItems: 'center', justifyContent: 'center' },
   body: { padding: 16, paddingBottom: 30, gap: 14, maxWidth: 720, width: '100%', alignSelf: 'center' },
   row: { flexDirection: 'row', gap: 10, alignItems: 'flex-start' },
