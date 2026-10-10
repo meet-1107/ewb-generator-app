@@ -38,13 +38,13 @@ import {
   STATES,
   stateForGstin,
   gstinProblem,
-  templates,
   today,
   transportIssues,
   TRANSPORT_MODES,
   uid,
   UNITS,
   invoiceBank,
+  invoiceSeriesProblem,
   nextInvoiceNumber,
   releasedInvoiceIds,
   type Invoice,
@@ -174,36 +174,94 @@ export default function InvoiceEditorScreen() {
     });
   };
 
-  const saveDraft = async () => {
-    Keyboard.dismiss();
-    if (!invoice) return;
-    await store.saveInvoice({ ...invoice, updatedAt: new Date().toISOString() });
-    setSaveState('saved');
-    dialog.toast('Draft saved', 'success');
+  const showProblems = (problems: { section: Section }[], message: string) => {
+    setAttempted(true);
+    setOpen((current) => {
+      const next = { ...current };
+      for (const problem of problems) next[problem.section] = true;
+      return next;
+    });
+    dialog.toast(message, 'danger');
   };
 
-  const continueToReview = async () => {
+  /** A number outside the latest invoice's series (GR-01 after INV-05): offer the right one. Null to stop. */
+  const checkSeries = async (base: Invoice) => {
+    const series = invoiceSeriesProblem(base, store.invoices, released);
+    if (!series) return base;
+    const useNext = await dialog.confirm({
+      title: 'Invoice number is wrong',
+      message: `${base.invoiceNumber} does not follow your last invoice ${series.latest}. The next number is ${series.next}.`,
+      confirmLabel: `Use ${series.next}`,
+      cancelLabel: 'Edit number',
+      tone: 'warning',
+      icon: 'alert-triangle',
+    });
+    if (!useNext) {
+      setAttempted(true);
+      setOpen((current) => ({ ...current, invoice: true }));
+      return null;
+    }
+    return { ...base, invoiceNumber: series.next };
+  };
+
+  /** Remember new buyers and transporters for next time. */
+  const rememberDetails = async (saved: Invoice) => {
+    const knownBuyer = store.parties.some((party) => (saved.buyerGstin && party.gstin === saved.buyerGstin) || party.name.toLowerCase() === saved.buyerName.trim().toLowerCase());
+    if (!knownBuyer) await store.saveParty({ name: saved.buyerName.trim(), gstin: saved.buyerGstin, address: saved.buyerAddress, state: saved.buyerState, pincode: saved.buyerPincode, phone: '' });
+    if (saved.transporterName.trim() && !store.transporters.some((item) => item.name.toLowerCase() === saved.transporterName.trim().toLowerCase())) {
+      await store.saveTransporter({ name: saved.transporterName.trim(), transporterId: saved.transporterId, vehicleNumber: saved.vehicleNumber });
+    }
+  };
+
+  /** Save: check the invoice, then ask whether it needs an e-way bill. */
+  const finishInvoice = async () => {
     Keyboard.dismiss();
     if (!invoice) return;
-    setAttempted(true);
-    if (issues.length) {
-      setOpen((current) => {
-        const next = { ...current };
-        for (const issue of issues) next[issue.section] = true;
-        return next;
-      });
-      dialog.toast(`Fix ${issues.length} item${issues.length === 1 ? '' : 's'} highlighted in red`, 'danger');
+    const checked = await checkSeries(invoice);
+    if (!checked) return;
+    const problems = invoiceIssues(checked, store.invoices, released);
+    setInvoice(checked);
+    if (problems.length) {
+      showProblems(problems, `Fix ${problems.length} item${problems.length === 1 ? '' : 's'} highlighted in red`);
       return;
     }
-    const ready: Invoice = { ...invoice, status: 'ready', updatedAt: new Date().toISOString(), extraction: invoice.extraction ? { ...invoice.extraction, confirmed: true } : undefined };
+    const saved: Invoice = { ...checked, status: 'ready', updatedAt: new Date().toISOString(), extraction: checked.extraction ? { ...checked.extraction, confirmed: true } : undefined };
+    setInvoice(saved);
+    await store.saveInvoice(saved);
+    setSaveState('saved');
+    await rememberDetails(saved);
+    const answer = await dialog.prompt({
+      title: 'Invoice saved. Do you need an e-way bill?',
+      message: 'Usually needed when goods worth more than ₹50,000 move. You can also generate it later from this invoice.',
+      choices: ['Yes, generate e-way bill', 'No, e-way bill not required'],
+      confirmLabel: 'Continue',
+    });
+    if (!answer) return;
+    if (answer.choice.startsWith('No')) {
+      await store.saveInvoice({ ...saved, ewbRequired: false });
+      dialog.toast('Invoice saved', 'success');
+      router.replace('/(tabs)/invoices');
+      return;
+    }
+    await continueToReview(saved);
+  };
+
+  const continueToReview = async (from?: Invoice) => {
+    Keyboard.dismiss();
+    if (!invoice) return;
+    const checked = from ?? (await checkSeries(invoice));
+    if (!checked) return;
+    const problems = [...invoiceIssues(checked, store.invoices, released), ...transportIssues(checked)];
+    if (checked !== invoice) setInvoice(checked);
+    if (problems.length) {
+      const transportOnly = problems.every((problem) => problem.section === 'transport');
+      showProblems(problems, transportOnly ? 'Add the transport details to generate the e-way bill' : `Fix ${problems.length} item${problems.length === 1 ? '' : 's'} highlighted in red`);
+      return;
+    }
+    const ready: Invoice = { ...checked, status: 'ready', ewbRequired: true, updatedAt: new Date().toISOString(), extraction: checked.extraction ? { ...checked.extraction, confirmed: true } : undefined };
     setInvoice(ready);
     await store.saveInvoice(ready);
-    // Remember new buyers and transporters for next time.
-    const knownBuyer = store.parties.some((party) => (ready.buyerGstin && party.gstin === ready.buyerGstin) || party.name.toLowerCase() === ready.buyerName.trim().toLowerCase());
-    if (!knownBuyer) await store.saveParty({ name: ready.buyerName.trim(), gstin: ready.buyerGstin, address: ready.buyerAddress, state: ready.buyerState, pincode: ready.buyerPincode, phone: '' });
-    if (ready.transporterName.trim() && !store.transporters.some((item) => item.name.toLowerCase() === ready.transporterName.trim().toLowerCase())) {
-      await store.saveTransporter({ name: ready.transporterName.trim(), transporterId: ready.transporterId, vehicleNumber: ready.vehicleNumber });
-    }
+    await rememberDetails(ready);
     router.push({ pathname: '/ewb/review/[invoiceId]', params: { invoiceId: ready.id } });
   };
 
@@ -221,7 +279,7 @@ export default function InvoiceEditorScreen() {
     if (result.choice === 'Duplicate as new draft') {
       const fresh = newInvoice(invoice.templateId);
       const { revisionHistory: _h, ...rest } = invoice;
-      const copy: Invoice = { ...rest, id: fresh.id, createdAt: fresh.createdAt, updatedAt: fresh.updatedAt, invoiceDate: today(), invoiceNumber: nextInvoiceNumber(store.invoices.filter((other) => other.sellerGstin === invoice.sellerGstin), released), status: 'draft', ewbId: undefined, ewbNumber: undefined, idempotencyKey: undefined, extraction: undefined, sourceFileName: undefined, revisionHistory: [], lines: invoice.lines.map((line) => ({ ...line, id: uid('l') })) };
+      const copy: Invoice = { ...rest, id: fresh.id, createdAt: fresh.createdAt, updatedAt: fresh.updatedAt, invoiceDate: today(), invoiceNumber: nextInvoiceNumber(store.invoices.filter((other) => other.sellerGstin === invoice.sellerGstin), released), status: 'draft', ewbRequired: undefined, ewbId: undefined, ewbNumber: undefined, idempotencyKey: undefined, extraction: undefined, sourceFileName: undefined, revisionHistory: [], lines: invoice.lines.map((line) => ({ ...line, id: uid('l') })) };
       await store.saveInvoice(copy);
       dialog.toast('Copied as a new draft', 'success');
       router.replace(`/invoice/${copy.id}`);
@@ -382,12 +440,6 @@ export default function InvoiceEditorScreen() {
         {invoice.extraction && !invoice.extraction.confirmed ? (
           <Notice tone="warning" title="Check the values read from your PDF" body={`From ${invoice.sourceFileName ?? 'your PDF'}. Fields tagged “Please check” or “Uncertain” need a careful look — nothing is used until you review it.`} />
         ) : null}
-        <View style={{ gap: 7 }}>
-          <TextBlock size={13} weight="semibold">Layout</TextBlock>
-          <ChipRow>
-            {templates.map((template) => <Chip key={template.id} label={template.name} selected={invoice.templateId === template.id} onPress={() => patch({ templateId: template.id, templateVersion: 1 })} />)}
-          </ChipRow>
-        </View>
         {sectionOrder(invoice.templateId).map((section) => sections[section])}
         {banks.length ? (
           <SelectField
@@ -420,8 +472,8 @@ export default function InvoiceEditorScreen() {
           <TextBlock size={10} weight="semibold" color={colors.mutedForeground} style={{ letterSpacing: 0.8 }}>TOTAL</TextBlock>
           <TextBlock size={19} weight="bold" numberOfLines={1}>{formatInr(totals.total)}</TextBlock>
         </View>
-        <Button title="Save" variant="outline" size="sm" onPress={() => void saveDraft()} testID="save-invoice-draft" />
-        <Button title="Review EWB" icon="arrow-right" size="sm" onPress={() => void continueToReview()} testID="continue-to-ewb" />
+        <Button title="Generate EWB" variant="outline" size="sm" onPress={() => void continueToReview()} testID="continue-to-ewb" />
+        <Button title="Save invoice" icon="check" size="sm" onPress={() => void finishInvoice()} testID="save-invoice" />
       </View>
 
       <SelectSheet

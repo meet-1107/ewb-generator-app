@@ -1,37 +1,29 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
-import { newInvoice, templates, uid, type Invoice, type InvoiceStatus } from '@/lib/domain';
+import { newInvoice, nextInvoiceNumber, releasedInvoiceIds, uid, type Invoice } from '@/lib/domain';
 import { useAppStore, useScopedRecords } from '@/state/app-store';
 import { Button, Card, Chip, ChipRow, EmptyState, Field, Heading, IconButton, Page, SearchBar, SectionTitle, Sheet, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
 import InvoiceCard from '@/components/InvoiceCard';
 
 const PAGE = 20;
-const filters: { label: string; value: InvoiceStatus | 'all' }[] = [
-  { label: 'All', value: 'all' },
-  { label: 'Draft', value: 'draft' },
-  { label: 'Ready', value: 'ready' },
-  { label: 'EWB generated', value: 'ewb_generated' },
-];
 
 export default function InvoicesScreen() {
   const colors = useColors();
-  const params = useLocalSearchParams<{ status?: string; period?: string; from?: string; to?: string }>();
+  const params = useLocalSearchParams<{ period?: string; from?: string; to?: string }>();
   const store = useAppStore();
   const dialog = useDialog();
   const { invoices } = useScopedRecords();
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<InvoiceStatus | 'all'>('all');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [sheet, setSheet] = useState(false);
   const [limit, setLimit] = useState(PAGE);
 
   useEffect(() => {
-    if (params.status && filters.some((item) => item.value === params.status)) setFilter(params.status as InvoiceStatus);
     if (params.period && /^\d{4}-\d{2}$/.test(params.period)) {
       setDateFrom(`${params.period}-01`);
       setDateTo(`${params.period}-31`);
@@ -40,26 +32,21 @@ export default function InvoicesScreen() {
       setDateFrom(params.from);
       setDateTo(params.to);
     }
-  }, [params.status, params.period, params.from, params.to]);
+  }, [params.period, params.from, params.to]);
 
-  const counts = useMemo(() => ({
-    all: invoices.length,
-    draft: invoices.filter((item) => item.status === 'draft').length,
-    ready: invoices.filter((item) => item.status === 'ready').length,
-    ewb_generated: invoices.filter((item) => item.status === 'ewb_generated').length,
-  }), [invoices]);
+  const pending = useMemo(() => invoices.filter((item) => item.status === 'ready' && item.ewbRequired !== false).length, [invoices]);
 
+  // Every invoice, newest first.
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase();
-    return invoices.filter((invoice) => {
-      if (filter !== 'all' && invoice.status !== filter) return false;
+    return [...invoices].sort((a, b) => b.createdAt.localeCompare(a.createdAt)).filter((invoice) => {
       if (dateFrom && invoice.invoiceDate < dateFrom) return false;
       if (dateTo && invoice.invoiceDate > dateTo) return false;
       if (!query) return true;
       return [invoice.invoiceNumber, invoice.buyerName, invoice.buyerGstin, invoice.sellerGstin, invoice.invoiceDate, invoice.ewbNumber ?? '']
         .some((value) => value.toLowerCase().includes(query));
     });
-  }, [invoices, search, filter, dateFrom, dateTo]);
+  }, [invoices, search, dateFrom, dateTo]);
 
   const dateFiltered = Boolean(dateFrom || dateTo);
 
@@ -75,7 +62,8 @@ export default function InvoicesScreen() {
     if (choice.choice === 'Duplicate as new draft') {
       const fresh = newInvoice(invoice.templateId);
       const { revisionHistory: _h, ...rest } = invoice;
-      const copy: Invoice = { ...rest, ...{ id: fresh.id, createdAt: fresh.createdAt, updatedAt: fresh.updatedAt, invoiceDate: fresh.invoiceDate }, invoiceNumber: '', status: 'draft', ewbId: undefined, ewbNumber: undefined, idempotencyKey: undefined, extraction: undefined, sourceFileName: undefined, revisionHistory: [], lines: invoice.lines.map((line) => ({ ...line, id: uid('l') })) };
+      const sameSeller = store.invoices.filter((other) => other.sellerGstin === invoice.sellerGstin);
+      const copy: Invoice = { ...rest, ...{ id: fresh.id, createdAt: fresh.createdAt, updatedAt: fresh.updatedAt, invoiceDate: fresh.invoiceDate }, invoiceNumber: nextInvoiceNumber(sameSeller, releasedInvoiceIds(sameSeller, store.ewbs)), status: 'draft', ewbRequired: undefined, ewbId: undefined, ewbNumber: undefined, idempotencyKey: undefined, extraction: undefined, sourceFileName: undefined, revisionHistory: [], lines: invoice.lines.map((line) => ({ ...line, id: uid('l') })) };
       await store.saveInvoice(copy);
       dialog.toast('Copied as a new draft', 'success');
       router.push(`/invoice/${copy.id}`);
@@ -94,7 +82,7 @@ export default function InvoicesScreen() {
       <Heading
         eyebrow="Sales"
         title="Invoices"
-        subtitle={`${invoices.length} saved · ${counts.ready} ready for e-way bill`}
+        subtitle={`${invoices.length} invoice${invoices.length === 1 ? '' : 's'}${pending ? ` · ${pending} e-way bill${pending === 1 ? '' : 's'} pending` : ''}`}
         right={<IconButton icon="upload" accessibilityLabel="Import invoice PDF" onPress={() => router.push('/invoice/import')} filled />}
       />
       <SearchBar
@@ -108,39 +96,18 @@ export default function InvoicesScreen() {
           </Pressable>
         }
       />
-      <ChipRow>
-        {filters.map((item) => (
-          <Chip key={item.value} label={item.label} count={counts[item.value]} selected={filter === item.value} onPress={() => { setFilter(item.value); setLimit(PAGE); }} />
-        ))}
-        {dateFiltered ? <Chip label={`${dateFrom || '…'} → ${dateTo || '…'}`} icon="x" selected={false} onPress={() => { setDateFrom(''); setDateTo(''); }} /> : null}
-      </ChipRow>
-
-      <SectionTitle title="Start from a layout" />
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.templates} style={{ marginHorizontal: -20, flexGrow: 0 }}>
-        {templates.map((template) => (
-          <Pressable
-            key={template.id}
-            onPress={() => router.push({ pathname: '/invoice/new', params: { templateId: template.id } })}
-            style={({ pressed }) => [styles.template, { backgroundColor: colors.card, borderColor: colors.border }, pressed && { opacity: 0.85, transform: [{ scale: 0.98 }] }]}
-            accessibilityRole="button"
-            accessibilityLabel={`Use ${template.name} template. ${template.note}`}
-            testID={`template-${template.id}`}
-          >
-            <TemplatePreview accent={template.accent} id={template.id} />
-            <TextBlock size={14} weight="semibold">{template.name}</TextBlock>
-            <TextBlock size={11} color={colors.mutedForeground} numberOfLines={2}>{template.note}</TextBlock>
-            <TextBlock size={12} weight="semibold" color={colors.primary}>Use template →</TextBlock>
-          </Pressable>
-        ))}
-      </ScrollView>
-      <TextBlock size={11} color={colors.mutedForeground} style={{ marginTop: -8 }}>Layouts change how the invoice looks, not its legal content.</TextBlock>
+      {dateFiltered ? (
+        <ChipRow>
+          <Chip label={`${dateFrom || '…'} → ${dateTo || '…'}`} icon="x" selected={false} onPress={() => { setDateFrom(''); setDateTo(''); }} />
+        </ChipRow>
+      ) : null}
 
       <View style={styles.quickActions}>
         <Button title="New invoice" icon="plus" onPress={() => router.push({ pathname: '/invoice/new', params: { templateId: store.business?.defaultTemplateId ?? 'classic' } })} style={{ flex: 1 }} testID="invoices-new" />
         <Button title="Import PDF" icon="upload" variant="outline" onPress={() => router.push('/invoice/import')} style={{ flex: 1 }} />
       </View>
 
-      <SectionTitle title={search || filter !== 'all' || dateFiltered ? 'Matching invoices' : 'All invoices'} count={filtered.length} />
+      <SectionTitle title={search || dateFiltered ? 'Matching invoices' : 'All invoices'} count={filtered.length} />
       {filtered.length ? (
         <View style={{ gap: 10 }}>
           {filtered.slice(0, limit).map((invoice) => (
@@ -152,17 +119,17 @@ export default function InvoicesScreen() {
       ) : (
         <Card>
           <EmptyState
-            icon={search || filter !== 'all' ? 'search' : 'file-plus'}
-            title={search || filter !== 'all' || dateFiltered ? 'No matching invoices' : 'No invoices yet'}
-            body={search || filter !== 'all' || dateFiltered ? 'Try a different search or clear the filters.' : 'Pick a layout above, or import a PDF to start without typing.'}
-            action={search || filter !== 'all' || dateFiltered
-              ? <Button title="Clear filters" variant="outline" onPress={() => { setSearch(''); setFilter('all'); setDateFrom(''); setDateTo(''); }} />
-              : <Button title="Create invoice" icon="plus" onPress={() => router.push('/invoice/new')} />}
+            icon={search || dateFiltered ? 'search' : 'file-plus'}
+            title={search || dateFiltered ? 'No matching invoices' : 'No invoices yet'}
+            body={search || dateFiltered ? 'Try a different search or clear the filters.' : 'Create your first invoice, or import a PDF to start without typing.'}
+            action={search || dateFiltered
+              ? <Button title="Clear filters" variant="outline" onPress={() => { setSearch(''); setDateFrom(''); setDateTo(''); }} />
+              : <Button title="Create invoice" icon="plus" onPress={() => router.push({ pathname: '/invoice/new', params: { templateId: store.business?.defaultTemplateId ?? 'classic' } })} />}
           />
         </Card>
       )}
 
-      <Sheet visible={sheet} onClose={() => setSheet(false)} title="Filter invoices" subtitle="Filters apply together with search and status."
+      <Sheet visible={sheet} onClose={() => setSheet(false)} title="Filter invoices" subtitle="Filters apply together with search."
         footer={<View style={{ flexDirection: 'row', gap: 10 }}>
           <Button title="Clear" variant="outline" onPress={() => { setDateFrom(''); setDateTo(''); }} style={{ flex: 1 }} />
           <Button title="Apply" onPress={() => setSheet(false)} style={{ flex: 1 }} />
@@ -191,30 +158,7 @@ export default function InvoicesScreen() {
   );
 }
 
-/** Tiny visual hint of each layout's structure. */
-function TemplatePreview({ accent, id }: { accent: string; id: string }) {
-  const colors = useColors();
-  const bar = (width: `${number}%`, color = colors.border, height = 4) => <View style={{ width, height, borderRadius: 2, backgroundColor: color }} />;
-  return (
-    <View style={[styles.preview, { backgroundColor: colors.background, borderColor: colors.border }]}>
-      <View style={{ height: 4, borderRadius: 2, backgroundColor: id === 'minimal' ? colors.mutedForeground : accent, width: '55%' }} />
-      {id === 'dispatch' ? <View style={[styles.previewBlock, { backgroundColor: `${accent}33` }]} /> : null}
-      <View style={{ flexDirection: 'row', gap: 4 }}>
-        <View style={{ flex: 1, gap: 3 }}>{bar('90%')}{bar('70%')}</View>
-        {id !== 'minimal' ? <View style={{ flex: 1, gap: 3 }}>{bar('90%')}{bar('60%')}</View> : null}
-      </View>
-      <View style={{ height: 5, borderRadius: 2, backgroundColor: id === 'minimal' ? colors.border : accent, opacity: 0.85 }} />
-      {Array.from({ length: id === 'compact' ? 5 : 3 }).map((_, index) => <View key={index}>{bar(index % 2 ? '85%' : '100%', colors.border, id === 'compact' ? 2 : 3)}</View>)}
-      {id === 'tax-summary' ? <View style={[styles.previewBlock, { backgroundColor: `${accent}22`, height: 10 }]} /> : null}
-    </View>
-  );
-}
-
 const styles = StyleSheet.create({
   page: { gap: 16 },
   quickActions: { flexDirection: 'row', gap: 10 },
-  templates: { gap: 10, paddingHorizontal: 20 },
-  template: { width: 150, borderWidth: 1, borderRadius: 18, padding: 11, gap: 5 },
-  preview: { height: 92, borderRadius: 10, borderWidth: 1, padding: 8, gap: 5, marginBottom: 4, overflow: 'hidden' },
-  previewBlock: { height: 8, borderRadius: 3 },
 });

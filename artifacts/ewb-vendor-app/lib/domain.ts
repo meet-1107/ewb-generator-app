@@ -60,6 +60,8 @@ export type Invoice = {
   idempotencyKey?: string;
   /** Bank details printed on the invoice; empty means none. */
   bank?: InvoiceBank | null;
+  /** false: the user said this invoice needs no e-way bill. */
+  ewbRequired?: boolean;
   status: InvoiceStatus;
   createdAt: string;
   updatedAt: string;
@@ -413,6 +415,7 @@ export function invoiceIssues(invoice: Invoice, others: Invoice[] = [], released
 
   if (!invoice.invoiceNumber.trim()) add('invoice', 'invoiceNumber', 'Invoice number is required.');
   else if (!/^[A-Za-z0-9/-]{1,16}$/.test(invoice.invoiceNumber.trim())) add('invoice', 'invoiceNumber', 'Use up to 16 letters, digits, / or -.');
+  else if (invoiceSeriesProblem(invoice, others, released)) add('invoice', 'invoiceNumber', invoiceSeriesProblem(invoice, others, released)!.message);
   else if (others.some((other) => other.id !== invoice.id && !released.has(other.id) && other.invoiceNumber.trim().toLowerCase() === invoice.invoiceNumber.trim().toLowerCase() && other.sellerGstin.toUpperCase() === invoice.sellerGstin.toUpperCase())) {
     add('invoice', 'invoiceNumber', 'This number is already used for this GSTIN.');
   }
@@ -547,6 +550,34 @@ export function releasedInvoiceIds(invoices: Invoice[], ewbs: EwbRecord[]) {
  * first invoice, which the user numbers. Deleted invoices and invoices whose
  * e-way bill was cancelled (`released`) do not count, so their number is used again.
  */
+/** Series of an invoice number: everything except its last run of digits ("INV-05" and "inv-12" share one). */
+function seriesOf(invoiceNumber: string) {
+  const match = NUMBERED.exec(invoiceNumber.trim());
+  return match ? `${match[1]!.toLowerCase()}#${match[3]!.toLowerCase()}` : null;
+}
+
+/**
+ * When the number does not follow the series of the GSTIN's latest invoice
+ * (e.g. GR-01 after INV-05): the message and the number that would follow.
+ */
+export function invoiceSeriesProblem(invoice: Invoice, others: Invoice[], released: Set<string> = new Set()) {
+  const counted = others.filter((other) => other.id !== invoice.id && !released.has(other.id) && other.invoiceNumber.trim() && other.sellerGstin.toUpperCase() === invoice.sellerGstin.toUpperCase());
+  const latest = [...counted].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  if (!latest || !invoice.invoiceNumber.trim()) return null;
+  const expected = seriesOf(latest.invoiceNumber);
+  if (!expected || seriesOf(invoice.invoiceNumber) === expected) return null;
+  const next = nextInvoiceNumber(counted);
+  return { next, latest: latest.invoiceNumber, message: `Invoice number does not follow your last invoice ${latest.invoiceNumber}. The next number is ${next}.` };
+}
+
+/** What the invoice list shows about the e-way bill. */
+export function invoiceEwbMeta(invoice: Invoice): { label: string; tone: 'green' | 'amber' | 'neutral'; icon: 'check' | 'file-text' | 'edit-3' } {
+  if (invoice.status === 'ewb_generated') return { label: 'EWB generated', tone: 'green', icon: 'check' };
+  if (invoice.status === 'draft') return { label: 'Draft · not saved yet', tone: 'neutral', icon: 'edit-3' };
+  if (invoice.ewbRequired === false) return { label: 'EWB not required', tone: 'neutral', icon: 'file-text' };
+  return { label: 'EWB pending', tone: 'amber', icon: 'file-text' };
+}
+
 export function nextInvoiceNumber(invoices: Invoice[], released: Set<string> = new Set()) {
   const counted = invoices.filter((invoice) => invoice.invoiceNumber.trim() && !released.has(invoice.id));
   const latest = [...counted].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];

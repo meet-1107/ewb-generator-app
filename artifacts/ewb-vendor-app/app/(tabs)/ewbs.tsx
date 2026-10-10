@@ -133,7 +133,7 @@ export default function EwbRegisterScreen() {
             icon={query || filter !== 'all' ? 'search' : 'truck'}
             title={query || filter !== 'all' ? 'No matching bills' : 'No e-way bills yet'}
             body={query || filter !== 'all' ? 'Try another search or status.' : 'Open a ready invoice and choose “Review EWB”. Bills show here once the provider confirms them.'}
-            action={!query && filter === 'all' ? <Button title="Go to invoices" icon="file-text" variant="outline" onPress={() => router.push({ pathname: '/(tabs)/invoices', params: { status: 'ready' } })} /> : undefined}
+            action={!query && filter === 'all' ? <Button title="Go to invoices" icon="file-text" variant="outline" onPress={() => router.push('/(tabs)/invoices')} /> : undefined}
           />
         </Card>
       )}
