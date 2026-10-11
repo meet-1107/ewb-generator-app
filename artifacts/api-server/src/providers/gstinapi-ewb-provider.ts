@@ -75,13 +75,32 @@ function failure(error: unknown): { ok: false; code: string; message: string } {
     if (error.code === "INSUFFICIENT_CREDITS") return { ok: false, code: "PROVIDER_CREDITS", message: "The e-way bill service is temporarily unavailable. Nothing was charged; try again later." };
     if (error.code === "UNAUTHORIZED" || error.code === "NOT_CONFIGURED") return { ok: false, code: "PROVIDER_SETUP", message: "The e-way bill service is not set up correctly on the server." };
     // A 400 here is the filing system rejecting the document (never charged by gstinapi.in).
-    return { ok: false, code: error.status === 400 ? "REJECTED" : error.code, message: error.message };
+    const message = /distance/i.test(error.message) && /pin ?code/i.test(error.message)
+      ? `${error.message} The road distance must be within 10% of the portal's own PIN-to-PIN distance; check both PIN codes and the distance.`
+      : error.message;
+    return { ok: false, code: error.status === 400 ? "REJECTED" : error.code, message };
   }
   return { ok: false, code: "PROVIDER_ERROR", message: "The e-way bill service returned an unexpected error." };
 }
 
 function needCredentials(ctx: ProviderContext): EwbCredentials | { ok: false; code: string; message: string } {
   return ctx.credentials ?? { ok: false, code: "CREDENTIALS_MISSING", message: "Add your e-way bill portal API login for this GSTIN first (Account → E-way bill portal login)." };
+}
+
+/**
+ * NIC refuses a distance more than 10% away from its own PIN-to-PIN figure
+ * ("distance between the pincodes given is too high or low"). Sending 0 lets
+ * NIC fill in its own distance, so a road distance from another source can
+ * never cause a rejection. NIC cannot calculate a distance within one PIN
+ * code, so there the entered figure is sent. EWB_DISTANCE=entered sends the
+ * entered figure always.
+ */
+const sendEnteredDistance = (process.env["EWB_DISTANCE"] ?? "").trim().toLowerCase() === "entered";
+
+export function nicDistance(input: EwbInput) {
+  const from = (input.dispatch ?? input.seller).pincode.trim();
+  const to = (input.shipTo ?? input.buyer).pincode.trim();
+  return sendEnteredDistance || from === to ? String(Number(input.transport.distanceKm)) : "0";
 }
 
 export function buildGeneratePayload(input: EwbInput) {
@@ -129,7 +148,7 @@ export function buildGeneratePayload(input: EwbInput) {
     totInvValue: rupees(input.totals.total),
     transporterId: input.transport.transporterId,
     transporterName: input.transport.transporterName,
-    transDistance: String(Number(input.transport.distanceKm)),
+    transDistance: nicDistance(input),
     transMode: mode,
     ...(mode === "1"
       ? { vehicleNo: input.transport.vehicleNumber, vehicleType: input.transport.vehicleType === "odc" ? "O" : "R" }

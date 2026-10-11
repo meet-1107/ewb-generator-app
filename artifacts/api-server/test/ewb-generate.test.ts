@@ -19,6 +19,7 @@ const gstin = {
   generateCalls: 0,
   /** Next generate: "ok" | "drop" (bill created, connection cut before the reply) | "reject". */
   next: "ok" as "ok" | "drop" | "reject",
+  lastDistance: "",
 };
 let counter = 0;
 
@@ -53,7 +54,8 @@ before(async () => {
     if (req.url === "/v1/ewaybill/credentials/test") return json(res, 200, { success: true, valid: true });
     if (req.url === "/v1/ewaybill") {
       gstin.generateCalls += 1;
-      const payload = body["payload"] as { docNo: string };
+      const payload = body["payload"] as { docNo: string; transDistance: string };
+      gstin.lastDistance = payload.transDistance;
       const mode = gstin.next;
       gstin.next = "ok";
       if (mode === "reject") return json(res, 400, { success: false, error: "Invalid HSN", error_code: "235" });
@@ -147,6 +149,18 @@ describe("e-way bill generation (gstinapi adapter, mocked provider)", () => {
     assert.equal(again.body["replay"], true);
     assert.equal(again.body["ewb"].ewbNumber, first.body["ewb"].ewbNumber);
     assert.equal(await balance(ws), 20);
+  });
+
+  it("lets NIC calculate the distance between different PIN codes, and sends the entered one within a PIN code", async () => {
+    const ws = await readyWorkspace();
+    await ws.call("POST", "/ewb/generate", { idempotencyKey: "key-dist-1", input: invoice("dist1", "DIST-1") });
+    assert.equal(gstin.lastDistance, "0");
+    const local = invoice("dist2", "DIST-2");
+    local.buyer = { ...local.buyer, pincode: "411001", state: "Maharashtra", gstin: "27AAPFU0939F1ZV" };
+    local.supplyType = "intra";
+    local.transport.distanceKm = "12";
+    await ws.call("POST", "/ewb/generate", { idempotencyKey: "key-dist-2", input: local });
+    assert.equal(gstin.lastDistance, "12");
   });
 
   it("a double tap (two parallel requests, same key) creates one bill and one charge", async () => {
