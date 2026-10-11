@@ -77,7 +77,9 @@ function failure(error: unknown): { ok: false; code: string; message: string } {
     // A 400 here is the filing system rejecting the document (never charged by gstinapi.in).
     const message = /distance/i.test(error.message) && /pin ?code/i.test(error.message)
       ? `${error.message} The road distance must be within 10% of the portal's own PIN-to-PIN distance; check both PIN codes and the distance.`
-      : error.message;
+      : /vehicle/i.test(error.message) && /(required|mandatory|blank|enter)/i.test(error.message)
+        ? `${error.message} Add the vehicle number, or enter only the transporter ID and leave the vehicle empty so the transporter adds it later (Part-B).`
+        : error.message;
     return { ok: false, code: error.status === 400 ? "REJECTED" : error.code, message };
   }
   return { ok: false, code: "PROVIDER_ERROR", message: "The e-way bill service returned an unexpected error." };
@@ -108,6 +110,10 @@ export const placeOf = (party: { address: string; state: string }) => party.addr
 
 /** NIC transaction type: 1 regular, 2 bill to - ship to, 3 bill from - dispatch from, 4 both. */
 export const transactionTypeOf = (input: EwbInput) => (input.dispatch ? (input.shipTo ? 4 : 3) : input.shipTo ? 2 : 1);
+
+/** Whether the bill carries Part-B (vehicle or transport document) or leaves it to the transporter. */
+export const hasPartB = (input: EwbInput) =>
+  input.transport.mode === "Road" ? Boolean(input.transport.vehicleNumber.trim()) : Boolean(input.transport.docNumber?.trim());
 
 export function buildGeneratePayload(input: EwbInput) {
   const inter = input.supplyType === "inter";
@@ -154,10 +160,12 @@ export function buildGeneratePayload(input: EwbInput) {
     transporterId: input.transport.transporterId,
     transporterName: input.transport.transporterName,
     transDistance: nicDistance(input),
-    transMode: mode,
-    ...(mode === "1"
-      ? { vehicleNo: input.transport.vehicleNumber, vehicleType: input.transport.vehicleType === "odc" ? "O" : "R" }
-      : { transDocNo: input.transport.docNumber ?? "", transDocDate: nicDate(input.transport.docDate ?? "") }),
+    // Part-B left for the transporter: NIC wants the mode and vehicle blank, else it asks for a vehicle number.
+    ...(!hasPartB(input)
+      ? { transMode: "", vehicleNo: "", transDocNo: "", transDocDate: "" }
+      : mode === "1"
+        ? { transMode: mode, vehicleNo: input.transport.vehicleNumber.replace(/[\s-]/g, "").toUpperCase(), vehicleType: input.transport.vehicleType === "odc" ? "O" : "R" }
+        : { transMode: mode, transDocNo: input.transport.docNumber ?? "", transDocDate: nicDate(input.transport.docDate ?? "") }),
     itemList: input.lines
       .filter((line) => line.description.trim() && line.taxablePaise > 0)
       .map((line) => ({
@@ -218,7 +226,7 @@ export class GstinApiEwbProvider implements EwbProvider {
       generatedAt,
       validUntil,
       validityDays: Math.max(1, Math.ceil((validUntil.getTime() - generatedAt.getTime()) / 86_400_000)),
-      partBPending: input.transport.mode === "Road" && !input.transport.vehicleNumber.trim(),
+      partBPending: !hasPartB(input),
       ...(nicKm ? { distanceKm: nicKm } : {}),
     };
   }

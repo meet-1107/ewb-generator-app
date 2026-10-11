@@ -131,7 +131,8 @@ export default function EwbDetailScreen() {
     const result = await dialog.prompt({
       title: 'Update vehicle (Part-B)',
       message: `Enter the new vehicle carrying these goods.${credits.costs.part_b ? ` Uses ${credits.costs.part_b} credits.` : ''}`,
-      choices: VEHICLE_REASONS,
+      // The first vehicle on a bill without Part-B is reported as "First time".
+      choices: ewb.status === 'part_b_pending' ? ['First time', ...VEHICLE_REASONS.filter((item) => item !== 'First time')] : VEHICLE_REASONS,
       inputLabel: 'New vehicle number',
       placeholder: 'MH12AB1234',
       autoCapitalize: 'characters',
