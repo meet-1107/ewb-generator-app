@@ -219,8 +219,8 @@ export default function EwbDetailScreen() {
 
   const docAction = async (kind: 'print' | 'share') => {
     try {
-      if (kind === 'print') await printHtml(ewbHtml(ewb, sandbox));
-      else await shareHtmlAsPdf(ewbHtml(ewb, sandbox), `EWB ${ewb.ewbNumber}`);
+      if (kind === 'print') await printHtml(ewbHtml(ewb, sandbox, invoice));
+      else await shareHtmlAsPdf(ewbHtml(ewb, sandbox, invoice), `EWB ${ewb.ewbNumber}`);
     } catch (error) {
       dialog.toast((error as Error).message || 'Could not create the PDF', 'danger');
     }

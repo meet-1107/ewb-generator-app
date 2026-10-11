@@ -262,6 +262,7 @@ function SummaryCard({ title, icon, onEdit, children }: { title: string; icon: k
 
 function GeneratedView({ ewb, sandbox }: { ewb: EwbRecord; sandbox: boolean }) {
   const colors = useColors();
+  const invoice = useAppStore().invoices.find((item) => item.id === ewb.invoiceId);
   const insets = useSafeAreaInsets();
   const dialog = useDialog();
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -288,8 +289,8 @@ function GeneratedView({ ewb, sandbox }: { ewb: EwbRecord; sandbox: boolean }) {
       <View style={{ marginTop: 'auto', gap: 10 }}>
         <Button title="View e-way bill" icon="eye" onPress={() => router.replace(`/ewb/${ewb.id}`)} testID="view-generated" />
         <ActionGrid>
-          <ActionCard icon="download" title="Download" detail="PDF to save or share" onPress={() => void shareHtmlAsPdf(ewbHtml(ewb, sandbox), `EWB ${ewb.ewbNumber}`).catch((error: Error) => dialog.toast(error.message, 'danger'))} />
-          <ActionCard icon="printer" title="Print" detail="Print a paper copy" onPress={() => void printHtml(ewbHtml(ewb, sandbox)).catch((error: Error) => dialog.toast(error.message, 'danger'))} />
+          <ActionCard icon="download" title="Download" detail="PDF to save or share" onPress={() => void shareHtmlAsPdf(ewbHtml(ewb, sandbox, invoice), `EWB ${ewb.ewbNumber}`).catch((error: Error) => dialog.toast(error.message, 'danger'))} />
+          <ActionCard icon="printer" title="Print" detail="Print a paper copy" onPress={() => void printHtml(ewbHtml(ewb, sandbox, invoice)).catch((error: Error) => dialog.toast(error.message, 'danger'))} />
           <ActionCard icon="eye" title="Preview" detail="See the bill as it prints" onPress={() => setPreviewOpen(true)} />
           <ActionCard icon="x-octagon" title="Cancel" danger detail="Within 24 h · opens the bill" onPress={() => router.replace({ pathname: '/ewb/[id]', params: { id: ewb.id, action: 'cancel' } })} />
         </ActionGrid>

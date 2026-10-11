@@ -10,7 +10,7 @@ import { GstinApiEwbProvider } from "./gstinapi-ewb-provider";
  */
 
 export type GenerateResult =
-  | { ok: true; providerBillId: string; ewbNumber: string; generatedAt: Date; validUntil: Date; validityDays: number; partBPending: boolean }
+  | { ok: true; providerBillId: string; ewbNumber: string; generatedAt: Date; validUntil: Date; validityDays: number; partBPending: boolean; distanceKm?: number }
   | { ok: false; code: string; message: string; issues: FieldIssue[] };
 
 export type ActionResult = { ok: true; validUntil?: Date } | { ok: false; code: string; message: string };

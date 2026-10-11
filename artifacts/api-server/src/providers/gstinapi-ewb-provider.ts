@@ -103,6 +103,12 @@ export function nicDistance(input: EwbInput) {
   return sendEnteredDistance || from === to ? String(Number(input.transport.distanceKm)) : "0";
 }
 
+/** The place name NIC prints ("Rajkot"): the last part of the address, else the state. */
+export const placeOf = (party: { address: string; state: string }) => party.address.split(",").pop()?.trim().slice(0, 50) || party.state;
+
+/** NIC transaction type: 1 regular, 2 bill to - ship to, 3 bill from - dispatch from, 4 both. */
+export const transactionTypeOf = (input: EwbInput) => (input.dispatch ? (input.shipTo ? 4 : 3) : input.shipTo ? 2 : 1);
+
 export function buildGeneratePayload(input: EwbInput) {
   const inter = input.supplyType === "inter";
   const tax = (line: EwbInput["lines"][number]) => Math.round((line.taxablePaise * line.taxRate) / 100);
@@ -114,8 +120,7 @@ export function buildGeneratePayload(input: EwbInput) {
   const from = input.dispatch ?? input.seller;
   const to = input.shipTo ?? input.buyer;
   const mode = TRANS_MODE[input.transport.mode] ?? "1";
-  // NIC transactionType: 1 regular, 2 bill to - ship to, 3 bill from - dispatch from, 4 both.
-  const transactionType = input.dispatch ? (input.shipTo ? 4 : 3) : input.shipTo ? 2 : 1;
+  const transactionType = transactionTypeOf(input);
   return {
     supplyType: "O",
     subSupplyType: "1",
@@ -126,14 +131,14 @@ export function buildGeneratePayload(input: EwbInput) {
     fromGstin: input.seller.gstin,
     fromTrdName: input.seller.name,
     fromAddr1: from.address.slice(0, 120),
-    fromPlace: from.address.split(",").pop()?.trim().slice(0, 50) || from.state,
+    fromPlace: placeOf(from),
     fromPincode: Number(from.pincode),
     fromStateCode: fromState,
     actFromStateCode: stateCode(from.state),
     toGstin: input.buyer.gstin || "URP",
     toTrdName: input.buyer.name,
     toAddr1: to.address.slice(0, 120),
-    toPlace: to.address.split(",").pop()?.trim().slice(0, 50) || to.state,
+    toPlace: placeOf(to),
     toPincode: Number(to.pincode),
     toStateCode: toState,
     actToStateCode: stateCode(to.state),
@@ -200,6 +205,12 @@ export class GstinApiEwbProvider implements EwbProvider {
     const generatedAt = stamped && stamped.getTime() <= now.getTime() && now.getTime() - stamped.getTime() < 86_400_000 ? now : stamped ?? now;
     const fallback = computeValidity(generatedAt, Number(input.transport.distanceKm), input.transport.vehicleType);
     const validUntil = parseNicTime(pick(body, ["valid_upto", "validUpto"]), "end") ?? fallback.validUntil;
+    // When 0 km is sent NIC fills in its own distance; its reply may carry it, or an alert naming it.
+    const reported = pick(body, ["distance", "trans_distance", "transDistance"]);
+    const alert = pick(body, ["alert", "info"]);
+    // Only a number that follows the word "distance" (e.g. "Distance between these two pincodes is 13").
+    const fromAlert = typeof alert === "string" ? /distance\D{0,60}?(\d{1,4})\b/i.exec(alert)?.[1] : undefined;
+    const nicKm = Number(reported ?? fromAlert ?? 0) || undefined;
     return {
       ok: true,
       providerBillId: ewbNumber,
@@ -208,6 +219,7 @@ export class GstinApiEwbProvider implements EwbProvider {
       validUntil,
       validityDays: Math.max(1, Math.ceil((validUntil.getTime() - generatedAt.getTime()) / 86_400_000)),
       partBPending: input.transport.mode === "Road" && !input.transport.vehicleNumber.trim(),
+      ...(nicKm ? { distanceKm: nicKm } : {}),
     };
   }
 

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { Router, type IRouter, type Response } from "express";
 import { z } from "zod";
 import { ewbProvider, type ProviderContext } from "../providers/ewb-provider";
-import { testCredentials } from "../providers/gstinapi-ewb-provider";
+import { placeOf, testCredentials, transactionTypeOf } from "../providers/gstinapi-ewb-provider";
 import { currentContext } from "../lib/context";
 import { audit, currentPeriod, withWorkspace, type CewbRecord, type EwbRecord, type Workspace } from "../lib/store";
 import { decryptSecret, encryptSecret, secretsConfigured } from "../lib/secrets";
@@ -239,6 +239,11 @@ router.post("/ewb/generate", async (req, res) => {
       transport: input.transport,
       history: [{ at: now, action: "Generated", detail: `Valid for ${result.validityDays} day${result.validityDays === 1 ? "" : "s"}` }],
       extensionCount: 0,
+      documentType: input.documentType,
+      transactionType: transactionTypeOf(input),
+      dispatch: (({ address, state, pincode }) => ({ place: placeOf({ address, state }), state: stateFromName(state)?.name ?? state, pincode }))(input.dispatch ?? input.seller),
+      delivery: (({ address, state, pincode }) => ({ place: placeOf({ address, state }), state: stateFromName(state)?.name ?? state, pincode }))(input.shipTo ?? input.buyer),
+      ...(result.distanceKm ? { nicDistanceKm: result.distanceKm } : {}),
       createdAt: now,
       updatedAt: now,
     };

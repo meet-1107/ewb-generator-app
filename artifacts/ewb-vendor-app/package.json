@@ -64,6 +64,7 @@
     "expo-print": "~57.0.2",
     "expo-secure-store": "~57.0.4",
     "expo-sharing": "~57.0.22",
-    "firebase": "^13.0.0"
+    "firebase": "^13.0.0",
+    "qrcode-generator": "1.4.4"
   }
 }

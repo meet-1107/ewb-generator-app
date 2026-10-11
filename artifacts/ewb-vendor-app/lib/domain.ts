@@ -210,6 +210,12 @@ export type EwbRecord = {
   cancelReason?: string;
   consolidatedInto?: string;
   extensionCount: number;
+  /** Recorded by the server for the printed bill (EWB-01); absent on older bills. */
+  documentType?: string;
+  transactionType?: number;
+  dispatch?: { place: string; state: string; pincode: string };
+  delivery?: { place: string; state: string; pincode: string };
+  nicDistanceKm?: number;
 };
 
 export type GstSnapshot = {

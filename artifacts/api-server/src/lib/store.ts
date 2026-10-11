@@ -52,6 +52,14 @@ export type EwbRecord = {
   /** Consolidated e-way bill this bill was moved under, if any. */
   consolidatedInto?: string;
   extensionCount: number;
+  /** For the printed bill (EWB-01). Absent on bills generated before they were recorded. */
+  documentType?: string;
+  /** NIC transaction type: 1 regular, 2 bill to-ship to, 3 bill from-dispatch from, 4 both. */
+  transactionType?: number;
+  dispatch?: { place: string; state: string; pincode: string };
+  delivery?: { place: string; state: string; pincode: string };
+  /** The distance NIC used, when its reply says (it calculates it when 0 is sent). */
+  nicDistanceKm?: number;
   createdAt: string;
   updatedAt: string;
 };

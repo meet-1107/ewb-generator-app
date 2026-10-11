@@ -13,6 +13,8 @@ import {
   type EwbRecord,
   type Invoice,
 } from '@/lib/domain';
+import { code128Svg } from '@/lib/code128';
+import { ewbSheet, qrPath } from '@/lib/ewb-sheet';
 
 const esc = (value: string | number | undefined) =>
   String(value ?? '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[char]!);
@@ -111,29 +113,51 @@ export function invoiceHtml(invoice: Invoice) {
   </body></html>`;
 }
 
-export function ewbHtml(ewb: EwbRecord, sandbox: boolean) {
-  const accent = '#175b42';
-  return `<!doctype html><html><head><meta charset="utf-8"><title>E-way bill ${esc(ewb.ewbNumber)}</title><style>${baseCss(accent, false)}</style></head><body>
-  ${sandbox ? '<div class="watermark">SANDBOX — NOT A VALID E-WAY BILL</div>' : ''}
-  <div class="head"><div><span class="badge">E-WAY BILL</span><h1 style="margin-top:8px;letter-spacing:2px">${esc(ewb.ewbNumber.replace(/(\d{4})(?=\d)/g, '$1 '))}</h1>
-    <div class="muted">Generated ${formatDate(ewb.generatedAt, true)} · Valid until ${formatDate(ewb.validUntil, true)}</div></div>
-    <div style="text-align:right"><div class="label">Status</div><strong>${esc(ewb.status.replace('_', ' ').toUpperCase())}</strong>
-    <div class="muted" style="margin-top:4px">Source: ${esc(ewb.verificationSource)}</div></div></div>
-  <div class="row">
-    <div class="col box"><div class="label">From</div><strong>${esc(ewb.sellerName)}</strong><div>GSTIN ${esc(ewb.sellerGstin)}</div><div class="muted">${esc(ewb.fromState)}</div></div>
-    <div class="col box"><div class="label">To</div><strong>${esc(ewb.buyerName)}</strong><div>GSTIN ${esc(ewb.buyerGstin)}</div><div class="muted">${esc(ewb.toState)}</div></div>
+/** The e-way bill in the NIC portal's print layout (EWB-01), from the same model as the in-app preview. */
+export function ewbHtml(ewb: EwbRecord, sandbox: boolean, invoice?: Invoice | null) {
+  const sheet = ewbSheet(ewb, invoice);
+  const qr = qrPath(sheet.qrText);
+  const rows = (items: [string, string][]) => items.map(([label, value]) => `<tr><td class="l">${esc(label)}</td><td class="v">${esc(value)}</td></tr>`).join('');
+  return `<!doctype html><html><head><meta charset="utf-8"><title>e-Way Bill ${esc(ewb.ewbNumber)}</title><style>
+  * { box-sizing: border-box; }
+  @page { margin: 12mm; }
+  body { font-family: 'Open Sans', 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; color: #000; margin: 0; font-size: 11px; }
+  table { width: 100%; border-collapse: collapse; }
+  .sheet { border: 1px solid #999; }
+  .title { text-align: center; padding: 8px 0 10px; border-bottom: 1px solid #999; }
+  .title h1 { font-size: 20px; margin: 0 0 6px; font-weight: 700; }
+  .main td { border: 1px solid #999; padding: 9px 6px; vertical-align: middle; }
+  .main td.l { width: 37%; }
+  .main td.v { font-weight: 700; }
+  .main td.big { font-size: 15px; }
+  .section td { font-weight: 700; padding: 9px 6px; border: 1px solid #999; }
+  .partb { margin: 6px; width: calc(100% - 12px); }
+  .partb th, .partb td { border: 1px solid #999; padding: 7px 5px; text-align: left; font-size: 10.5px; }
+  .partb th { font-weight: 700; }
+  .barcode { text-align: center; padding: 10px 0 6px; border: 1px solid #999; border-top: 0; font-size: 9px; }
+  .note { border: 1px solid #999; border-top: 0; padding: 8px 6px; font-size: 9px; }
+  .stamp { position: fixed; top: 38%; left: 0; right: 0; text-align: center; font-size: 64px; font-weight: 800; color: rgba(190,30,30,.18); transform: rotate(-24deg); }
+  .sandbox { position: fixed; top: 52%; left: 0; right: 0; text-align: center; font-size: 34px; font-weight: 800; color: rgba(190,30,30,.15); transform: rotate(-24deg); }
+  </style></head><body>
+  ${sheet.stamp ? `<div class="stamp">${sheet.stamp}</div>` : ''}
+  ${sandbox ? '<div class="sandbox">TEST BILL — NOT VALID FOR TRANSPORT</div>' : ''}
+  <div class="sheet">
+    <div class="title"><h1>e-Way Bill</h1>
+      <svg xmlns="http://www.w3.org/2000/svg" width="120" height="120" viewBox="-2 -2 ${qr.size + 4} ${qr.size + 4}" shape-rendering="crispEdges"><rect x="-2" y="-2" width="${qr.size + 4}" height="${qr.size + 4}" fill="#fff"/><path d="${qr.d}" fill="#000"/></svg>
+    </div>
+    <table class="main">
+      ${sheet.header.map(([label, value], index) => `<tr><td class="l">${esc(label)}</td><td class="v${index === 0 ? ' big' : ''}">${esc(value)}</td></tr>`).join('')}
+      <tr class="section"><td colspan="2">Part - A</td></tr>
+      ${rows(sheet.partA)}
+      <tr class="section"><td colspan="2">Part - B</td></tr>
+      <tr><td colspan="2" style="padding:0;border:1px solid #999">
+        <table class="partb"><tr><th>Mode</th><th>Vehicle / Trans<br/>Doc No &amp; Dt.</th><th>From</th><th>Entered Date</th><th>Entered By</th><th>CEWB No.<br/>(If any)</th><th>Multi Veh.Info<br/>(If any)</th></tr>
+        ${sheet.partB.length ? sheet.partB.map((row) => `<tr><td>${esc(row.mode)}</td><td>${esc(row.vehicle)}</td><td>${esc(row.from)}</td><td>${esc(row.enteredDate)}</td><td>${esc(row.enteredBy)}</td><td>${esc(row.cewb)}</td><td>${esc(row.multiVehicle)}</td></tr>`).join('') : '<tr><td colspan="7">Part-B not entered yet (vehicle details pending)</td></tr>'}
+        </table></td></tr>
+    </table>
   </div>
-  <div class="box" style="margin-top:12px"><div class="row">
-    <div class="col"><div class="label">Document</div>Tax invoice ${esc(ewb.invoiceNumber)}<br/><span class="muted">${formatDate(ewb.invoiceDate)}</span></div>
-    <div class="col"><div class="label">Value</div>${formatInr(ewb.totals.total)}<br/><span class="muted">Tax ${formatInr(ewb.totals.tax)}</span></div>
-    <div class="col"><div class="label">Transport</div>${esc(ewb.transport.mode)} · ${esc(ewb.transport.distanceKm)} km<br/><span class="muted">${esc(ewb.transport.vehicleNumber || 'Vehicle pending')}</span></div>
-    <div class="col"><div class="label">Transporter</div>${esc(ewb.transport.transporterName || '—')}<br/><span class="muted">${esc(ewb.transport.transporterId || '')}</span></div>
-  </div></div>
-  <table><tr><th>Product</th><th>HSN</th><th class="num">Qty</th><th class="num">Taxable</th><th class="num">Rate</th></tr>
-  ${ewb.lines.map((line) => `<tr><td>${esc(line.description)}</td><td>${esc(line.hsn)}</td><td class="num">${esc(line.quantity)} ${esc(line.unit)}</td><td class="num">${formatInr(line.taxablePaise)}</td><td class="num">${line.taxRate}%</td></tr>`).join('')}</table>
-  <div class="label" style="margin-top:18px">History</div>
-  ${ewb.history.map((item) => `<div class="muted">${formatDate(item.at, true)} — <strong style="color:#17231c">${esc(item.action)}</strong> ${esc(item.detail)}</div>`).join('')}
-  <div class="muted" style="margin-top:18px;font-size:9px">Provider bill ID ${esc(ewb.providerBillId)} · Last verified ${formatDate(ewb.lastVerifiedAt, true)}</div>
+  <div class="barcode">${code128Svg(ewb.ewbNumber)}<div>${esc(ewb.ewbNumber)}</div></div>
+  <div class="note">Note*: If any discrepancy in information please try after sometimes. Printed from E-Way Easy; the e-way bill portal (ewaybillgst.gov.in) is the authoritative record.</div>
   </body></html>`;
 }
 
