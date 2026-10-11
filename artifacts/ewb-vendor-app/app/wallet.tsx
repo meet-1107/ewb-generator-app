@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import * as WebBrowser from 'expo-web-browser';
 import { Linking, Pressable, RefreshControl, ScrollView, Share, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -24,6 +24,8 @@ export default function WalletScreen() {
   const dialog = useDialog();
   const [refreshing, setRefreshing] = useState(false);
   const [buying, setBuying] = useState<number | null>(null);
+  // Taken before the confirm dialog, so a double tap cannot open two payment links.
+  const buyGuard = useRef(false);
   const [custom, setCustom] = useState('');
   const wallet = store.wallet;
   const pricing = wallet?.pricing;
@@ -60,8 +62,10 @@ export default function WalletScreen() {
     if (!Number.isInteger(credits) || credits < pricing.min || credits > pricing.max) {
       return dialog.toast(`Choose between ${pricing.min} and ${pricing.max.toLocaleString('en-IN')} credits.`, 'danger');
     }
+    if (buyGuard.current) return;
+    buyGuard.current = true;
     const ok = await dialog.confirm({ title: `Buy ${credits} credits?`, message: `You pay ${rupees(credits)} (1 credit = ${rupees(1)}).${pricing.payments === 'sandbox' ? ' Test workspace: no real payment is taken.' : ' You will finish the payment on Razorpay (UPI, card or net banking).'}`, confirmLabel: `Pay ${rupees(credits)}`, icon: 'credit-card' });
-    if (!ok) return;
+    if (!ok) { buyGuard.current = false; return; }
     setBuying(credits);
     try {
       const { purchase, balance } = await api.buyCredits(credits);
@@ -77,6 +81,7 @@ export default function WalletScreen() {
     } catch (error) {
       dialog.toast(error instanceof ApiError ? error.message : 'Could not start the payment', 'danger');
     } finally {
+      buyGuard.current = false;
       setBuying(null);
     }
   };

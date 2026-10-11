@@ -20,9 +20,13 @@ export function useGstinVerify() {
     }
     setVerifying(true);
     try {
-      const { gstin: details } = await api.verifyGstin(gstin);
+      const { gstin: details, stale } = await api.verifyGstin(gstin);
       if (details.status.toLowerCase() !== 'active') {
         await dialog.alert({ title: `GSTIN is ${details.status}`, message: `${details.legalName} is not active on the GST network${details.cancellationDate ? ` (cancelled ${details.cancellationDate})` : ''}. E-way bills may be rejected.`, tone: 'warning' });
+      } else if (stale) {
+        // The GST network did not answer: the saved details are filled in, with their age.
+        const asOf = new Date(details.statusCheckedAt ?? details.verifiedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+        dialog.toast(`Details filled in. Status last confirmed ${asOf}.`, 'default');
       } else {
         dialog.toast('GSTIN verified — details filled in', 'success');
       }

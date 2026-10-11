@@ -18,8 +18,8 @@ router.post("/gstin/verify", rateLimit({ windowMs: 60 * 60_000, max: 100, by: "w
   if (problem) return res.status(400).json({ error: "invalid_gstin", message: problem });
   if (!gstinApiConfigured) return res.status(503).json({ error: "not_configured", message: "GSTIN verification is not set up on the server yet." });
   try {
-    const { record, cached } = await verifyGstin(gstin);
-    return res.json({ gstin: record, cached });
+    const { record, cached, stale } = await verifyGstin(gstin);
+    return res.json({ gstin: record, cached, stale: Boolean(stale) });
   } catch (error) {
     if (error instanceof GstinApiError) {
       if (error.code === "NOT_FOUND") return res.status(404).json({ error: "not_found", message: "This GSTIN is not registered with the GST network." });

@@ -63,7 +63,8 @@ export function roadDistance(from: string, to: string): Promise<Saved & { cached
   const pending = inFlight.get(key);
   if (pending) return pending;
   const task = (async () => {
-    const saved = await readDoc<Saved>("distances", key);
+    // Road distance is the same either way within a few km, so a return trip reuses the outbound lookup.
+    const saved = (await readDoc<Saved>("distances", key)) ?? (await readDoc<Saved>("distances", `${to}-${from}`));
     if (saved) return { ...saved, cached: true };
     const fresh = await lookup(from, to);
     await withDoc<Saved, null>("distances", key, () => ({ next: fresh, result: null }));

@@ -110,6 +110,8 @@ export type VerifiedGstin = {
   pincode: string;
   blockStatus: string | null;
   verifiedAt: string;
+  /** When the status (Active / Cancelled) was last confirmed with the GST network. */
+  statusCheckedAt?: string;
 };
 export type WalletEntry = {
   id: string;
@@ -177,7 +179,7 @@ export const api = {
   deleteEwbCredential: (gstin: string) => request<{ ok: true }>(`/ewb-credentials/${encodeURIComponent(gstin)}`, { method: 'DELETE' }),
   /** Road distance between two PIN codes (Google Routes, looked up once per pair on the server). */
   distance: (from: string, to: string) => request<{ from: string; to: string; km: number; cached: boolean }>(`/distance?from=${from}&to=${to}`, { timeoutMs: 20_000 }),
-  verifyGstin: (gstin: string) => request<{ gstin: VerifiedGstin; cached: boolean }>('/gstin/verify', { body: { gstin }, timeoutMs: 30_000 }),
+  verifyGstin: (gstin: string) => request<{ gstin: VerifiedGstin; cached: boolean; stale?: boolean }>('/gstin/verify', { body: { gstin }, timeoutMs: 30_000 }),
   wallet: () => request<WalletSummary>('/wallet'),
   sendEmailOtp: (email: string) => request<{ message: string; cooldownSeconds: number }>('/auth/email-otp/send', { body: { email }, timeoutMs: 30_000 }),
   verifyEmailOtp: (email: string, code: string) => request<{ grant: string; expiresInSeconds: number }>('/auth/email-otp/verify', { body: { email, code } }),
