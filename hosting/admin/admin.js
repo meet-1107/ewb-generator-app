@@ -542,7 +542,7 @@
       put(body, h("div", { class: "grid two" },
         h("div", { class: "card" }, h("h2", {}, "Services"), h("dl", { class: "kv" },
           h("dt", {}, "Environment"), h("dd", {}, health.environment), h("dt", {}, "Sign-in"), h("dd", {}, health.authMode), h("dt", {}, "Database"), h("dd", {}, `${health.store} · `, badge("ok", "reachable")),
-          h("dt", {}, "E-way bill provider"), h("dd", {}, health.ewbProvider ? [health.ewbProvider.label, " ", health.ewbProvider.sandbox ? badge("warn", "test mode") : badge("ok", "live")] : [badge("bad", "not configured"), " ", `EWB_PROVIDER="${health.ewbProviderSetting}"${health.ewbProviderSetting === "gstinapi" && !health.gstinapi.configured ? ", GSTINAPI_KEY empty" : ""}`]),
+          h("dt", {}, "E-way bill provider"), h("dd", {}, health.ewbProvider ? [health.ewbProvider.label, " ", health.ewbProvider.sandbox ? badge("warn", "test mode") : badge("ok", "live")] : [badge("bad", "not configured"), " ", health.ewbProviderSetting === "gstinapi" ? (health.gstinapi.configured ? "" : "GSTINAPI_KEY is empty") : `EWB_PROVIDER is ${health.ewbProviderSetting}. Set EWB_PROVIDER=gstinapi in functions/.env and deploy.`]),
           h("dt", {}, "GSTIN lookups"), h("dd", {}, yes(health.gstinapi.configured)), h("dt", {}, "Razorpay"), h("dd", {}, yes(health.razorpay.configured), " webhook secret ", yes(health.razorpay.webhookSecret, "set")),
           h("dt", {}, "Distance lookup"), h("dd", {}, yes(health.distanceLookup)), h("dt", {}, "Plan billing"), h("dd", {}, health.billingMode))),
         h("div", { class: "card" }, h("h2", {}, "Last activity"), h("dl", { class: "kv" },

@@ -113,13 +113,19 @@ const providers: Record<string, () => EwbProvider | null> = {
 };
 
 // Tolerates the usual .env slips: quotes, spaces, capitals, a trailing "# comment".
-const selected = (process.env["EWB_PROVIDER"] ?? "sandbox").replace(/\s+#.*$/, "").replace(/^["'\s]+|["'\s]+$/g, "").toLowerCase() || "sandbox";
-/** The EWB_PROVIDER value as the server read it (not a secret), for the admin health page. */
-export const ewbProviderSetting = selected;
+const rawSetting = (process.env["EWB_PROVIDER"] ?? "sandbox").replace(/\s+#.*$/, "").replace(/^["'\s]+|["'\s]+$/g, "").toLowerCase() || "sandbox";
+// "gstinapi.in", "gstin-api", "GSTIN API" all mean the gstinapi.in provider.
+const selected = rawSetting.replace(/[^a-z]/g, "").startsWith("gstinapi") ? "gstinapi" : rawSetting;
+/**
+ * What EWB_PROVIDER was set to, for the admin health page. Only the two
+ * known names are echoed: anything else (it could be a key pasted in the
+ * wrong line) is described, never shown.
+ */
+export const ewbProviderSetting = selected === "gstinapi" || selected === "sandbox" ? selected : rawSetting.startsWith("gak_") ? "an API key (it belongs in GSTINAPI_KEY)" : `an unknown value (${rawSetting.length} characters)`;
 export const ewbProvider: EwbProvider | null = providers[selected]?.() ?? null;
 if (!ewbProvider) {
   // Said once at start-up, in the function logs: e-way bills stay switched off until this is fixed.
   console.warn(selected === "gstinapi"
     ? "E-way bills are OFF: EWB_PROVIDER=gstinapi but GSTINAPI_KEY is empty in functions/.env."
-    : `E-way bills are OFF: unknown EWB_PROVIDER "${selected}" (use gstinapi or sandbox).`);
+    : `E-way bills are OFF: EWB_PROVIDER is ${ewbProviderSetting}; set EWB_PROVIDER=gstinapi.`);
 }
