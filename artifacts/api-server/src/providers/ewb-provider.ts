@@ -112,7 +112,10 @@ const providers: Record<string, () => EwbProvider | null> = {
   gstinapi: () => (gstinApiConfigured ? new GstinApiEwbProvider() : null),
 };
 
-const selected = process.env["EWB_PROVIDER"] ?? "sandbox";
+// Tolerates the usual .env slips: quotes, spaces, capitals, a trailing "# comment".
+const selected = (process.env["EWB_PROVIDER"] ?? "sandbox").replace(/\s+#.*$/, "").replace(/^["'\s]+|["'\s]+$/g, "").toLowerCase() || "sandbox";
+/** The EWB_PROVIDER value as the server read it (not a secret), for the admin health page. */
+export const ewbProviderSetting = selected;
 export const ewbProvider: EwbProvider | null = providers[selected]?.() ?? null;
 if (!ewbProvider) {
   // Said once at start-up, in the function logs: e-way bills stay switched off until this is fixed.

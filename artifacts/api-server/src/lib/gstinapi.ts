@@ -15,9 +15,9 @@
 import { outcomeFor, recordApiCall, recordProviderQuota } from "./api-log";
 
 const baseUrl = (process.env["GSTINAPI_BASE_URL"] ?? "https://www.gstinapi.in").replace(/\/+$/, "");
-const apiKey = process.env["GSTINAPI_KEY"] ?? "";
+const apiKey = (process.env["GSTINAPI_KEY"] ?? "").replace(/^["'\s]+|["'\s]+$/g, "");
 /** Until GSTINAPI_TEST_MODE=false, e-way bill calls are validated but never sent to NIC. */
-export const gstinApiTestMode = process.env["GSTINAPI_TEST_MODE"] !== "false";
+export const gstinApiTestMode = (process.env["GSTINAPI_TEST_MODE"] ?? "").replace(/\s+#.*$/, "").replace(/^["'\s]+|["'\s]+$/g, "").toLowerCase() !== "false";
 export const gstinApiConfigured = Boolean(apiKey);
 
 export class GstinApiError extends Error {

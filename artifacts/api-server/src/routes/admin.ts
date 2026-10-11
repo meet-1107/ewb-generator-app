@@ -12,7 +12,7 @@ import { rateLimit } from "../lib/rate-limit";
 import { peekWorkspace, queryLogs, withWorkspace } from "../lib/store";
 import { setSuspended } from "../lib/suspensions";
 import { adjustCredits, creditCosts, walletSummary } from "../lib/wallet";
-import { ewbProvider } from "../providers/ewb-provider";
+import { ewbProvider, ewbProviderSetting } from "../providers/ewb-provider";
 import { settlePurchase } from "./wallet";
 
 /**
@@ -424,6 +424,7 @@ router.get("/health", allow("health"), async (_req, res) => {
     store: process.env["STORE"] === "firestore" ? "firestore" : "file",
     database: "ok",
     ewbProvider: ewbProvider ? { id: ewbProvider.id, label: ewbProvider.label, sandbox: ewbProvider.sandbox } : null,
+    ewbProviderSetting,
     gstinapi: { configured: gstinApiConfigured, testMode: gstinApiTestMode },
     razorpay: { configured: razorpayConfigured, webhookSecret: Boolean(process.env["RAZORPAY_WEBHOOK_SECRET"]) },
     distanceLookup: distanceConfigured,
