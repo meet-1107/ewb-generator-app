@@ -458,7 +458,8 @@ router.get("/ewb-credentials", async (req, res) => {
   const credentials = await withWorkspace(req.workspaceId, (workspace) =>
     Object.values(workspace.ewbCredentials).map(({ gstin, username, updatedAt }) => ({ gstin, username, updatedAt })),
   );
-  res.json({ credentials, required: Boolean(ewbProvider?.needsCredentials), canStore: secretsConfigured });
+  // provider: "none" when the server has no e-way bill provider (e.g. GSTINAPI_KEY missing), so the app does not call it sandbox.
+  res.json({ credentials, required: Boolean(ewbProvider?.needsCredentials), canStore: secretsConfigured, provider: ewbProvider ? (ewbProvider.sandbox ? "test" : "live") : "none", providerId: ewbProvider?.id ?? null });
 });
 
 router.put("/ewb-credentials", async (req, res) => {

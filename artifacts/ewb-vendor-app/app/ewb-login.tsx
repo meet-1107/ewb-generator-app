@@ -21,6 +21,7 @@ export default function EwbLoginScreen() {
   const dialog = useDialog();
   const [saved, setSaved] = useState<EwbCredential[]>([]);
   const [required, setRequired] = useState(true);
+  const [provider, setProvider] = useState<'live' | 'test' | 'none' | undefined>();
   const [canStore, setCanStore] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [editing, setEditing] = useState<string | null>(null);
@@ -43,6 +44,7 @@ export default function EwbLoginScreen() {
       const result = await api.ewbCredentials();
       setSaved(result.credentials);
       setRequired(result.required);
+      setProvider(result.provider);
       setCanStore(result.canStore);
     } catch (error) {
       dialog.toast(error instanceof ApiError ? error.message : 'Could not load saved logins', 'danger');
@@ -98,7 +100,9 @@ export default function EwbLoginScreen() {
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <ScreenHeader title="E-way bill portal login" subtitle="API username & password per GSTIN" />
       <ScrollView contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 30 }]} keyboardShouldPersistTaps="handled">
-        {!required && loaded ? <Notice title="Not needed right now" body="The server is using the sandbox provider, which does not need a portal login." /> : null}
+        {loaded && provider === 'none' ? <Notice tone="warning" title="E-way bill generation is not switched on yet" body="The server has no e-way bill provider connected (its gstinapi.in key is missing). Your saved login is kept and is checked automatically once it is switched on." /> : null}
+        {loaded && provider !== 'none' && !required ? <Notice title="Not needed right now" body="The server is using the sandbox provider, which does not need a portal login." /> : null}
+        {loaded && provider === 'test' && required ? <Notice tone="warning" title="Test mode" body="Bills are checked by gstinapi.in but not filed with NIC. Ask the app owner to switch to live mode." /> : null}
         {!canStore ? <Notice tone="warning" title="Server setup needed" body="The server cannot store passwords securely yet (EWB_CREDENTIALS_SECRET is not set)." /> : null}
         <Card>
           <TextBlock size={13} color={colors.mutedForeground}>

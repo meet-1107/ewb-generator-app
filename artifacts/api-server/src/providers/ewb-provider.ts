@@ -114,3 +114,9 @@ const providers: Record<string, () => EwbProvider | null> = {
 
 const selected = process.env["EWB_PROVIDER"] ?? "sandbox";
 export const ewbProvider: EwbProvider | null = providers[selected]?.() ?? null;
+if (!ewbProvider) {
+  // Said once at start-up, in the function logs: e-way bills stay switched off until this is fixed.
+  console.warn(selected === "gstinapi"
+    ? "E-way bills are OFF: EWB_PROVIDER=gstinapi but GSTINAPI_KEY is empty in functions/.env."
+    : `E-way bills are OFF: unknown EWB_PROVIDER "${selected}" (use gstinapi or sandbox).`);
+}

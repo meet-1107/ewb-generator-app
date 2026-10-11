@@ -173,7 +173,7 @@ export const api = {
   listConsolidated: () => request<{ cewbs: CewbRecord[] }>('/ewb-consolidated'),
   consolidate: (body: { ewbIds: string[]; vehicleNumber: string; fromPlace: string; fromState: string; transMode?: string }) =>
     request<{ cewb: CewbRecord; balance: number }>('/ewb-consolidated', { body, timeoutMs: 45_000 }),
-  ewbCredentials: () => request<{ credentials: EwbCredential[]; required: boolean; canStore: boolean }>('/ewb-credentials'),
+  ewbCredentials: () => request<{ credentials: EwbCredential[]; required: boolean; canStore: boolean; provider?: 'live' | 'test' | 'none'; providerId?: string | null }>('/ewb-credentials'),
   saveEwbCredential: (gstin: string, username: string, password: string) =>
     request<{ credential: EwbCredential; checked: boolean; message: string }>('/ewb-credentials', { method: 'PUT', body: { gstin, username, password }, timeoutMs: 30_000 }),
   deleteEwbCredential: (gstin: string) => request<{ ok: true }>(`/ewb-credentials/${encodeURIComponent(gstin)}`, { method: 'DELETE' }),
