@@ -207,7 +207,7 @@ export default function EwbReviewScreen() {
         </SummaryCard>
         <SummaryCard title="Transport" icon="truck" onEdit={editInvoice}>
           <KeyValue label="Mode" value={`${invoice.transportMode}${invoice.vehicleType === 'odc' ? ' · Over-dimensional' : ''}`} />
-          <KeyValue label={invoice.transportMode === 'Road' ? 'Vehicle' : 'Transport doc'} value={invoice.transportMode === 'Road' ? invoice.vehicleNumber || 'Added later (Part-B)' : `${invoice.transportDocNo} · ${invoice.transportDocDate}`} mono />
+          <KeyValue label={invoice.transportMode === 'Road' ? 'Vehicle' : 'Transport doc'} value={invoice.transportMode === 'Road' ? invoice.vehicleNumber || 'By transporter' : `${invoice.transportDocNo} · ${invoice.transportDocDate}`} mono />
           <KeyValue label="Distance" value={invoice.distanceKm ? `${invoice.distanceKm} km` : '—'} />
           <KeyValue label="Expected validity" value={invoice.distanceKm ? `${Math.max(1, Math.ceil(Number(invoice.distanceKm) / (invoice.vehicleType === 'odc' ? 20 : 200)))} day(s)` : '—'} />
           <KeyValue label="Transporter" value={invoice.transporterName || '—'} />
@@ -282,7 +282,7 @@ function GeneratedView({ ewb, sandbox }: { ewb: EwbRecord; sandbox: boolean }) {
         <Animated.View style={[styles.successIcon, { backgroundColor: colors.primary, transform: [{ scale }] }]}><Feather name="check" size={38} color={colors.primaryForeground} /></Animated.View>
         <TextBlock size={13} weight="semibold" color={colors.mutedForeground}>E-WAY BILL GENERATED</TextBlock>
         <TextBlock size={30} weight="bold" style={{ letterSpacing: 2 }} selectable>{ewb.ewbNumber.replace(/(\d{4})(?=\d)/g, '$1 ')}</TextBlock>
-        <StatusPill label={ewb.status === 'part_b_pending' ? 'Vehicle pending' : 'Active'} tone={ewb.status === 'part_b_pending' ? 'amber' : 'green'} />
+        <StatusPill label="Active" tone="green" />
         <TextBlock size={13} color={colors.mutedForeground} style={{ textAlign: 'center', lineHeight: 19 }}>Valid until {formatDate(ewb.validUntil, true)} · {ewb.validityDays} day{ewb.validityDays === 1 ? '' : 's'}</TextBlock>
       </View>
       {sandbox ? <Notice tone="warning" title="Sandbox bill" body="This number came from the test provider and cannot be used to move goods." /> : null}

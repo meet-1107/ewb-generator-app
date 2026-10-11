@@ -152,7 +152,7 @@ export function ewbHtml(ewb: EwbRecord, sandbox: boolean, invoice?: Invoice | nu
       <tr class="section"><td colspan="2">Part - B</td></tr>
       <tr><td colspan="2" style="padding:0;border:1px solid #999">
         <table class="partb"><tr><th>Mode</th><th>Vehicle / Trans<br/>Doc No &amp; Dt.</th><th>From</th><th>Entered Date</th><th>Entered By</th><th>CEWB No.<br/>(If any)</th><th>Multi Veh.Info<br/>(If any)</th></tr>
-        ${sheet.partB.length ? sheet.partB.map((row) => `<tr><td>${esc(row.mode)}</td><td>${esc(row.vehicle)}</td><td>${esc(row.from)}</td><td>${esc(row.enteredDate)}</td><td>${esc(row.enteredBy)}</td><td>${esc(row.cewb)}</td><td>${esc(row.multiVehicle)}</td></tr>`).join('') : '<tr><td colspan="7">Part-B not entered yet (vehicle details pending)</td></tr>'}
+        ${sheet.partB.length ? sheet.partB.map((row) => `<tr><td>${esc(row.mode)}</td><td>${esc(row.vehicle)}</td><td>${esc(row.from)}</td><td>${esc(row.enteredDate)}</td><td>${esc(row.enteredBy)}</td><td>${esc(row.cewb)}</td><td>${esc(row.multiVehicle)}</td></tr>`).join('') : '<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td></tr>'}
         </table></td></tr>
     </table>
   </div>

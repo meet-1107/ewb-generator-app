@@ -214,7 +214,7 @@ export default function EwbDetailScreen() {
 
   const shareText = async () => {
     await Share.share({
-      message: `E-way bill ${ewb.ewbNumber}${sandbox ? ' (SANDBOX — not valid)' : ''}\nInvoice ${ewb.invoiceNumber} · ${formatInr(ewb.totals.total)}\nFrom ${ewb.sellerName} (${ewb.fromState}) to ${ewb.buyerName} (${ewb.toState})\nVehicle ${ewb.transport.vehicleNumber || 'pending'} · Valid until ${formatDate(ewb.validUntil, true)}`,
+      message: `E-way bill ${ewb.ewbNumber}${sandbox ? ' (SANDBOX — not valid)' : ''}\nInvoice ${ewb.invoiceNumber} · ${formatInr(ewb.totals.total)}\nFrom ${ewb.sellerName} (${ewb.fromState}) to ${ewb.buyerName} (${ewb.toState})\n${ewb.transport.vehicleNumber ? `Vehicle ${ewb.transport.vehicleNumber} · ` : ''}Valid until ${formatDate(ewb.validUntil, true)}`,
     }).catch(() => undefined);
   };
 
@@ -267,7 +267,6 @@ export default function EwbDetailScreen() {
           <ActionCard icon="x-octagon" title="Cancel" danger detail={status === 'cancelled' ? 'Already cancelled' : canCancel ? `${credits.costs.cancel} credits · within 24 h` : '24-hour window closed'} disabled={!canCancel} busy={busy === 'Cancel'} onPress={() => void cancel()} testID="ewb-cancel" />
         </ActionGrid>
 
-        {ewb.status === 'part_b_pending' && status !== 'expired' ? <Notice tone="warning" title="Vehicle details pending" body="Goods cannot move until a vehicle number is added (Part-B)." action="Add vehicle" onAction={() => void updateVehicle()} /> : null}
 
         <Card>
           <SectionHead icon="map-pin" title="Route" />
@@ -311,7 +310,7 @@ export default function EwbDetailScreen() {
         <Card>
           <SectionHead icon="truck" title="Transport" />
           <KeyValue label="Mode" value={ewb.transport.mode} />
-          <KeyValue label="Vehicle" value={ewb.transport.vehicleNumber || 'Pending'} mono />
+          <KeyValue label="Vehicle" value={ewb.transport.vehicleNumber || 'By transporter'} mono />
           <KeyValue label="Distance" value={`${ewb.transport.distanceKm} km`} />
           <KeyValue label="Transporter" value={ewb.transport.transporterName || '—'} />
           {ewb.transport.transporterId ? <KeyValue label="Transporter ID" value={ewb.transport.transporterId} /> : null}

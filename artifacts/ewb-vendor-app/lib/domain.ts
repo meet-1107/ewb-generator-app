@@ -566,8 +566,9 @@ export function toEwbInput(invoice: Invoice) {
 
 export function ewbStatusMeta(status: EwbStatus | string): { label: string; tone: 'green' | 'amber' | 'red' | 'neutral' } {
   switch (status) {
-    case 'active': return { label: 'Active', tone: 'green' };
-    case 'part_b_pending': return { label: 'Vehicle pending', tone: 'amber' };
+    // Part-B is usually filled by the transporter on the portal, so a bill without it is shown as active.
+    case 'active':
+    case 'part_b_pending': return { label: 'Active', tone: 'green' };
     case 'expired': return { label: 'Expired', tone: 'neutral' };
     case 'cancelled': return { label: 'Cancelled', tone: 'red' };
     default: return { label: 'Verification unavailable', tone: 'neutral' };

@@ -24,7 +24,7 @@ const tabs: { label: string; value: Filter }[] = [
 
 function needsCheck(ewb: EwbRecord) {
   const status = liveEwbStatus(ewb);
-  return status === 'part_b_pending' || (status === 'active' && Date.now() - Date.parse(ewb.lastVerifiedAt) > 24 * 3_600_000);
+  return (status === 'active' || status === 'part_b_pending') && Date.now() - Date.parse(ewb.lastVerifiedAt) > 24 * 3_600_000;
 }
 
 export default function EwbRegisterScreen() {
@@ -172,7 +172,7 @@ function EwbRow({ ewb }: { ewb: EwbRecord }) {
       <View style={[styles.rowMeta, { borderTopColor: colors.border }]}>
         <Meta icon="calendar" label="Generated" value={formatDate(ewb.generatedAt)} />
         <Meta icon="clock" label={status === 'expired' ? 'Expired' : 'Valid until'} value={formatDate(ewb.validUntil, true)} danger={soon} />
-        <Meta icon="truck" label="Vehicle" value={ewb.transport.vehicleNumber || 'Pending'} />
+        <Meta icon="truck" label="Vehicle" value={ewb.transport.vehicleNumber || 'By transporter'} />
       </View>
       <View style={styles.rowFoot}>
         <TextBlock size={11} color={colors.mutedForeground}>Verified {relativeTime(ewb.lastVerifiedAt)} · {ewb.provider === 'sandbox' ? 'Sandbox' : ewb.provider}</TextBlock>

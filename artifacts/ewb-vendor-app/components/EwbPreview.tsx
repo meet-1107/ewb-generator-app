@@ -55,7 +55,7 @@ export function EwbPreview({ ewb, visible, onClose, sandbox }: { ewb: EwbRecord;
               <View style={styles.tr} key={rowIndex}>
                 {[entry.mode, entry.vehicle, entry.from, entry.enteredDate, entry.enteredBy, entry.cewb, entry.multiVehicle].map((value, index) => <Text key={index} style={[styles.td, { width: widths[index] }]} selectable>{value}</Text>)}
               </View>
-            )) : <Text style={[styles.td, { width: widths.reduce((a, b) => a + b, 0) }]}>Part-B not entered yet (vehicle details pending)</Text>}
+            )) : <View style={styles.tr}>{widths.map((width, index) => <Text key={index} style={[styles.td, { width }]}> </Text>)}</View>}
           </View>
         </ScrollView>
         {bars ? (
