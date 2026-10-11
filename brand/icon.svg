@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024"><defs>
+  <linearGradient id="tile" x1="0" y1="0" x2="1024" y2="1024" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#1E7652"/><stop offset="0.5" stop-color="#175B42"/><stop offset="1" stop-color="#0E3F2E"/>
+  </linearGradient>
+  <radialGradient id="glow" cx="300" cy="170" r="760" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#FFFFFF" stop-opacity="0.10"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+  </radialGradient>
+  <linearGradient id="amber" x1="590" y1="450" x2="680" y2="575" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#FFD15C"/><stop offset="1" stop-color="#F59E0B"/>
+  </linearGradient>
+  <linearGradient id="paper" x1="0" y1="292" x2="0" y2="732" gradientUnits="userSpaceOnUse">
+    <stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#ECEBE2"/>
+  </linearGradient>
+  <filter id="lift" x="-30%" y="-30%" width="160%" height="170%">
+    <feDropShadow dx="0" dy="12" stdDeviation="14" flood-color="#03130D" flood-opacity="0.32"/>
+  </filter>
+</defs><rect width="1024" height="1024" fill="url(#tile)"/><rect width="1024" height="1024" fill="url(#glow)"/><g filter="url(#lift)"><path fill="url(#paper)" d="M652 292 H394 A72 72 0 0 0 322 364 V660 A72 72 0 0 0 394 732 H652 A50 50 0 0 0 652 632 H438 A16 16 0 0 1 422 616 V408 A16 16 0 0 1 438 392 H652 A50 50 0 0 0 652 292 Z"/><path fill="url(#paper)" d="M410 462 H498 A50 50 0 0 1 498 562 H410 Z M422 446 A16 16 0 0 0 438 462 H422 Z M422 578 A16 16 0 0 1 438 562 H422 Z"/><path fill="none" stroke="url(#amber)" stroke-width="58" stroke-linecap="round" stroke-linejoin="round" d="M608 460 L660 512 L608 564"/></g></svg>
