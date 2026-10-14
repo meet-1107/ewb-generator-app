@@ -630,6 +630,16 @@ export function releasedInvoiceIds(invoices: Invoice[], ewbs: EwbRecord[]) {
  * first invoice, which the user numbers. Deleted invoices and invoices whose
  * e-way bill was cancelled (`released`) do not count, so their number is used again.
  */
+/**
+ * The invoice whose number sets the series: the newest one made in the app. A PDF
+ * import (often someone else's bill, "55" among FY26-27/306…) sets it only when
+ * no invoice was made in the app; it still counts toward the highest number.
+ */
+function latestOfSeries(counted: Invoice[]) {
+  const made = counted.filter((invoice) => !invoice.sourceFileName);
+  return [...(made.length ? made : counted)].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+}
+
 /** Series of an invoice number: everything except its last run of digits ("INV-05" and "inv-12" share one). */
 function seriesOf(invoiceNumber: string) {
   const match = NUMBERED.exec(invoiceNumber.trim());
@@ -641,8 +651,10 @@ function seriesOf(invoiceNumber: string) {
  * (e.g. GR-01 after INV-05): the message and the number that would follow.
  */
 export function invoiceSeriesProblem(invoice: Invoice, others: Invoice[], released: Set<string> = new Set()) {
+  // An invoice imported from a PDF keeps the number printed on it.
+  if (invoice.sourceFileName) return null;
   const counted = others.filter((other) => other.id !== invoice.id && !other.unsaved && !released.has(other.id) && other.invoiceNumber.trim() && sameSeller(other, invoice.sellerGstin));
-  const latest = [...counted].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  const latest = latestOfSeries(counted);
   if (!latest || !invoice.invoiceNumber.trim()) return null;
   const expected = seriesOf(latest.invoiceNumber);
   if (!expected || seriesOf(invoice.invoiceNumber) === expected) return null;
@@ -660,7 +672,7 @@ export function invoiceEwbMeta(invoice: Invoice): { label: string; tone: 'green'
 
 export function nextInvoiceNumber(invoices: Invoice[], released: Set<string> = new Set()) {
   const counted = invoices.filter((invoice) => invoice.invoiceNumber.trim() && !invoice.unsaved && !released.has(invoice.id));
-  const latest = [...counted].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+  const latest = latestOfSeries(counted);
   const match = latest ? NUMBERED.exec(latest.invoiceNumber.trim()) : null;
   if (!match) return '';
   const [, prefix, digits, suffix] = match as unknown as [string, string, string, string];
