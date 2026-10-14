@@ -98,8 +98,9 @@ export default function InvoiceEditorScreen() {
     loaded.current = true;
     if (found) {
       setInvoice(found);
-      // Opening an invoice never re-checks the GSTIN it already has.
-      autoVerifiedBuyer.current = found.buyerGstin;
+      // Opening an invoice never re-checks the GSTIN it already has, except a fresh
+      // PDF import: its buyer GSTIN fills the buyer's name and address once.
+      autoVerifiedBuyer.current = found.extraction && !found.extraction.confirmed ? '' : found.buyerGstin;
       setShowDispatch(hasDispatch(found));
       setShowShipTo(hasShipTo(found));
       if (view) {
@@ -236,10 +237,18 @@ export default function InvoiceEditorScreen() {
   const autoVerifiedBuyer = useRef('');
   const buyerGstinNow = invoice?.buyerGstin ?? '';
   useEffect(() => {
-    if (!canVerify || locked || buyerGstinNow.length !== 15 || gstinProblem(buyerGstinNow) || autoVerifiedBuyer.current === buyerGstinNow) return;
+    if (locked || buyerGstinNow.length !== 15 || gstinProblem(buyerGstinNow) || autoVerifiedBuyer.current === buyerGstinNow) return;
     autoVerifiedBuyer.current = buyerGstinNow;
-    if (store.parties.some((party) => party.gstin === buyerGstinNow && party.verified)) return;
-    void verifyBuyer();
+    // A buyer saved earlier fills in at once; one verified before needs no new lookup.
+    const saved = store.parties.find((party) => party.gstin.toUpperCase() === buyerGstinNow);
+    if (saved) {
+      patch({ buyerName: saved.name, buyerAddress: saved.address, buyerState: saved.state || stateForGstin(buyerGstinNow)?.name || '', buyerPincode: saved.pincode });
+      if (saved.verified) {
+        dialog.toast(`${saved.name} filled in from your buyers`, 'success');
+        return;
+      }
+    }
+    if (canVerify) void verifyBuyer();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [buyerGstinNow, canVerify]);
 
@@ -524,8 +533,8 @@ export default function InvoiceEditorScreen() {
       <EditorSection key="buyer" title="Buyer" icon="users" open={open.buyer} onToggle={() => setOpen((c) => ({ ...c, buyer: !c.buyer }))} errors={sectionErrors('buyer')} summary={invoice.buyerName || 'Not set'}>
         <Button title={store.parties.length ? 'Choose or add buyer' : 'Add new buyer'} icon="user-check" variant="outline" size="sm" onPress={() => setPicker('buyer')} testID="choose-buyer" />
         <Field label="GSTIN" value={invoice.buyerGstin} onChangeText={onGstinChange('buyerGstin', 'buyerState')} placeholder="Enter GSTIN to fill the details" autoCapitalize="characters" maxLength={15} error={errorFor('buyerGstin')} confidence={fromPdf('buyerGstin')}
-          right={canVerify && invoice.buyerGstin.length === 15 && !store.parties.some((party) => party.gstin === invoice.buyerGstin && party.verified) ? <Button title="Verify" size="sm" variant="outline" onPress={() => void verifyBuyer()} loading={verifying} testID="buyer-verify" /> : undefined}
-          hint={store.parties.some((party) => party.gstin === invoice.buyerGstin && party.verified) ? 'Verified buyer' : verifying ? 'Getting details from the GST network…' : canVerify ? 'Name, address, state and PIN fill in automatically. Leave empty if unregistered.' : 'Leave empty if unregistered.'}
+          right={canVerify && invoice.buyerGstin.length === 15 ? <Button title={store.parties.some((party) => party.gstin === invoice.buyerGstin && party.verified) ? 'Re-check' : 'Verify'} size="sm" variant="outline" onPress={() => void verifyBuyer()} loading={verifying} testID="buyer-verify" /> : undefined}
+          hint={verifying ? 'Getting details from the GST network…' : store.parties.some((party) => party.gstin === invoice.buyerGstin && party.verified) ? 'Verified buyer · details filled from your buyers' : canVerify ? 'Name, address, state and PIN fill in automatically. Leave empty if unregistered.' : 'Leave empty if unregistered.'}
           testID="buyer-gstin" />
         <Field label="Business name" required value={invoice.buyerName} onChangeText={set('buyerName')} placeholder="Business or person" autoCapitalize="words" error={errorFor('buyerName')} confidence={fromPdf('buyerName')} testID="buyer-name" />
         <Field label="Address" value={invoice.buyerAddress} onChangeText={set('buyerAddress')} placeholder="Billing address" multiline />
