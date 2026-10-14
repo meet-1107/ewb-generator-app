@@ -1,10 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { Linking, StyleSheet, View } from 'react-native';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
-import { useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Card, Divider, Field, ListRow, Notice, ScreenHeader, Sheet, StatusPill, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
+import { EWB_PORTAL_URL, EwbLoginSteps, useTutorialVideo } from '@/components/EwbLoginGuide';
 import { useColors } from '@/hooks/useColors';
 import { api, ApiError, type EwbCredential } from '@/lib/api';
 import { formatDate, gstinProblem } from '@/lib/domain';
@@ -15,7 +16,7 @@ import { useAppStore } from '@/state/app-store';
  * which stores it encrypted and uses it only to call the e-way bill system.
  */
 export default function EwbLoginScreen() {
-  const params = useLocalSearchParams<{ gstin?: string }>();
+  const params = useLocalSearchParams<{ gstin?: string; from?: string }>();
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const store = useAppStore();
@@ -30,6 +31,7 @@ export default function EwbLoginScreen() {
   const [password, setPassword] = useState('');
   const [newGstin, setNewGstin] = useState('');
   const [busy, setBusy] = useState(false);
+  const video = useTutorialVideo();
 
   const gstins = useMemo(() => {
     const list = new Set<string>();
@@ -81,6 +83,8 @@ export default function EwbLoginScreen() {
       dialog.toast(result.checked ? 'Login checked with the portal and saved' : result.message || 'Login saved securely', result.checked ? 'success' : 'default');
       setEditing(null);
       setNewGstin('');
+      // Opened from the first e-way bill: back to it, Generate is now unlocked.
+      if (params.from === 'ewb' && router.canGoBack()) return router.back();
       await load();
     } catch (error) {
       dialog.toast(error instanceof ApiError ? error.message : 'Could not save', 'danger');
@@ -105,10 +109,14 @@ export default function EwbLoginScreen() {
         {loaded && provider !== 'none' && !required ? <Notice title="Not needed right now" body="The server is using the sandbox provider, which does not need a portal login." /> : null}
         {loaded && provider === 'test' && required ? <Notice tone="warning" title="Test mode" body="Bills are checked by gstinapi.in but not filed with NIC. Ask the app owner to switch to live mode." /> : null}
         {!canStore ? <Notice tone="warning" title="Server setup needed" body="The server cannot store passwords securely yet (EWB_CREDENTIALS_SECRET is not set)." /> : null}
-        <Card>
-          <TextBlock size={13} color={colors.mutedForeground}>
-            One-time setup per GSTIN: log in to ewaybillgst.gov.in → Registration → For GSP → choose the GSP gstinapi.in tells you → create an API username and password (different from your normal login). Enter them here; we check them with the portal before saving.
-          </TextBlock>
+        <Card style={{ gap: 14 }}>
+          <TextBlock size={15} weight="semibold">How to create the API login</TextBlock>
+          <TextBlock size={12} color={colors.mutedForeground}>One-time setup for each GSTIN. The API login is different from your normal portal login.</TextBlock>
+          <EwbLoginSteps />
+          <View style={{ gap: 10 }}>
+            <Button title="Watch setup video" icon="play-circle" onPress={() => void video.open()} testID="ewb-login-video" />
+            <Button title="Open e-way bill portal" icon="external-link" variant="outline" onPress={() => void Linking.openURL(EWB_PORTAL_URL)} />
+          </View>
         </Card>
         <Card style={{ padding: 0, gap: 0 }}>
           {gstins.map((gstin, index) => {

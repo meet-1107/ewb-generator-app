@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Animated, Easing, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Card, Checkbox, Divider, KeyValue, Notice, ProgressSteps, ScreenHeader, StatusPill, TextBlock } from '@/components/AppUI';
@@ -13,6 +13,7 @@ import { ewbHtml, printHtml } from '@/lib/documents';
 import { usePdfActions } from '@/hooks/usePdfActions';
 import { ActionCard, ActionGrid } from '@/components/ActionCard';
 import { EwbPreview } from '@/components/EwbPreview';
+import { EwbLoginGuide } from '@/components/EwbLoginGuide';
 import { useAppStore } from '@/state/app-store';
 
 type Phase = 'checking' | 'review' | 'submitting' | 'generated' | 'rejected' | 'uncertain';
@@ -37,6 +38,34 @@ export default function EwbReviewScreen() {
   const requestKey = useRef<string | null>(null);
   const input = useMemo(() => (invoice ? toEwbInput(invoice) : null), [invoice]);
   const provider = store.config?.ewbProvider ?? null;
+  const sellerGstin = invoice?.sellerGstin.trim().toUpperCase() ?? '';
+  /** No portal API login saved for the seller GSTIN: the first bill shows the setup guide. */
+  const [loginMissing, setLoginMissing] = useState(false);
+  const [guideOpen, setGuideOpen] = useState(false);
+  const guideShown = useRef(false);
+
+  // Checked on every visit, so returning from the login screen unlocks Generate.
+  useFocusEffect(useCallback(() => {
+    if (!store.config?.ewbCredentialsRequired || !sellerGstin || !store.workspaceId) {
+      setLoginMissing(false);
+      return;
+    }
+    let active = true;
+    api.ewbCredentials()
+      .then((result) => {
+        if (!active) return;
+        const missing = result.required && !result.credentials.some((credential) => credential.gstin === sellerGstin);
+        setLoginMissing(missing);
+        if (missing && !guideShown.current) {
+          guideShown.current = true;
+          setGuideOpen(true);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, [sellerGstin, store.config?.ewbCredentialsRequired, store.workspaceId]));
 
   const check = useCallback(async () => {
     if (!input) return;
@@ -76,6 +105,7 @@ export default function EwbReviewScreen() {
   const totals = invoiceTotals(invoice);
 
   const submit = async (confirmedRetry = false) => {
+    if (loginMissing) return setGuideOpen(true);
     // Taken before any dialog: a second tap would otherwise queue a second confirm and a second request.
     if (inFlight.current) return;
     inFlight.current = true;
@@ -115,7 +145,11 @@ export default function EwbReviewScreen() {
         setPhase('review');
         const open = await dialog.confirm({ title: 'Bill already exists', message: apiError.message, confirmLabel: 'Open bill', cancelLabel: 'Close', icon: 'copy' });
         if (open) router.replace(`/ewb/${existing.id}`);
-      } else if (apiError.code === 'insufficient_credits' || apiError.code === 'credentials_missing') {
+      } else if (apiError.code === 'credentials_missing') {
+        setPhase('review');
+        setLoginMissing(true);
+        setGuideOpen(true);
+      } else if (apiError.code === 'insufficient_credits') {
         setPhase('review');
         await credits.handleError(apiError);
       } else if (apiError.code === 'pending') {
@@ -228,11 +262,11 @@ export default function EwbReviewScreen() {
         ) : (
           <>
             <Button
-              title={!provider ? 'EWB provider setup required' : phase === 'submitting' ? 'Submitting…' : phase === 'checking' ? 'Checking…' : `Generate e-way bill · ${credits.costs.generate} credits`}
-              icon={!provider ? 'lock' : 'send'}
+              title={!provider ? 'EWB provider setup required' : loginMissing ? 'Set up e-way bill portal login' : phase === 'submitting' ? 'Submitting…' : phase === 'checking' ? 'Checking…' : `Generate e-way bill · ${credits.costs.generate} credits`}
+              icon={!provider ? 'lock' : loginMissing ? 'key' : 'send'}
               onPress={() => void submit()}
               loading={busy}
-              disabled={!acknowledged || blocking || busy}
+              disabled={loginMissing ? !provider : !acknowledged || blocking || busy}
               testID="generate-ewb"
               accessibilityHint={!acknowledged ? 'Tick the review confirmation first' : undefined}
             />
@@ -243,6 +277,7 @@ export default function EwbReviewScreen() {
           </>
         )}
       </View>
+      <EwbLoginGuide visible={guideOpen} gstin={sellerGstin} onClose={() => setGuideOpen(false)} />
     </View>
   );
 }
