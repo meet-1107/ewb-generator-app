@@ -48,8 +48,10 @@ import {
   hasShipTo,
   routePins,
   invoiceSeriesProblem,
+  nextNumberForSeller,
   releasedInvoiceIds,
   type Invoice,
+  type Party,
   type Section,
 } from '@/lib/domain';
 import { invoiceHtml, printHtml, shareHtmlAsPdf } from '@/lib/documents';
@@ -78,6 +80,10 @@ export default function InvoiceEditorScreen() {
   const [viewOnly, setViewOnly] = useState(false);
   const [newTransporter, setNewTransporter] = useState<{ name: string; transporterId: string; phone: string; vehicleNumber: string } | null>(null);
   const [transporterError, setTransporterError] = useState<Record<string, string>>({});
+  const [newBuyer, setNewBuyer] = useState<Omit<Party, 'id' | 'updatedAt'> | null>(null);
+  const [buyerError, setBuyerError] = useState<Record<string, string>>({});
+  // Editing the new buyer form clears the errors from the last Save tap.
+  useEffect(() => setBuyerError({}), [newBuyer]);
   const [showDispatch, setShowDispatch] = useState(false);
   const [showShipTo, setShowShipTo] = useState(false);
   const [distanceState, setDistanceState] = useState<'idle' | 'loading' | 'error'>('idle');
@@ -152,7 +158,16 @@ export default function InvoiceEditorScreen() {
   const released = useMemo(() => releasedInvoiceIds(store.invoices, store.ewbs), [store.invoices, store.ewbs]);
   const issues = useMemo(() => (invoice ? [...invoiceIssues(invoice, store.invoices, released), ...transportIssues(invoice)] : []), [invoice, store.invoices, released]);
   // The first invoice of a GSTIN is numbered by the user; later ones continue from it.
-  const firstInvoice = useMemo(() => Boolean(invoice) && !store.invoices.some((other) => other.id !== invoice!.id && other.sellerGstin === invoice!.sellerGstin && !other.unsaved && other.invoiceNumber.trim()), [invoice, store.invoices]);
+  const firstInvoice = useMemo(() => Boolean(invoice) && !store.invoices.some((other) => other.id !== invoice!.id && other.sellerGstin.toUpperCase() === invoice!.sellerGstin.toUpperCase() && !other.unsaved && other.invoiceNumber.trim()), [invoice, store.invoices]);
+
+  // A new invoice opened before the invoice list finished syncing has no number yet:
+  // fill it once the earlier invoices arrive, unless the user has typed one.
+  const numberTyped = useRef(false);
+  useEffect(() => {
+    if (!invoice?.unsaved || invoice.invoiceNumber.trim() || numberTyped.current) return;
+    const next = nextNumberForSeller(store.invoices.filter((other) => other.id !== invoice.id), invoice.sellerGstin, store.ewbs);
+    if (next) setInvoice((current) => (current && current.id === invoice.id && !current.invoiceNumber.trim() ? { ...current, invoiceNumber: next } : current));
+  }, [invoice, store.invoices, store.ewbs]);
   // Road distance from Google once both PIN codes are known (dispatch / delivery places when given).
   const pins = invoice ? routePins(invoice) : null;
   const pinKey = pins && /^[1-9]\d{5}$/.test(pins.from) && /^[1-9]\d{5}$/.test(pins.to) ? `${pins.from}-${pins.to}` : '';
@@ -293,10 +308,51 @@ export default function InvoiceEditorScreen() {
     dialog.toast('Transporter saved', 'success');
   };
 
+  /** New buyer sheet: fills name, address, state and PIN from the GSTIN. */
+  const fetchNewBuyer = async () => {
+    if (!newBuyer) return;
+    const problem = gstinProblem(newBuyer.gstin);
+    if (problem) return setBuyerError({ gstin: problem });
+    setBuyerError({});
+    const details = await verify(newBuyer.gstin);
+    if (!details) return;
+    setNewBuyer((current) => current && {
+      ...current,
+      name: businessNameOf(details) || current.name,
+      address: details.address || current.address,
+      state: details.state || current.state,
+      pincode: details.pincode || current.pincode,
+      verified: { legalName: details.legalName, tradeName: details.tradeName, status: details.status, verifiedAt: details.verifiedAt, city: details.city },
+    });
+  };
+
+  const saveNewBuyer = async () => {
+    if (!newBuyer) return;
+    const buyer = { ...newBuyer, name: newBuyer.name.trim(), address: newBuyer.address.trim(), phone: newBuyer.phone.trim() };
+    const problems: Record<string, string> = {};
+    if (!buyer.name) problems.name = 'Business name is required.';
+    const idProblem = buyer.gstin ? gstinProblem(buyer.gstin) : null;
+    if (idProblem) problems.gstin = idProblem;
+    if (!buyer.state) problems.state = 'Choose the state.';
+    if (buyer.pincode && !/^\d{6}$/.test(buyer.pincode)) problems.pincode = 'PIN code is 6 digits.';
+    if (buyer.phone && !/^[6-9]\d{9}$/.test(buyer.phone.replace(/\D/g, '').slice(-10))) problems.phone = 'Enter a 10-digit mobile number.';
+    setBuyerError(problems);
+    if (Object.keys(problems).length) return;
+    // Same GSTIN already saved: update that buyer instead of adding a second one.
+    const existing = buyer.gstin ? store.parties.find((party) => party.gstin === buyer.gstin) : undefined;
+    await store.saveParty({ ...(existing ? { id: existing.id } : {}), ...buyer });
+    if (buyer.verified) autoVerifiedBuyer.current = buyer.gstin;
+    patch({ buyerName: buyer.name, buyerGstin: buyer.gstin, buyerAddress: buyer.address, buyerState: buyer.state, buyerPincode: buyer.pincode });
+    setNewBuyer(null);
+    dialog.toast('Buyer saved', 'success');
+  };
+
   /** Remember new buyers and transporters for next time. */
   const rememberDetails = async (saved: Invoice) => {
-    const knownBuyer = store.parties.some((party) => (saved.buyerGstin && party.gstin === saved.buyerGstin) || party.name.toLowerCase() === saved.buyerName.trim().toLowerCase());
-    if (!knownBuyer) await store.saveParty({ name: saved.buyerName.trim(), gstin: saved.buyerGstin, address: saved.buyerAddress, state: saved.buyerState, pincode: saved.buyerPincode, phone: '' });
+    // A registered buyer is matched by GSTIN only: another branch of the same name is a new buyer.
+    const buyerGstin = saved.buyerGstin.trim().toUpperCase();
+    const knownBuyer = store.parties.some((party) => (buyerGstin ? party.gstin.toUpperCase() === buyerGstin : !party.gstin && party.name.trim().toLowerCase() === saved.buyerName.trim().toLowerCase()));
+    if (!knownBuyer && saved.buyerName.trim()) await store.saveParty({ name: saved.buyerName.trim(), gstin: buyerGstin, address: saved.buyerAddress, state: saved.buyerState, pincode: saved.buyerPincode, phone: '' });
     if (saved.transporterName.trim() && !store.transporters.some((item) => item.name.toLowerCase() === saved.transporterName.trim().toLowerCase())) {
       await store.saveTransporter({ name: saved.transporterName.trim(), transporterId: saved.transporterId, vehicleNumber: saved.vehicleNumber });
     }
@@ -437,7 +493,7 @@ export default function InvoiceEditorScreen() {
     ),
     buyer: (
       <EditorSection key="buyer" title="Buyer" icon="users" open={open.buyer} onToggle={() => setOpen((c) => ({ ...c, buyer: !c.buyer }))} errors={sectionErrors('buyer')} summary={invoice.buyerName || 'Not set'}>
-        {store.parties.length ? <Button title="Choose a saved buyer" icon="user-check" variant="outline" size="sm" onPress={() => setPicker('buyer')} /> : null}
+        <Button title={store.parties.length ? 'Choose or add buyer' : 'Add new buyer'} icon="user-check" variant="outline" size="sm" onPress={() => setPicker('buyer')} testID="choose-buyer" />
         <Field label="GSTIN" value={invoice.buyerGstin} onChangeText={onGstinChange('buyerGstin', 'buyerState')} placeholder="Enter GSTIN to fill the details" autoCapitalize="characters" maxLength={15} error={errorFor('buyerGstin')} confidence={fromPdf('buyerGstin')}
           right={canVerify && invoice.buyerGstin.length === 15 && !store.parties.some((party) => party.gstin === invoice.buyerGstin && party.verified) ? <Button title="Verify" size="sm" variant="outline" onPress={() => void verifyBuyer()} loading={verifying} testID="buyer-verify" /> : undefined}
           hint={store.parties.some((party) => party.gstin === invoice.buyerGstin && party.verified) ? 'Verified buyer' : verifying ? 'Getting details from the GST network…' : canVerify ? 'Name, address, state and PIN fill in automatically. Leave empty if unregistered.' : 'Leave empty if unregistered.'}
@@ -466,7 +522,7 @@ export default function InvoiceEditorScreen() {
     invoice: (
       <EditorSection key="invoice" title="Invoice details" icon="hash" open={open.invoice} onToggle={() => setOpen((c) => ({ ...c, invoice: !c.invoice }))} errors={sectionErrors('invoice')} summary={`${invoice.invoiceNumber || 'No number'} · ${formatDate(invoice.invoiceDate)}`}>
         <View style={styles.row}>
-          <View style={{ flex: 1.2 }}><Field label="Invoice number" required value={invoice.invoiceNumber} onChangeText={(value) => patch({ invoiceNumber: value.replace(/\s/g, '') })} placeholder="e.g. INV-001 or GR-1" autoCapitalize="none" maxLength={16} onBlur={() => void checkNumberNow()} error={errorFor('invoiceNumber')} confidence={fromPdf('invoiceNumber')} hint={firstInvoice ? 'Your first invoice: enter its number. Next invoices continue from it.' : undefined} /></View>
+          <View style={{ flex: 1.2 }}><Field label="Invoice number" required value={invoice.invoiceNumber} onChangeText={(value) => { numberTyped.current = true; patch({ invoiceNumber: value.replace(/\s/g, '') }); }} placeholder="e.g. INV-001 or GR-1" autoCapitalize="none" maxLength={16} onBlur={() => void checkNumberNow()} error={errorFor('invoiceNumber')} confidence={fromPdf('invoiceNumber')} hint={firstInvoice ? 'Your first invoice: enter its number. Next invoices continue from it.' : undefined} /></View>
           <View style={{ flex: 1 }}><DateField label="Date" required value={invoice.invoiceDate} onChange={set('invoiceDate')} error={errorFor('invoiceDate')} testID="invoice-date" /></View>
         </View>
         <SelectField label="Document type" value={invoice.documentType} placeholder="Tax invoice" title="Document type" options={DOCUMENT_TYPES.map((item) => ({ value: item, label: item }))} onSelect={set('documentType')} testID="document-type" />
@@ -603,6 +659,8 @@ export default function InvoiceEditorScreen() {
         visible={picker === 'buyer'}
         onClose={() => setPicker(null)}
         title="Saved buyers"
+        emptyText="No buyers saved yet."
+        footer={<Button title="Add new buyer" icon="plus" variant="outline" onPress={() => { setPicker(null); setBuyerError({}); setTimeout(() => setNewBuyer({ name: '', gstin: '', address: '', state: '', pincode: '', phone: '' }), 250); }} testID="new-buyer" />}
         options={store.parties.map((party) => ({ value: party.id, label: party.name, detail: `${party.gstin || 'Unregistered'} · ${party.state}` }))}
         onSelect={(partyId) => {
           const party = store.parties.find((item) => item.id === partyId);
@@ -634,6 +692,41 @@ export default function InvoiceEditorScreen() {
             <Field label="Transporter ID / GSTIN" required value={newTransporter.transporterId} onChangeText={(value) => setNewTransporter({ ...newTransporter, transporterId: value.toUpperCase().replace(/\s/g, '') })} error={transporterError.transporterId} autoCapitalize="characters" maxLength={15} placeholder="15-character ID" testID="transporter-id" />
             <Field label="Phone number" value={newTransporter.phone} onChangeText={(phone) => setNewTransporter({ ...newTransporter, phone })} error={transporterError.phone} keyboardType="phone-pad" maxLength={14} placeholder="Optional" />
             <Field label="Usual vehicle number" value={newTransporter.vehicleNumber} onChangeText={(value) => setNewTransporter({ ...newTransporter, vehicleNumber: value.toUpperCase().replace(/[\s-]/g, '') })} error={transporterError.vehicleNumber} autoCapitalize="characters" maxLength={12} placeholder="Optional" />
+          </View>
+        ) : null}
+      </Sheet>
+      <Sheet
+        visible={Boolean(newBuyer)}
+        onClose={() => setNewBuyer(null)}
+        title="New buyer"
+        subtitle="Saved to your buyer list"
+        footer={<Button title="Save and use" icon="check" onPress={() => void saveNewBuyer()} testID="save-buyer" />}
+      >
+        {newBuyer ? (
+          <View style={{ paddingHorizontal: 18, gap: 12 }}>
+            <Field
+              label="GSTIN"
+              value={newBuyer.gstin}
+              onChangeText={(raw) => {
+                const gstin = raw.toUpperCase().replace(/\s/g, '');
+                const state = gstin.length === 15 && !gstinProblem(gstin) ? stateForGstin(gstin)?.name : undefined;
+                setNewBuyer({ ...newBuyer, gstin, verified: undefined, ...(state ? { state } : {}) });
+              }}
+              error={buyerError.gstin}
+              autoCapitalize="characters"
+              maxLength={15}
+              placeholder="15-character GSTIN"
+              right={canVerify && newBuyer.gstin.length === 15 && !newBuyer.verified ? <Button title="Fetch" size="sm" variant="outline" onPress={() => void fetchNewBuyer()} loading={verifying} testID="new-buyer-fetch" /> : undefined}
+              hint={newBuyer.verified ? 'Details filled from the GST network' : verifying ? 'Getting details from the GST network…' : canVerify ? 'Tap Fetch to fill name, address, state and PIN. Leave empty if unregistered.' : 'Leave empty if unregistered.'}
+              testID="new-buyer-gstin"
+            />
+            <Field label="Business name" required value={newBuyer.name} onChangeText={(name) => setNewBuyer({ ...newBuyer, name })} error={buyerError.name} autoCapitalize="words" placeholder="Business or person" testID="new-buyer-name" />
+            <Field label="Address" value={newBuyer.address} onChangeText={(address) => setNewBuyer({ ...newBuyer, address })} multiline placeholder="Billing address" />
+            <View style={styles.row}>
+              <View style={{ flex: 1.4 }}><SelectField label="State" required value={newBuyer.state} placeholder="Choose" options={stateOptions} onSelect={(state) => setNewBuyer({ ...newBuyer, state })} error={buyerError.state} /></View>
+              <View style={{ flex: 1 }}><Field label="PIN code" value={newBuyer.pincode} onChangeText={(value) => setNewBuyer({ ...newBuyer, pincode: value.replace(/\D/g, '').slice(0, 6) })} error={buyerError.pincode} keyboardType="number-pad" placeholder="560001" /></View>
+            </View>
+            <Field label="Phone number" value={newBuyer.phone} onChangeText={(phone) => setNewBuyer({ ...newBuyer, phone })} error={buyerError.phone} keyboardType="phone-pad" maxLength={14} placeholder="Optional" />
           </View>
         ) : null}
       </Sheet>

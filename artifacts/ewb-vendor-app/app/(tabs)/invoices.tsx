@@ -6,6 +6,7 @@ import { useColors } from '@/hooks/useColors';
 import { useLoadMore } from '@/hooks/useLoadMore';
 import { useDeleteInvoice } from '@/hooks/useDeleteInvoice';
 import { formatInr, invoiceTotals, type Invoice } from '@/lib/domain';
+import { invoiceHtml, printHtml, shareHtmlAsPdf } from '@/lib/documents';
 import { useAppStore, useScopedRecords } from '@/state/app-store';
 import { Button, Card, Chip, ChipRow, EmptyState, Field, Heading, LoadMore, Notice, Page, SearchBar, SectionTitle, SelectSheet, Sheet, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
@@ -81,12 +82,18 @@ export default function InvoicesScreen() {
     const choice = await dialog.prompt({
       title: invoice.invoiceNumber || 'Untitled invoice',
       message: 'Choose an action for this invoice.',
-      choices: invoice.status === 'ewb_generated' ? ['Open', 'Edit invoice'] : ['Open', 'Edit invoice', 'Delete invoice'],
+      choices: ['Open', 'Edit invoice', 'Share as PDF', 'Print invoice', ...(invoice.status === 'ewb_generated' ? [] : ['Delete invoice'])],
       confirmLabel: 'Continue',
     });
     if (!choice) return;
     if (choice.choice === 'Open') openInvoice(invoice);
     if (choice.choice === 'Edit invoice') router.push(`/invoice/${invoice.id}`);
+    try {
+      if (choice.choice === 'Share as PDF') await shareHtmlAsPdf(invoiceHtml(invoice), invoice.invoiceNumber || 'Invoice');
+      if (choice.choice === 'Print invoice') await printHtml(invoiceHtml(invoice));
+    } catch (error) {
+      dialog.toast((error as Error).message || 'Could not open the document', 'danger');
+    }
     if (choice.choice === 'Delete invoice') await deleteInvoice(invoice);
   };
 
@@ -144,10 +151,10 @@ export default function InvoicesScreen() {
       {filtered.length ? (
         <View style={{ gap: 10 }}>
           {filtered.slice(0, list.limit).map((invoice) => (
-            <InvoiceCard key={invoice.id} invoice={invoice} onPress={() => openInvoice(invoice)} onLongPress={() => void actions(invoice)} onDelete={() => void deleteInvoice(invoice)} />
+            <InvoiceCard key={invoice.id} invoice={invoice} onPress={() => openInvoice(invoice)} onLongPress={() => void actions(invoice)} onMore={() => void actions(invoice)} />
           ))}
           <LoadMore remaining={filtered.length - list.limit} loading={list.loading} onPress={() => list.more(filtered.length)} noun="more invoices" />
-          <TextBlock size={11} color={colors.mutedForeground} style={{ textAlign: 'center' }}>Tip: long-press an invoice to edit it or delete a draft.</TextBlock>
+          <TextBlock size={11} color={colors.mutedForeground} style={{ textAlign: 'center' }}>Tip: tap ⋮ on an invoice to share, print, edit or delete it.</TextBlock>
         </View>
       ) : (
         <Card>

@@ -124,7 +124,9 @@ export type WalletEntry = {
   note?: string;
 };
 export type WalletPricing = { creditPricePaise: number; packs: number[]; min: number; max: number; payments: 'razorpay' | 'sandbox' | 'off' };
-export type WalletSummary = { balance: number; costs: CreditCosts; counts: Record<WalletAction, number>; creditsUsed: number; ledger: WalletEntry[]; pricing?: WalletPricing };
+/** A month (YYYY-MM, India time) with wallet activity: entries, credits added and used. */
+export type WalletMonth = { month: string; count: number; added: number; used: number };
+export type WalletSummary = { balance: number; costs: CreditCosts; counts: Record<WalletAction, number>; creditsUsed: number; ledger: WalletEntry[]; historyMonths?: WalletMonth[]; pricing?: WalletPricing };
 export type CreditPurchase = { id: string; provider: 'razorpay' | 'sandbox'; credits: number; amountPaise: number; status: 'created' | 'paid' | 'expired' | 'cancelled'; shortUrl?: string; createdAt: string };
 export type CewbRecord = {
   id: string;
@@ -155,8 +157,8 @@ export type ExtractedInvoice = {
   invoiceNumber?: Candidate; invoiceDate?: Candidate;
   sellerName?: Candidate; sellerGstin?: Candidate; sellerState?: Candidate; sellerPincode?: Candidate;
   buyerName?: Candidate; buyerGstin?: Candidate; buyerState?: Candidate; buyerPincode?: Candidate;
-  vehicleNumber?: Candidate; totalPaise?: Candidate<number>; taxablePaise?: Candidate<number>;
-  lines: { description: string; hsn: string; quantity: string; taxablePaise: number; taxRate: number; confidence: Confidence }[];
+  vehicleNumber?: Candidate; transporterName?: Candidate; transporterId?: Candidate; totalPaise?: Candidate<number>; taxablePaise?: Candidate<number>;
+  lines: { description: string; hsn: string; quantity: string; unit?: string; unitPricePaise?: number; taxablePaise: number; taxRate: number; confidence: Confidence }[];
   pageCount: number;
 };
 export type SyncEnvelope = { id: string; updatedAt: string; deleted?: boolean; data?: unknown };
@@ -181,6 +183,7 @@ export const api = {
   distance: (from: string, to: string) => request<{ from: string; to: string; km: number; cached: boolean }>(`/distance?from=${from}&to=${to}`, { timeoutMs: 20_000 }),
   verifyGstin: (gstin: string) => request<{ gstin: VerifiedGstin; cached: boolean; stale?: boolean }>('/gstin/verify', { body: { gstin }, timeoutMs: 30_000 }),
   wallet: () => request<WalletSummary>('/wallet'),
+  walletHistory: (month: string) => request<{ month: string; entries: WalletEntry[] }>(`/wallet/history?month=${encodeURIComponent(month)}`),
   sendEmailOtp: (email: string) => request<{ message: string; cooldownSeconds: number }>('/auth/email-otp/send', { body: { email }, timeoutMs: 30_000 }),
   verifyEmailOtp: (email: string, code: string) => request<{ grant: string; expiresInSeconds: number }>('/auth/email-otp/verify', { body: { email, code } }),
   finalizeRegistration: (grant: string, idToken: string) => request<{ activated: boolean }>('/auth/register/finalize', { body: { grant }, idToken, timeoutMs: 30_000 }),

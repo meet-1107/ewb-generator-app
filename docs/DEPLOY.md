@@ -151,7 +151,7 @@ All settings:
 | `GSTINAPI_TEST_MODE` | `true` | Sends `test_mode: true`, so gstinapi.in validates but files nothing and charges nothing. Set it to `false` to go live. |
 | `EWB_CREDENTIALS_SECRET` | 64 random characters | Encrypts each GSTIN's portal password. Never change it after users have saved logins. |
 | `WALLET_START_CREDITS` | `0` | Free credits for a new account. With 0, nothing can be done without buying credits. |
-| `CREDIT_COSTS_JSON` | `{"generate":10,"part_b":5,"consolidate":5,"cancel":5,"extend":5}` | Credits per action. These numbers are the defaults. |
+| `CREDIT_COSTS_JSON` | `{"generate":5,"part_b":5,"consolidate":5,"cancel":5,"extend":5}` | Credits per action. These numbers are the defaults. |
 | `CREDIT_PRICE_PAISE` | `100` | Price of 1 credit in paise (100 = ₹1). |
 | `CREDIT_PACKS_JSON` | `[100,250,500,1000,2500]` | Pack buttons shown in the Wallet. |
 | `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET` | `rzp_live_…` | Razorpay → Account & Settings → API keys. |
@@ -166,7 +166,7 @@ All settings:
 |---|---|---|---|
 | Verify GSTIN (once per GSTIN, then saved) | `GET /v1/gstin/{gstin}` | 1 credit, first time only | free |
 | Check portal login | `POST /v1/ewaybill/credentials/test` | free | free |
-| Generate e-way bill | `POST /v1/ewaybill` | 3 | 10 credits = ₹10 |
+| Generate e-way bill | `POST /v1/ewaybill` | 3 | 7 credits = ₹7 |
 | Part-B / vehicle | `POST /v1/ewaybill/update-vehicle` | 3 | 5 = ₹5 |
 | Consolidated e-way bill | `POST /v1/ewaybill/consolidated` | 3 | 5 = ₹5 |
 | Cancel | `POST /v1/ewaybill/cancel` | 3 | 5 = ₹5 |

@@ -159,7 +159,7 @@ export default function LoginScreen() {
       <View style={styles.topline}>
         <View style={[styles.brandMark, { backgroundColor: colors.primary }]}><Image source={require('@/assets/images/icon.png')} style={styles.logo} /></View>
         <View style={{ gap: 2 }}>
-          <TextBlock size={14} weight="bold" color={colors.primary}>MARG / EWB DESK</TextBlock>
+          <TextBlock size={17} weight="bold" color={colors.primary}>E-way Easy</TextBlock>
           <TextBlock size={10} weight="medium" color={colors.mutedForeground}>INVOICE TO MOVEMENT</TextBlock>
         </View>
       </View>
@@ -181,6 +181,9 @@ export default function LoginScreen() {
           ))}
         </View>
       </LinearGradient>
+      {auth.sessionExpired && !auth.user && mode === 'sign-in' && !message ? (
+        <Notice title="Please sign in again" body="Your password or account changed, so this device was signed out." tone="info" />
+      ) : null}
       {auth.user && !auth.user.verified && mode === 'sign-in' ? (
         <Notice title="Finish creating your account" body="This account's email is not verified yet." action="Verify email" onAction={() => void finishPending()} tone="warning" />
       ) : null}

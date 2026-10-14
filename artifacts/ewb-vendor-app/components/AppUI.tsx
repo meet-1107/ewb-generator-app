@@ -3,7 +3,6 @@ import {
   ActivityIndicator,
   Animated,
   FlatList,
-  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -21,6 +20,7 @@ import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 import { nearEnd } from '@/hooks/useLoadMore';
+import { KeyboardAvoidingViewCompat, KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { paiseToInput, parseRupees } from '@/lib/domain';
 
 type IconName = keyof typeof Feather.glyphMap;
@@ -31,7 +31,7 @@ export function Page({ children, contentStyle, onRefresh, refreshing = false, ta
   const colors = useColors();
   const insets = useSafeAreaInsets();
   return (
-    <ScrollView
+    <KeyboardAwareScrollViewCompat
       style={{ flex: 1, backgroundColor: colors.background }}
       contentContainerStyle={[
         styles.page,
@@ -45,7 +45,7 @@ export function Page({ children, contentStyle, onRefresh, refreshing = false, ta
       refreshControl={onRefresh ? <RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.primary} colors={[colors.primary]} /> : undefined}
     >
       {children}
-    </ScrollView>
+    </KeyboardAwareScrollViewCompat>
   );
 }
 
@@ -534,14 +534,14 @@ export function Skeleton({ height = 16, width = '100%', radius = 8 }: { height?:
 }
 
 /** Bottom sheet built on Modal so it works on iOS, Android and web. */
-export function Sheet({ visible, onClose, title, subtitle, children, footer, scroll = true }: { visible: boolean; onClose: () => void; title: string; subtitle?: string; children: ReactNode; footer?: ReactNode; scroll?: boolean }) {
+export function Sheet({ visible, onClose, title, subtitle, children, footer, scroll = true, tall = false }: { visible: boolean; onClose: () => void; title: string; subtitle?: string; children: ReactNode; footer?: ReactNode; scroll?: boolean; tall?: boolean }) {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   return (
     <Modal visible={visible} transparent animationType="slide" onRequestClose={onClose} statusBarTranslucent>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
+      <KeyboardAvoidingViewCompat style={{ flex: 1, justifyContent: 'flex-end' }}>
         <Pressable style={[StyleSheet.absoluteFill, { backgroundColor: colors.overlay }]} onPress={onClose} accessibilityLabel="Close sheet" />
-        <View style={[styles.sheet, { backgroundColor: colors.elevated, borderColor: colors.border, paddingBottom: insets.bottom + 14 }]} accessibilityViewIsModal>
+        <View style={[styles.sheet, tall && styles.sheetTall, { backgroundColor: colors.elevated, borderColor: colors.border, paddingBottom: insets.bottom + 14 }]} accessibilityViewIsModal>
           <View style={[styles.grabber, { backgroundColor: colors.input }]} />
           <View style={styles.sheetHeader}>
             <View style={{ flex: 1, gap: 3 }}>
@@ -553,7 +553,7 @@ export function Sheet({ visible, onClose, title, subtitle, children, footer, scr
           {scroll ? <ScrollView keyboardShouldPersistTaps="handled" style={{ flexGrow: 0 }} contentContainerStyle={{ paddingBottom: 6 }}>{children}</ScrollView> : children}
           {footer ? <View style={{ paddingHorizontal: 18, paddingTop: 10 }}>{footer}</View> : null}
         </View>
-      </KeyboardAvoidingView>
+      </KeyboardAvoidingViewCompat>
     </Modal>
   );
 }
@@ -570,7 +570,8 @@ export function SelectSheet({ visible, onClose, title, options, value, onSelect,
   }, [options, query]);
   useEffect(() => { if (!visible) setQuery(''); }, [visible]);
   return (
-    <Sheet visible={visible} onClose={onClose} title={title} footer={footer} scroll={false}>
+    // Long lists open tall, so more rows are visible and easy to scroll.
+    <Sheet visible={visible} onClose={onClose} title={title} footer={footer} scroll={false} tall={options.length > 6}>
       {searchable ? (
         <View style={[styles.sheetSearch, { borderColor: colors.input, backgroundColor: colors.card }]}>
           <Feather name="search" size={16} color={colors.mutedForeground} />
@@ -581,7 +582,7 @@ export function SelectSheet({ visible, onClose, title, options, value, onSelect,
         data={filtered}
         keyExtractor={(item) => item.value}
         keyboardShouldPersistTaps="handled"
-        style={{ maxHeight: 420 }}
+        style={options.length > 6 ? { flex: 1 } : { maxHeight: 420 }}
         contentContainerStyle={{ paddingHorizontal: 10, paddingBottom: 6 }}
         ListEmptyComponent={<TextBlock size={13} color={colors.mutedForeground} style={{ textAlign: 'center', padding: 24 }}>{query ? 'No matches.' : emptyText}</TextBlock>}
         renderItem={({ item }) => {
@@ -680,7 +681,8 @@ const styles = StyleSheet.create({
   stat: { flexBasis: '47%', flexGrow: 1, borderWidth: 1, borderRadius: 18, padding: 13, gap: 8, minHeight: 124 },
   statTop: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
   statIcon: { width: 32, height: 32, borderRadius: 11, alignItems: 'center', justifyContent: 'center' },
-  sheet: { position: 'absolute', left: 0, right: 0, bottom: 0, maxHeight: '88%', borderTopLeftRadius: 26, borderTopRightRadius: 26, borderWidth: 1, borderBottomWidth: 0, paddingTop: 8 },
+  sheetTall: { height: '88%' },
+  sheet: { maxHeight: '88%', borderTopLeftRadius: 26, borderTopRightRadius: 26, borderWidth: 1, borderBottomWidth: 0, paddingTop: 8 },
   grabber: { width: 40, height: 5, borderRadius: 3, alignSelf: 'center', marginBottom: 6 },
   sheetHeader: { flexDirection: 'row', alignItems: 'center', paddingLeft: 20, paddingRight: 8, paddingBottom: 10 },
   sheetSearch: { marginHorizontal: 18, marginBottom: 8, height: 46, borderWidth: 1, borderRadius: 13, paddingHorizontal: 12, flexDirection: 'row', alignItems: 'center', gap: 8 },

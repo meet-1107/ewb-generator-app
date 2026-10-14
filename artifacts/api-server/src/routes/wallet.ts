@@ -5,7 +5,7 @@ import { authMode } from "../lib/auth";
 import { logger } from "../lib/logger";
 import { createPaymentLink, creditPacks, creditPricePaise, fetchPaymentLink, MAX_PURCHASE, MIN_PURCHASE, razorpayConfigured, webhookSignatureValid } from "../lib/payments";
 import { appendLog, audit, withWorkspace, type Workspace } from "../lib/store";
-import { addCredits, walletSummary } from "../lib/wallet";
+import { addCredits, walletHistory, walletSummary } from "../lib/wallet";
 
 const paymentsMode = razorpayConfigured ? "razorpay" : authMode === "sandbox" ? "sandbox" : "off";
 
@@ -30,6 +30,12 @@ export const walletRouter: IRouter = Router();
 
 walletRouter.get("/wallet", async (req, res) => {
   res.json({ ...(await withWorkspace(req.workspaceId, (workspace) => walletSummary(workspace))), pricing: pricing() });
+});
+
+walletRouter.get("/wallet/history", async (req, res) => {
+  const month = typeof req.query["month"] === "string" ? req.query["month"] : "";
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return res.status(400).json({ error: "bad_request", message: "Choose a month as YYYY-MM." });
+  return res.json(await withWorkspace(req.workspaceId, (workspace) => walletHistory(workspace, month)));
 });
 
 walletRouter.post("/wallet/purchase", async (req, res) => {

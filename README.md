@@ -67,7 +67,7 @@ firebase emulators:exec --only firestore --project demo-ewb "pnpm --filter @work
 | `GSTINAPI_KEY`, `EWB_PROVIDER=gstinapi`, `GSTINAPI_TEST_MODE` | server | GSTIN verification (cached once per GSTIN) and e-way bills via gstinapi.in. Live: `functions/.env`; local: `artifacts/api-server/.env` (see the `.env.example` files) |
 | `RESEND_API_KEY`, `EMAIL_FROM`, `OTP_PEPPER`, `GOOGLE_APPLICATION_CREDENTIALS` (local only) | server | Email OTP registration: code delivery, code hashing, Firebase Admin to activate verified accounts |
 | `EWB_CREDENTIALS_SECRET` | server | Encrypts each GSTIN's e-way bill portal password |
-| `WALLET_START_CREDITS`, `CREDIT_COSTS_JSON`, `WALLET_ADMIN_TOKEN` | server | Credit wallet: starting credits (default 0), cost per action (generate 10; Part-B, consolidate, cancel, extend 5), admin top-up |
+| `WALLET_START_CREDITS`, `CREDIT_COSTS_JSON`, `WALLET_ADMIN_TOKEN` | server | Credit wallet: starting credits (default 0), cost per action (generate 5; Part-B, consolidate, cancel, extend 5), admin top-up |
 | `CREDIT_PRICE_PAISE`, `CREDIT_PACKS_JSON`, `RAZORPAY_KEY_ID`, `RAZORPAY_KEY_SECRET`, `RAZORPAY_WEBHOOK_SECRET` | server | Buying credits (1 credit = ₹1) through Razorpay payment links |
 
 ## Before production (launch blockers)

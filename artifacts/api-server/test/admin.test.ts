@@ -177,17 +177,17 @@ describe("admin panel API", () => {
     assert.equal(o.payments.grossPaise, 10_000);
     assert.equal(o.payments.pending, 1);
     assert.equal(o.credits.purchased, 100);
-    assert.equal(o.credits.consumed, 20);
-    assert.equal(o.credits.returnedHolds, 10);
-    // 30 + 100 - 20 for A, 30 for B (other accounts never opened the app).
-    assert.equal(o.credits.outstanding, 140);
+    assert.equal(o.credits.consumed, 10);
+    assert.equal(o.credits.returnedHolds, 5);
+    // 30 + 100 - 10 for A, 30 for B (other accounts never opened the app).
+    assert.equal(o.credits.outstanding, 150);
   });
 
   it("per-user rows and detail come from the same records", async () => {
     const list = await call("GET", "/admin/users?q=a@shop.in", T.boss());
     assert.equal(list.body.total, 1);
     const row = list.body.items[0];
-    assert.deepEqual([row.ewbTotal, row.balance, row.purchasedCredits, row.paidPayments, row.paidPaise], [2, 110, 100, 1, 10_000]);
+    assert.deepEqual([row.ewbTotal, row.balance, row.purchasedCredits, row.paidPayments, row.paidPaise], [2, 120, 100, 1, 10_000]);
     const detail = await call("GET", "/admin/users/custaaa1", T.boss());
     assert.equal(detail.body.ewbs.length, 2);
     assert.equal(detail.body.attempts.rejected, 1);

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ScrollView, Share, StyleSheet, View } from 'react-native';
+import { Share, StyleSheet, View } from 'react-native';
+import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Card, Checkbox, Divider, EmptyState, Field, IconButton, ListRow, ScreenHeader, Segmented, SelectSheet, Sheet, StatusPill, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
@@ -123,7 +124,7 @@ export default function BankDetailsScreen() {
         subtitle={banks.length ? `${banks.length} saved · printed on invoices` : 'Printed on your invoices'}
         right={banks.length ? <IconButton icon="plus" accessibilityLabel="Add bank account" onPress={() => open()} /> : undefined}
       />
-      <ScrollView contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 30 }]}>
+      <KeyboardAwareScrollViewCompat contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 30 }]}>
         {banks.length ? (
           <>
             <Card style={{ padding: 0, gap: 0 }}>
@@ -159,7 +160,7 @@ export default function BankDetailsScreen() {
             />
           </Card>
         )}
-      </ScrollView>
+      </KeyboardAwareScrollViewCompat>
 
       <Sheet
         visible={Boolean(draft)}

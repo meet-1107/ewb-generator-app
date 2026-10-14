@@ -4,7 +4,7 @@ import { useDialog } from '@/components/Dialog';
 import { ApiError, type CreditCosts, type WalletAction } from '@/lib/api';
 import { useAppStore } from '@/state/app-store';
 
-const DEFAULT_COSTS: CreditCosts = { generate: 10, part_b: 5, consolidate: 5, cancel: 5, extend: 0 };
+const DEFAULT_COSTS: CreditCosts = { generate: 5, part_b: 5, consolidate: 5, cancel: 5, extend: 0 };
 
 /**
  * Credit prompts shared by every paid e-way bill action. The server is the

@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Card, Divider, Field, ListRow, Notice, ScreenHeader, Sheet, StatusPill, TextBlock } from '@/components/AppUI';
@@ -99,7 +100,7 @@ export default function EwbLoginScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <ScreenHeader title="E-way bill portal login" subtitle="API username & password per GSTIN" />
-      <ScrollView contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 30 }]} keyboardShouldPersistTaps="handled">
+      <KeyboardAwareScrollViewCompat contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 30 }]} keyboardShouldPersistTaps="handled">
         {loaded && provider === 'none' ? <Notice tone="warning" title="E-way bill generation is not switched on yet" body="The server has no e-way bill provider connected (its gstinapi.in key is missing). Your saved login is kept and is checked automatically once it is switched on." /> : null}
         {loaded && provider !== 'none' && !required ? <Notice title="Not needed right now" body="The server is using the sandbox provider, which does not need a portal login." /> : null}
         {loaded && provider === 'test' && required ? <Notice tone="warning" title="Test mode" body="Bills are checked by gstinapi.in but not filed with NIC. Ask the app owner to switch to live mode." /> : null}
@@ -128,7 +129,7 @@ export default function EwbLoginScreen() {
           {gstins.length ? <Divider /> : null}
           <ListRow icon="plus" title="Add another GSTIN" onPress={() => open('new')} />
         </Card>
-      </ScrollView>
+      </KeyboardAwareScrollViewCompat>
 
       <Sheet
         visible={Boolean(editing)}

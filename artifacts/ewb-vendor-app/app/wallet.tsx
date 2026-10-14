@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as WebBrowser from 'expo-web-browser';
-import { Linking, Pressable, RefreshControl, ScrollView, Share, StyleSheet, View } from 'react-native';
+import { Linking, Pressable, RefreshControl, Share, StyleSheet, View } from 'react-native';
+import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Button, Card, Divider, EmptyState, Field, KeyValue, ListRow, Notice, ScreenHeader, SectionTitle, StatCard, TextBlock } from '@/components/AppUI';
+import { Button, Card, Chip, ChipRow, Divider, EmptyState, Field, KeyValue, ListRow, Notice, ScreenHeader, SectionTitle, StatCard, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
 import { useColors } from '@/hooks/useColors';
-import { api, ApiError, SUPPORT_EMAIL, type CreditPurchase, type WalletAction } from '@/lib/api';
+import { api, ApiError, SUPPORT_EMAIL, type CreditPurchase, type WalletAction, type WalletEntry, type WalletSummary } from '@/lib/api';
 import { formatDate } from '@/lib/domain';
 import { useAppStore } from '@/state/app-store';
 
@@ -30,6 +31,10 @@ export default function WalletScreen() {
   const wallet = store.wallet;
   const pricing = wallet?.pricing;
   const rupees = (credits: number) => `₹${((credits * (pricing?.creditPricePaise ?? 100)) / 100).toLocaleString('en-IN')}`;
+  /** Pack chosen on the balance card; the middle pack until the user picks one. */
+  const [pick, setPick] = useState<number | null>(null);
+  const packs = pricing?.packs ?? [];
+  const quickPack = pick && packs.includes(pick) ? pick : packs[Math.floor((packs.length - 1) / 2)] ?? 0;
 
   useEffect(() => {
     void store.refreshWallet();
@@ -99,7 +104,7 @@ export default function WalletScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <ScreenHeader title="Wallet" subtitle="Credits for e-way bill actions" />
-      <ScrollView
+      <KeyboardAwareScrollViewCompat
         contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 30 }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} />}
       >
@@ -109,6 +114,31 @@ export default function WalletScreen() {
           <TextBlock size={12} color={colors.primaryForeground}>
             {wallet ? `${wallet.creditsUsed} credits used so far` : store.online === false ? 'Offline — connect to see your balance' : 'Loading…'}
           </TextBlock>
+          {pricing && pricing.payments !== 'off' && pricing.packs.length ? (
+            <View style={styles.quickAdd}>
+              <View style={styles.quickPacks} accessibilityRole="radiogroup">
+                {pricing.packs.map((credits) => {
+                  const selected = credits === quickPack;
+                  return (
+                    <Pressable
+                      key={credits}
+                      onPress={() => setPick(credits)}
+                      accessibilityRole="radio"
+                      accessibilityState={{ selected }}
+                      accessibilityLabel={`${credits} credits for ${rupees(credits)}`}
+                      style={[styles.quickPack, { borderColor: colors.primaryForeground, backgroundColor: selected ? colors.primaryForeground : 'transparent' }]}
+                    >
+                      <TextBlock size={13} weight="bold" color={selected ? colors.primary : colors.primaryForeground}>{credits.toLocaleString('en-IN')}</TextBlock>
+                      <TextBlock size={10} color={selected ? colors.primary : colors.primaryForeground}>{rupees(credits)}</TextBlock>
+                    </Pressable>
+                  );
+                })}
+              </View>
+              <Button title={buying === quickPack ? 'Opening…' : `Add ${quickPack.toLocaleString('en-IN')} credits · ${rupees(quickPack)}`} icon="plus" variant="outline" onPress={() => void buy(quickPack)} disabled={buying !== null} loading={buying === quickPack} testID="wallet-quick-add" />
+            </View>
+          ) : pricing ? (
+            <Button title="Request credits" icon="mail" variant="outline" onPress={() => void requestCredits()} style={{ marginTop: 10 }} />
+          ) : null}
         </Card>
 
         {wallet && wallet.balance < wallet.costs.generate ? (
@@ -149,7 +179,7 @@ export default function WalletScreen() {
                   <TextBlock size={22} weight="bold">{credits.toLocaleString('en-IN')}</TextBlock>
                   <TextBlock size={11} color={colors.mutedForeground}>credits</TextBlock>
                   <TextBlock size={14} weight="semibold" color={colors.primary}>{buying === credits ? 'Opening…' : rupees(credits)}</TextBlock>
-                  <TextBlock size={10} color={colors.mutedForeground}>≈ {Math.floor(credits / (wallet?.costs.generate || 10))} e-way bills</TextBlock>
+                  <TextBlock size={10} color={colors.mutedForeground}>≈ {Math.floor(credits / (wallet?.costs.generate || 5))} e-way bills</TextBlock>
                 </Pressable>
               ))}
             </View>
@@ -167,36 +197,104 @@ export default function WalletScreen() {
           </Card>
         )}
 
-        <SectionTitle title="History" count={wallet?.ledger.length} />
-        {wallet?.ledger.length ? (
-          <Card style={{ padding: 0, gap: 0 }}>
-            {wallet.ledger.map((entry, index) => (
-              <React.Fragment key={entry.id}>
-                {index ? <Divider inset={64} /> : null}
-                <ListRow
-                  icon={entry.credits > 0 ? 'plus-circle' : entry.status === 'refunded' ? 'rotate-ccw' : 'minus-circle'}
-                  title={entry.status === 'refunded' ? `${entry.label} — refunded` : entry.label}
-                  detail={[formatDate(entry.at, true), entry.ewbNumber ? `No. ${entry.ewbNumber}` : null, entry.note].filter(Boolean).join(' · ')}
-                  right={
-                    <TextBlock weight="bold" color={entry.status === 'refunded' ? colors.mutedForeground : entry.credits > 0 ? colors.successForeground : colors.foreground}>
-                      {entry.status === 'refunded' ? '0' : `${entry.credits > 0 ? '+' : ''}${entry.credits}`}
-                    </TextBlock>
-                  }
-                />
-              </React.Fragment>
-            ))}
-          </Card>
-        ) : (
-          <Card><EmptyState icon="credit-card" title="No activity yet" body="Every e-way bill action and credit top-up appears here." /></Card>
-        )}
-      </ScrollView>
+        <WalletHistory wallet={wallet} />
+      </KeyboardAwareScrollViewCompat>
     </View>
+  );
+}
+
+const RECENT = 10;
+const MONTH_PAGE = 25;
+
+function monthLabel(month: string) {
+  return new Date(`${month}-01T00:00:00+05:30`).toLocaleString('en-IN', { month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
+}
+
+/** Latest entries by default; older ones month by month, so the list stays short. */
+function WalletHistory({ wallet }: { wallet: WalletSummary | null }) {
+  const colors = useColors();
+  const months = wallet?.historyMonths ?? [];
+  const [month, setMonth] = useState<string | null>(null);
+  const [entries, setEntries] = useState<WalletEntry[] | null>(null);
+  const [error, setError] = useState('');
+  const [limit, setLimit] = useState(MONTH_PAGE);
+
+  // Reload the chosen month whenever the wallet refreshes (new charges, top-ups).
+  useEffect(() => {
+    if (!month) return;
+    let active = true;
+    setError('');
+    api.walletHistory(month)
+      .then((result) => active && setEntries(result.entries))
+      .catch((caught: unknown) => active && setError(caught instanceof ApiError ? caught.message : 'Could not load this month.'));
+    return () => {
+      active = false;
+    };
+  }, [month, wallet]);
+
+  const choose = (next: string | null) => {
+    setMonth(next);
+    setEntries(null);
+    setLimit(MONTH_PAGE);
+  };
+
+  const summary = months.find((item) => item.month === month);
+  const list = month ? entries ?? [] : (wallet?.ledger ?? []).slice(0, RECENT);
+  const shown = month ? list.slice(0, limit) : list;
+  const hasOlder = (wallet?.ledger.length ?? 0) > RECENT || months.length > 1;
+
+  return (
+    <>
+      <SectionTitle title="History" />
+      {months.length ? (
+        <ChipRow>
+          <Chip label="Recent" icon="clock" selected={!month} onPress={() => choose(null)} />
+          {months.map((item) => <Chip key={item.month} label={monthLabel(item.month)} count={item.count} selected={month === item.month} onPress={() => choose(item.month)} />)}
+        </ChipRow>
+      ) : null}
+      {summary ? (
+        <TextBlock size={12} color={colors.mutedForeground}>{`${summary.count} entries · +${summary.added} added · ${summary.used} used`}</TextBlock>
+      ) : null}
+      {error ? <Notice title="Check this" body={error} tone="warning" /> : null}
+      {month && !entries && !error ? (
+        <Card><TextBlock size={13} color={colors.mutedForeground}>Loading {monthLabel(month)}…</TextBlock></Card>
+      ) : shown.length ? (
+        <Card style={{ padding: 0, gap: 0 }}>
+          {shown.map((entry, index) => (
+            <React.Fragment key={entry.id}>
+              {index ? <Divider inset={64} /> : null}
+              <ListRow
+                icon={entry.credits > 0 ? 'plus-circle' : entry.status === 'refunded' ? 'rotate-ccw' : 'minus-circle'}
+                title={entry.status === 'refunded' ? `${entry.label} — refunded` : entry.label}
+                detail={[formatDate(entry.at, true), entry.ewbNumber ? `No. ${entry.ewbNumber}` : null, entry.note].filter(Boolean).join(' · ')}
+                right={
+                  <TextBlock weight="bold" color={entry.status === 'refunded' ? colors.mutedForeground : entry.credits > 0 ? colors.successForeground : colors.foreground}>
+                    {entry.status === 'refunded' ? '0' : `${entry.credits > 0 ? '+' : ''}${entry.credits}`}
+                  </TextBlock>
+                }
+              />
+            </React.Fragment>
+          ))}
+        </Card>
+      ) : month ? null : (
+        <Card><EmptyState icon="credit-card" title="No activity yet" body="Every e-way bill action and credit top-up appears here." /></Card>
+      )}
+      {month && list.length > limit ? (
+        <Button title={`Show ${Math.min(MONTH_PAGE, list.length - limit)} more`} icon="chevrons-down" variant="outline" onPress={() => setLimit((value) => value + MONTH_PAGE)} />
+      ) : null}
+      {!month && hasOlder ? (
+        <TextBlock size={12} color={colors.mutedForeground}>Showing the latest {RECENT}. Pick a month above to see older entries.</TextBlock>
+      ) : null}
+    </>
   );
 }
 
 const styles = StyleSheet.create({
   body: { padding: 16, gap: 14, maxWidth: 720, width: '100%', alignSelf: 'center' },
   balance: { gap: 4, borderWidth: 0 },
+  quickAdd: { gap: 10, marginTop: 10 },
+  quickPacks: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
+  quickPack: { flexGrow: 1, flexBasis: '22%', borderWidth: 1, borderRadius: 12, paddingVertical: 7, alignItems: 'center', gap: 1 },
   stats: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   stat: { flexBasis: '47%', flexGrow: 1 },
   packs: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },

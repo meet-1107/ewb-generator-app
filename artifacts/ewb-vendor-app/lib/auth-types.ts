@@ -11,7 +11,8 @@ export type AuthUser = {
   displayName: string | null;
   /** Email confirmed by Google, or by the email OTP at registration (set by the server). */
   verified: boolean;
-  getIdToken: () => Promise<string>;
+  /** `forceRefresh` asks Firebase's server, so it fails for a revoked session. */
+  getIdToken: (forceRefresh?: boolean) => Promise<string>;
 };
 
 export type AuthClient = {
@@ -30,6 +31,14 @@ export type AuthClient = {
   signOut: () => Promise<void>;
 };
 
+/** Firebase codes for a saved session the server no longer accepts, e.g. after a password change. */
+const REVOKED_SESSION_CODES = new Set(['auth/user-token-expired', 'auth/invalid-user-token', 'auth/user-disabled', 'auth/user-not-found', 'auth/invalid-credential']);
+
+export function isRevokedSession(error: unknown): boolean {
+  const code = typeof error === 'object' && error !== null && 'code' in error ? String(error.code) : '';
+  return REVOKED_SESSION_CODES.has(code);
+}
+
 type FirebaseLikeUser = {
   uid: string;
   email: string | null;
@@ -37,7 +46,7 @@ type FirebaseLikeUser = {
   emailVerified: boolean;
 };
 
-export function toAuthUser(user: FirebaseLikeUser, getIdToken: () => Promise<string>): AuthUser {
+export function toAuthUser(user: FirebaseLikeUser, getIdToken: (forceRefresh?: boolean) => Promise<string>): AuthUser {
   return {
     uid: user.uid,
     email: user.email,

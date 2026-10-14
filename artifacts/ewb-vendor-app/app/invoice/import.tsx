@@ -10,7 +10,7 @@ import { Button, Card, ConfidenceTag, KeyValue, Notice, ProgressSteps, ScreenHea
 import { useDialog } from '@/components/Dialog';
 import { useAppStore } from '@/state/app-store';
 import { api, ApiError, type ExtractedInvoice } from '@/lib/api';
-import { draftForBusiness, expectedSupplyType, formatDate, formatInr, invoiceTotals, newLine, type Confidence, type Invoice } from '@/lib/domain';
+import { draftForBusiness, expectedSupplyType, formatDate, formatInr, invoiceTotals, newLine, UNITS, type Confidence, type Invoice } from '@/lib/domain';
 
 const MAX_BYTES = 8 * 1024 * 1024;
 type Stage = 'choose' | 'reading' | 'extracting' | 'review' | 'failed';
@@ -30,7 +30,7 @@ const LABELS: [keyof ExtractedInvoice, string][] = [
   ['invoiceNumber', 'Invoice number'], ['invoiceDate', 'Invoice date'],
   ['sellerName', 'Seller'], ['sellerGstin', 'Seller GSTIN'], ['sellerState', 'Seller state'], ['sellerPincode', 'Seller PIN'],
   ['buyerName', 'Buyer'], ['buyerGstin', 'Buyer GSTIN'], ['buyerState', 'Buyer state'], ['buyerPincode', 'Buyer PIN'],
-  ['vehicleNumber', 'Vehicle'], ['taxablePaise', 'Taxable value'], ['totalPaise', 'Invoice total'],
+  ['vehicleNumber', 'Vehicle'], ['transporterName', 'Transporter'], ['transporterId', 'Transporter ID'], ['taxablePaise', 'Taxable value'], ['totalPaise', 'Invoice total'],
 ];
 
 export default function PdfImportScreen() {
@@ -102,10 +102,24 @@ export default function PdfImportScreen() {
       take('buyerState', fields.buyerState);
       take('buyerPincode', fields.buyerPincode);
       take('vehicleNumber', fields.vehicleNumber);
+      take('transporterName', fields.transporterName);
+      take('transporterId', fields.transporterId);
+      // No ID on the PDF: a transporter saved earlier brings its ID along.
+      const knownTransporter = store.transporters.find((item) => item.name.trim().toLowerCase() === invoice.transporterName.trim().toLowerCase());
+      if (!fields.transporterId && fields.transporterName && knownTransporter?.transporterId) invoice.transporterId = knownTransporter.transporterId;
       if (fields.buyerState) invoice.placeOfSupply = fields.buyerState.value;
       invoice.supplyType = expectedSupplyType(invoice) ?? invoice.supplyType;
       if (fields.lines.length) {
-        invoice.lines = fields.lines.map((line) => ({ ...newLine(), description: line.description, hsn: line.hsn, quantity: line.quantity, taxablePaise: line.taxablePaise, taxRate: line.taxRate }));
+        invoice.lines = fields.lines.map((line) => ({
+          ...newLine(),
+          description: line.description,
+          hsn: line.hsn,
+          quantity: line.quantity,
+          ...(line.unit && UNITS.includes(line.unit) ? { unit: line.unit } : {}),
+          ...(line.unitPricePaise ? { unitPricePaise: line.unitPricePaise } : {}),
+          taxablePaise: line.taxablePaise,
+          taxRate: line.taxRate,
+        }));
         confidence.lines = 'low';
       }
       invoice.extraction = { parserVersion: 'heuristic-1', fields: confidence, original, confirmed: false };
@@ -184,7 +198,7 @@ export default function PdfImportScreen() {
             </Card>
             {ownGstinMismatch ? <Notice tone="warning" title="Seller GSTIN differs from your profile" body={`The PDF shows ${fields.sellerGstin?.value}. Your draft keeps your registered GSTIN ${store.activeGstin} — sales invoices must be issued by you.`} /> : null}
             <Notice tone="info" title="Nothing is final yet" body="The next screen opens the draft with these values tagged. Check every field, then continue to e-way bill review." />
-            <Button title="Review in invoice editor" icon="arrow-right" onPress={() => void createDraft()} testID="import-continue" />
+            <Button title="Add to invoice" icon="arrow-right" onPress={() => void createDraft()} testID="import-continue" />
             <Button title="Ignore and type manually" variant="ghost" onPress={() => void createDraft(true)} />
             {retention ? <TextBlock size={11} color={colors.mutedForeground} style={{ textAlign: 'center' }}>{retention}</TextBlock> : null}
           </>

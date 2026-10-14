@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { getDocumentProxy } from "unpdf";
-import { extractInvoiceFields } from "../lib/pdf-extract";
+import { extractInvoiceFields, type PdfRow } from "../lib/pdf-extract";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
@@ -10,25 +10,23 @@ const MAX_BYTES = 8 * 1024 * 1024;
 async function pdfText(bytes: Uint8Array) {
   const pdf = await getDocumentProxy(bytes);
   const pages: string[] = [];
+  const allRows: PdfRow[] = [];
   for (let pageNumber = 1; pageNumber <= Math.min(pdf.numPages, 10); pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
     const content = await page.getTextContent();
-    const rows = new Map<number, { x: number; text: string }[]>();
+    const rows = new Map<number, { x: number; width: number; text: string }[]>();
     for (const item of content.items) {
       if (!("str" in item) || !item.str.trim()) continue;
       const y = Math.round(item.transform[5] / 3) * 3;
       const row = rows.get(y) ?? [];
-      row.push({ x: item.transform[4], text: item.str });
+      row.push({ x: item.transform[4], width: item.width, text: item.str.trim() });
       rows.set(y, row);
     }
-    pages.push(
-      [...rows.entries()]
-        .sort((a, b) => b[0] - a[0])
-        .map(([, row]) => row.sort((a, b) => a.x - b.x).map((cell) => cell.text).join(" "))
-        .join("\n"),
-    );
+    const ordered = [...rows.entries()].sort((a, b) => b[0] - a[0]).map(([, row]) => row.sort((a, b) => a.x - b.x));
+    allRows.push(...ordered.map((cells) => ({ page: pageNumber, cells })));
+    pages.push(ordered.map((row) => row.map((cell) => cell.text).join(" ")).join("\n"));
   }
-  return { text: pages.join("\n"), pageCount: pdf.numPages };
+  return { text: pages.join("\n"), rows: allRows, pageCount: pdf.numPages };
 }
 
 router.post("/pdf/parse", async (req, res) => {
@@ -39,11 +37,11 @@ router.post("/pdf/parse", async (req, res) => {
   if (bytes.subarray(0, 5).toString("latin1") !== "%PDF-") return res.status(415).json({ error: "not_pdf", message: "This file is not a PDF." });
   try {
     // Processed in memory only; the file is never written to disk or retained.
-    const { text, pageCount } = await pdfText(new Uint8Array(bytes));
+    const { text, rows, pageCount } = await pdfText(new Uint8Array(bytes));
     if (text.replace(/\s/g, "").length < 30) {
       return res.status(422).json({ error: "no_text", message: "This PDF looks scanned (no selectable text). Enter the details manually." });
     }
-    const fields = extractInvoiceFields(text, pageCount);
+    const fields = extractInvoiceFields(text, pageCount, rows);
     return res.json({ fields, parserVersion: "heuristic-1", retention: "Not stored. Processed in memory and discarded." });
   } catch (error) {
     logger.warn({ err: (error as Error).message }, "PDF parse failed");

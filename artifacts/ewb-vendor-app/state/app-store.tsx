@@ -44,6 +44,8 @@ type Persisted = {
   ewbsFetchedAt: string | null;
   gstCache: Record<string, { snapshots: GstSnapshot[]; fetchedAt: string }>;
   lastSyncAt: string | null;
+  /** Device time when the last pushed snapshot was taken: records saved after it go up next sync. */
+  lastPushAt?: string | null;
   tombstones: Record<string, Record<string, string>>;
 };
 
@@ -226,15 +228,19 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     syncing.current = true;
     setSyncState('syncing');
     try {
+      const snapshotAt = new Date().toISOString();
       const current = dataRef.current;
       const since = current.lastSyncAt ?? undefined;
-      const changed = <T extends { id: string; updatedAt: string }>(items: T[]) => items.filter((item) => !since || item.updatedAt > since).map((item) => ({ id: item.id, updatedAt: item.updatedAt, data: item }));
+      // Push by the device's own clock: records saved while a sync was in flight, or on a
+      // phone whose clock runs behind the server, are older than serverTime but not yet sent.
+      const pushedAt = current.lastPushAt ?? undefined;
+      const changed = <T extends { id: string; updatedAt: string }>(items: T[]) => items.filter((item) => !pushedAt || item.updatedAt >= pushedAt).map((item) => ({ id: item.id, updatedAt: item.updatedAt, data: item }));
       const collections: Record<string, SyncEnvelope[]> = {
         invoices: changed(current.invoices),
         parties: changed(current.parties),
         products: changed(current.products),
         transporters: changed(current.transporters),
-        business: current.business && (!since || (current.business.updatedAt ?? '') > since) ? [{ id: 'profile', updatedAt: current.business.updatedAt ?? new Date(0).toISOString(), data: current.business }] : [],
+        business: current.business && (!pushedAt || (current.business.updatedAt ?? '') >= pushedAt) ? [{ id: 'profile', updatedAt: current.business.updatedAt ?? new Date(0).toISOString(), data: current.business }] : [],
       };
       for (const [name, ids] of Object.entries(current.tombstones)) {
         for (const [id, at] of Object.entries(ids)) (collections[name] ??= []).push({ id, updatedAt: at, deleted: true });
@@ -242,7 +248,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       const result = await api.sync(since, collections);
       setOnline(true);
       update((state) => {
-        let next: Persisted = { ...state, lastSyncAt: result.serverTime, tombstones: {} };
+        let next: Persisted = { ...state, lastSyncAt: result.serverTime, lastPushAt: snapshotAt, tombstones: {} };
         const merge = <T extends { id: string; updatedAt: string }>(key: Collections, map: (raw: unknown) => T) => {
           const incoming = result.changes[key] ?? [];
           if (!incoming.length) return;

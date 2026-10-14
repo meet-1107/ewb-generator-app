@@ -3,7 +3,6 @@ import {
   AccessibilityInfo,
   Animated,
   Easing,
-  KeyboardAvoidingView,
   Modal,
   Platform,
   Pressable,
@@ -18,6 +17,7 @@ import * as Haptics from 'expo-haptics';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 import { TextBlock } from '@/components/AppUI';
+import { KeyboardAvoidingViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 
 type Tone = 'default' | 'danger' | 'success' | 'warning';
 type IconName = keyof typeof Feather.glyphMap;
@@ -156,7 +156,7 @@ function DialogHost({ request, onDone }: { request: Request; onDone: () => void 
 
   return (
     <Modal transparent visible animationType="none" onRequestClose={cancel} statusBarTranslucent>
-      <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={styles.flex}>
+      <KeyboardAvoidingViewCompat style={styles.flex}>
         <Animated.View style={[styles.backdrop, { backgroundColor: colors.overlay, opacity }]}>
           <Pressable style={StyleSheet.absoluteFill} onPress={request.kind === 'alert' ? accept : cancel} accessibilityLabel="Dismiss dialog" />
           <Animated.View
@@ -213,7 +213,7 @@ function DialogHost({ request, onDone }: { request: Request; onDone: () => void 
             </View>
           </Animated.View>
         </Animated.View>
-      </KeyboardAvoidingView>
+      </KeyboardAvoidingViewCompat>
     </Modal>
   );
 }

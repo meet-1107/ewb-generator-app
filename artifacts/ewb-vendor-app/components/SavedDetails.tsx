@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View } from 'react-native';
+import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Card, Divider, EmptyState, Field, IconButton, ListRow, LoadMore, MoneyField, ScreenHeader, SearchBar, SelectField, Sheet, StatusPill, TextBlock } from '@/components/AppUI';
@@ -114,7 +115,7 @@ export default function SavedDetails({ kind, tab = false }: { kind: Kind; tab?: 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <ScreenHeader back={!tab} title={meta.title} subtitle={`${items.length} saved · synced to your account`} right={tab ? <AccountButton /> : undefined} />
-      <ScrollView contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + (tab ? 180 : 100) }]} keyboardShouldPersistTaps="handled" onScroll={(event) => { if (nearEnd(event.nativeEvent)) list.more(filtered.length); }} scrollEventThrottle={120}>
+      <KeyboardAwareScrollViewCompat contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + (tab ? 180 : 100) }]} keyboardShouldPersistTaps="handled" onScroll={(event) => { if (nearEnd(event.nativeEvent)) list.more(filtered.length); }} scrollEventThrottle={120}>
         {items.length > 5 ? <SearchBar value={query} onChangeText={(value) => { setQuery(value); list.reset(); }} placeholder={`Search ${meta.title.toLowerCase()}`} /> : null}
         {filtered.length ? (
           <Card style={{ padding: 0, gap: 0 }}>
@@ -134,7 +135,7 @@ export default function SavedDetails({ kind, tab = false }: { kind: Kind; tab?: 
         {filtered.length ? <LoadMore remaining={filtered.length - list.limit} loading={list.loading} onPress={() => list.more(filtered.length)} noun={`more ${meta.title.toLowerCase()}`} /> : (
           <Card><EmptyState icon={meta.icon} title={query ? 'No matches' : `No ${meta.title.toLowerCase()} yet`} body={query ? 'Try another search.' : meta.empty} action={!query ? <Button title={`Add ${meta.singular}`} icon="plus" onPress={() => setDraft(blank())} /> : undefined} /></Card>
         )}
-      </ScrollView>
+      </KeyboardAwareScrollViewCompat>
 
       <Pressable
         onPress={() => { autoVerified.current = ''; setErrors({}); setDraft(blank()); }}

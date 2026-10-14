@@ -10,7 +10,7 @@ import React, {
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { api } from '@/lib/api';
 import { authClient } from '@/lib/auth-client';
-import type { AuthUser } from '@/lib/auth-types';
+import { isRevokedSession, type AuthUser } from '@/lib/auth-types';
 
 const PREVIEW_KEY = 'ewb-vendor-v1:preview-session';
 const firebaseConfigured = Boolean(authClient);
@@ -22,6 +22,8 @@ type AuthValue = {
   isLoading: boolean;
   previewMode: boolean;
   firebaseConfigured: boolean;
+  /** The saved session was revoked (e.g. password changed elsewhere); the user must sign in again. */
+  sessionExpired: boolean;
   enterPreview: () => void;
   exitPreview: () => void;
   /** Signs in or creates an account with Google. Resolves false if the user cancels. */
@@ -49,11 +51,40 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [previewMode, setPreviewMode] = useState(false);
   const isLoading = authLoading || previewLoading;
 
+  const [sessionExpired, setSessionExpired] = useState(false);
+
   useEffect(() => {
     if (!authClient) return;
-    return authClient.onChange((nextUser) => {
-      setUser(nextUser);
-      setAuthLoading(false);
+    const client = authClient;
+    let first = true;
+    let latest = 0;
+    return client.onChange((nextUser) => {
+      const event = ++latest;
+      const restored = first && nextUser !== null;
+      first = false;
+      if (!restored) {
+        setUser(nextUser);
+        setAuthLoading(false);
+        return;
+      }
+      // A session saved on the device can be revoked meanwhile (password changed, account
+      // disabled). Check it with Firebase before opening the app, so it goes straight to
+      // sign-in instead of opening the workspace and failing. Offline keeps the saved session.
+      const check = nextUser.getIdToken(true).then(() => true, (error: unknown) => !isRevokedSession(error));
+      const timeout = new Promise<boolean>((resolve) => setTimeout(() => resolve(true), 6000));
+      void Promise.race([check, timeout]).then(async (valid) => {
+        if (event !== latest) return;
+        if (valid) {
+          setUser(nextUser);
+          setAuthLoading(false);
+          return;
+        }
+        setSessionExpired(true);
+        await client.signOut().catch(() => undefined);
+        if (event !== latest) return;
+        setUser(null);
+        setAuthLoading(false);
+      });
     });
   }, []);
 
@@ -82,12 +113,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       isLoading,
       previewMode,
       firebaseConfigured,
+      sessionExpired,
       enterPreview,
       exitPreview,
       signInWithGoogle() {
+        setSessionExpired(false);
         return requireClient().signInWithGoogle();
       },
       signIn(email, password) {
+        setSessionExpired(false);
         return requireClient().signInWithEmail(email.trim(), password);
       },
       async sendRegistrationCode(email) {
@@ -109,7 +143,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (authClient) await authClient.signOut();
       },
     }),
-    [user, isLoading, previewMode, enterPreview, exitPreview],
+    [user, isLoading, previewMode, sessionExpired, enterPreview, exitPreview],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

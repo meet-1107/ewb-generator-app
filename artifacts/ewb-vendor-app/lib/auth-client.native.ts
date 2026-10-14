@@ -30,7 +30,7 @@ function load(): AuthClient | null {
   return {
     onChange(listener) {
       return sdk.onAuthStateChanged(auth, (user) => {
-        listener(user ? toAuthUser(user, () => sdk.getIdToken(user)) : null);
+        listener(user ? toAuthUser(user, (forceRefresh) => sdk.getIdToken(user, forceRefresh)) : null);
       });
     },
     async signInWithGoogle() {

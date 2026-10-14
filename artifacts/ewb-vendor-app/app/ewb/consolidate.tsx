@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { ScrollView, StyleSheet, View } from 'react-native';
+import { StyleSheet, View } from 'react-native';
+import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Card, Checkbox, Divider, EmptyState, Field, KeyValue, Notice, ScreenHeader, SectionTitle, SelectField, TextBlock } from '@/components/AppUI';
@@ -70,7 +71,7 @@ export default function ConsolidateScreen() {
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
       <ScreenHeader title="Consolidate e-way bills" subtitle="One vehicle, several consignments" />
-      <ScrollView contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 30 }]} keyboardShouldPersistTaps="handled">
+      <KeyboardAwareScrollViewCompat contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 30 }]} keyboardShouldPersistTaps="handled">
         {created ? (
           <Card>
             <TextBlock size={12} weight="bold" color={colors.mutedForeground}>CONSOLIDATED E-WAY BILL</TextBlock>
@@ -123,7 +124,7 @@ export default function ConsolidateScreen() {
             </Card>
           </>
         ) : null}
-      </ScrollView>
+      </KeyboardAwareScrollViewCompat>
     </View>
   );
 }

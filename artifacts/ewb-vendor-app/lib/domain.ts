@@ -641,7 +641,7 @@ function seriesOf(invoiceNumber: string) {
  * (e.g. GR-01 after INV-05): the message and the number that would follow.
  */
 export function invoiceSeriesProblem(invoice: Invoice, others: Invoice[], released: Set<string> = new Set()) {
-  const counted = others.filter((other) => other.id !== invoice.id && !other.unsaved && !released.has(other.id) && other.invoiceNumber.trim() && other.sellerGstin.toUpperCase() === invoice.sellerGstin.toUpperCase());
+  const counted = others.filter((other) => other.id !== invoice.id && !other.unsaved && !released.has(other.id) && other.invoiceNumber.trim() && sameSeller(other, invoice.sellerGstin));
   const latest = [...counted].sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
   if (!latest || !invoice.invoiceNumber.trim()) return null;
   const expected = seriesOf(latest.invoiceNumber);
@@ -670,6 +670,17 @@ export function nextInvoiceNumber(invoices: Invoice[], released: Set<string> = n
     if (other && other[1]!.toLowerCase() === prefix.toLowerCase() && other[3]!.toLowerCase() === suffix.toLowerCase()) max = Math.max(max, Number(other[2]));
   }
   return `${prefix}${String(max + 1).padStart(digits.length, '0')}${suffix}`;
+}
+
+/** Invoice belongs to this GSTIN (case-insensitive); invoices without a seller GSTIN count for every registration, as in the invoice list. */
+function sameSeller(invoice: Invoice, gstin: string) {
+  return !invoice.sellerGstin.trim() || !gstin.trim() || invoice.sellerGstin.trim().toUpperCase() === gstin.trim().toUpperCase();
+}
+
+/** Number for the next invoice of one GSTIN, continuing that GSTIN's series. */
+export function nextNumberForSeller(invoices: Invoice[], gstin: string, ewbs: EwbRecord[] = []) {
+  const sellerInvoices = invoices.filter((invoice) => sameSeller(invoice, gstin));
+  return nextInvoiceNumber(sellerInvoices, releasedInvoiceIds(sellerInvoices, ewbs));
 }
 
 /** Return period for GST: `YYYY-MM`. Returns are filed for the previous month. */
@@ -707,10 +718,9 @@ export function draftForBusiness(business: Business, activeGstin: string, invoic
   const template = templates.some((item) => item.id === templateId) ? templateId! : business.defaultTemplateId ?? 'classic';
   const gstin = activeGstin || business.gstin;
   const registration = business.gstRegistrations?.find((item) => item.gstin === gstin);
-  const sellerInvoices = invoices.filter((invoice) => invoice.sellerGstin === gstin);
   return {
     ...newInvoice(template),
-    invoiceNumber: nextInvoiceNumber(sellerInvoices, releasedInvoiceIds(sellerInvoices, ewbs)),
+    invoiceNumber: nextNumberForSeller(invoices, gstin, ewbs),
     sellerName: business.name,
     sellerGstin: gstin,
     sellerAddress: business.address,

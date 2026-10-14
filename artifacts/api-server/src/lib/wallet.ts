@@ -6,11 +6,11 @@ import type { Wallet, WalletAction, WalletEntry, Workspace } from "./store";
  * (success) or refunded (rejection / error), so a failed call never costs the
  * user anything and two parallel calls cannot overspend the balance.
  *
- * Costs default to generate 10, Part-B 5, consolidate 5, cancel 5, extend 5;
- * override with CREDIT_COSTS_JSON, e.g. {"generate":10,"extend":5}.
+ * Costs default to generate 5, Part-B 5, consolidate 5, cancel 5, extend 5;
+ * override with CREDIT_COSTS_JSON, e.g. {"generate":5,"extend":5}.
  */
 
-const defaults: Record<WalletAction, number> = { generate: 10, part_b: 5, consolidate: 5, cancel: 5, extend: 5 };
+const defaults: Record<WalletAction, number> = { generate: 5, part_b: 5, consolidate: 5, cancel: 5, extend: 5 };
 
 export const creditCosts: Record<WalletAction, number> = {
   ...defaults,
@@ -88,6 +88,33 @@ export function adjustCredits(workspace: Workspace, { credits, reason, actor, re
   return { ok: true, entry, replay: false, balance: workspace.wallet.balance };
 }
 
+/** Calendar month (YYYY-MM) of an entry in India time. */
+function istMonth(iso: string) {
+  return new Date(Date.parse(iso) + 5.5 * 3_600_000).toISOString().slice(0, 7);
+}
+
+const visible = (workspace: Workspace) => workspace.wallet.ledger.filter((entry) => entry.status !== "held");
+const labelled = (entry: WalletEntry) => ({ ...entry, label: ACTION_LABELS[entry.kind] });
+
+/** Months that have history, newest first, with credits added and used in each. */
+function historyMonths(entries: WalletEntry[]) {
+  const months = new Map<string, { month: string; count: number; added: number; used: number }>();
+  for (const entry of entries) {
+    const month = istMonth(entry.at);
+    const row = months.get(month) ?? { month, count: 0, added: 0, used: 0 };
+    row.count++;
+    if (entry.credits > 0) row.added += entry.credits;
+    else if (entry.status === "charged") row.used -= entry.credits;
+    months.set(month, row);
+  }
+  return [...months.values()].sort((a, b) => b.month.localeCompare(a.month));
+}
+
+/** One month's history (YYYY-MM, India time), newest first. */
+export function walletHistory(workspace: Workspace, month: string) {
+  return { month, entries: visible(workspace).filter((entry) => istMonth(entry.at) === month).reverse().map(labelled) };
+}
+
 export function walletSummary(workspace: Workspace) {
   const charged = workspace.wallet.ledger.filter((entry) => entry.status === "charged");
   const count = (kind: WalletAction) => charged.filter((entry) => entry.kind === kind).length;
@@ -96,6 +123,7 @@ export function walletSummary(workspace: Workspace) {
     costs: creditCosts,
     counts: { generate: count("generate"), part_b: count("part_b"), consolidate: count("consolidate"), cancel: count("cancel"), extend: count("extend") },
     creditsUsed: charged.reduce((sum, entry) => sum - entry.credits, 0),
-    ledger: workspace.wallet.ledger.filter((entry) => entry.status !== "held").slice(-100).reverse().map((entry) => ({ ...entry, label: ACTION_LABELS[entry.kind] })),
+    ledger: visible(workspace).slice(-100).reverse().map(labelled),
+    historyMonths: historyMonths(visible(workspace)),
   };
 }

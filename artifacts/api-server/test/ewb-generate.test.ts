@@ -89,7 +89,7 @@ before(async () => {
   process.env["GSTINAPI_KEY"] = "gak_test";
   process.env["GSTINAPI_BASE_URL"] = await listen(gstinServer);
   process.env["EWB_CREDENTIALS_SECRET"] = "test-secret-0123456789";
-  process.env["WALLET_START_CREDITS"] = "30";
+  process.env["WALLET_START_CREDITS"] = "15";
   process.env["RAZORPAY_KEY_ID"] = "rzp_test_key";
   process.env["RAZORPAY_KEY_SECRET"] = "rzp_test_secret";
   process.env["RAZORPAY_WEBHOOK_SECRET"] = WEBHOOK_SECRET;
@@ -143,12 +143,25 @@ describe("e-way bill generation (gstinapi adapter, mocked provider)", () => {
     const ws = await readyWorkspace();
     const first = await ws.call("POST", "/ewb/generate", { idempotencyKey: "key-aaaa-1", input: invoice("inv1", "INV-001") });
     assert.equal(first.status, 201, JSON.stringify(first.body));
-    assert.equal(first.body["balance"], 20);
+    assert.equal(first.body["balance"], 10);
     const again = await ws.call("POST", "/ewb/generate", { idempotencyKey: "key-aaaa-1", input: invoice("inv1", "INV-001") });
     assert.equal(again.status, 200);
     assert.equal(again.body["replay"], true);
     assert.equal(again.body["ewb"].ewbNumber, first.body["ewb"].ewbNumber);
-    assert.equal(await balance(ws), 20);
+    assert.equal(await balance(ws), 10);
+  });
+
+  it("lists wallet history by month", async () => {
+    const ws = await readyWorkspace();
+    await ws.call("POST", "/ewb/generate", { idempotencyKey: "key-hist-1", input: invoice("hist1", "HIST-001") });
+    const month = new Date(Date.now() + 5.5 * 3_600_000).toISOString().slice(0, 7);
+    const summary = (await ws.call("GET", "/wallet")).body;
+    assert.deepEqual(summary["historyMonths"][0], { month, count: 2, added: 15, used: 5 });
+    const history = await ws.call("GET", `/wallet/history?month=${month}`);
+    assert.equal(history.status, 200, JSON.stringify(history.body));
+    assert.deepEqual(history.body["entries"].map((entry: { kind: string }) => entry.kind), ["generate", "grant"]);
+    assert.equal((await ws.call("GET", "/wallet/history?month=1999-01")).body["entries"].length, 0);
+    assert.equal((await ws.call("GET", "/wallet/history?month=2026-13")).status, 400);
   });
 
   it("lets NIC calculate the distance between different PIN codes, and sends the entered one within a PIN code", async () => {
@@ -173,7 +186,7 @@ describe("e-way bill generation (gstinapi adapter, mocked provider)", () => {
     const other = first.status === 201 ? second : first;
     assert.ok(other.status === 409 || (other.status === 200 && other.body["replay"] === true), JSON.stringify(other.body));
     assert.equal(gstin.generateCalls - before, 1);
-    assert.equal(await balance(ws), 20);
+    assert.equal(await balance(ws), 10);
   });
 
   it("two parallel submits of one invoice with different keys (two queued confirm dialogs) create one bill and one charge", async () => {
@@ -181,7 +194,7 @@ describe("e-way bill generation (gstinapi adapter, mocked provider)", () => {
     const [a, b] = await Promise.all(["key-twokeys-a", "key-twokeys-b"].map((key) => ws.call("POST", "/ewb/generate", { idempotencyKey: key, input: invoice("inv-2k", "TWOKEY-1") })));
     assert.deepEqual([a!.status, b!.status].sort(), [201, 409], JSON.stringify([a!.body, b!.body]));
     assert.equal((await ws.call("GET", "/ewb")).body["ewbs"].length, 1);
-    assert.equal(await balance(ws), 20);
+    assert.equal(await balance(ws), 10);
   });
 
   it("two invoices racing for the last credits: one succeeds, the other is refused", async () => {
@@ -191,7 +204,7 @@ describe("e-way bill generation (gstinapi adapter, mocked provider)", () => {
       ws.call("POST", "/ewb/generate", { idempotencyKey: "key-race-1", input: invoice("r1", "RACE-1") }),
       ws.call("POST", "/ewb/generate", { idempotencyKey: "key-race-2", input: invoice("r2", "RACE-2") }),
     ]);
-    // 30 start credits, 10 per bill: after RACE-0 only one more fits... then 0 left.
+    // 15 start credits, 5 per bill: after RACE-0 only one more fits... then 0 left.
     assert.deepEqual([a.status, b.status].sort(), [201, 201]);
     const c = await ws.call("POST", "/ewb/generate", { idempotencyKey: "key-race-3", input: invoice("r3", "RACE-3") });
     assert.equal(c.status, 402);
@@ -203,7 +216,7 @@ describe("e-way bill generation (gstinapi adapter, mocked provider)", () => {
     gstin.next = "reject";
     const result = await ws.call("POST", "/ewb/generate", { idempotencyKey: "key-reject-1", input: invoice("rej", "REJ-1") });
     assert.equal(result.status, 422);
-    assert.equal(await balance(ws), 30);
+    assert.equal(await balance(ws), 15);
   });
 
   it("refuses a second invoice that reuses a document number already on an e-way bill", async () => {
@@ -214,7 +227,7 @@ describe("e-way bill generation (gstinapi adapter, mocked provider)", () => {
     const second = await ws.call("POST", "/ewb/generate", { idempotencyKey: "key-dup-b", input: invoice("dup-b", "same-7") });
     assert.equal(second.status, 409, JSON.stringify(second.body));
     assert.equal(second.body["error"], "duplicate_number");
-    assert.equal(await balance(ws), 20, "no second charge");
+    assert.equal(await balance(ws), 10, "no second charge");
     const list = await ws.call("GET", "/ewb");
     assert.equal(list.body["ewbs"].length, 1);
   });
@@ -225,11 +238,11 @@ describe("e-way bill generation (gstinapi adapter, mocked provider)", () => {
     const lost = await ws.call("POST", "/ewb/generate", { idempotencyKey: "key-drop-1", input: invoice("drop", "DROP-1") });
     assert.equal(lost.status, 502, JSON.stringify(lost.body));
     assert.equal(lost.body["error"], "outcome_unknown");
-    assert.equal(await balance(ws), 30, "not charged while unknown");
+    assert.equal(await balance(ws), 15, "not charged while unknown");
     const retry = await ws.call("POST", "/ewb/generate", { idempotencyKey: "key-drop-1", input: invoice("drop", "DROP-1") });
     assert.equal(retry.status, 201);
     assert.equal(retry.body["ewb"].ewbNumber, gstin.bills.get("DROP-1")!.ewbNumber);
-    assert.equal(await balance(ws), 20);
+    assert.equal(await balance(ws), 10);
   });
 
   it("a request left pending by a crashed instance can be retried later, and its held credits are returned", async () => {
@@ -242,10 +255,10 @@ describe("e-way bill generation (gstinapi adapter, mocked provider)", () => {
       const hold = holdCredits(w, "generate", "stale");
       w.requests["key-stale-1"] = { id: "req-stale", idempotencyKey: "key-stale-1", invoiceId: "stale", state: "pending", createdAt: staleAt, holdId: hold.ok ? hold.entryId ?? undefined : undefined } as never;
     }, { requests: ["key-stale-1"] });
-    assert.equal(await balance(ws), 20);
+    assert.equal(await balance(ws), 10);
     const retry = await ws.call("POST", "/ewb/generate", { idempotencyKey: "key-stale-1", input: invoice("stale", "STALE-1") });
     assert.equal(retry.status, 201, JSON.stringify(retry.body));
-    assert.equal(await balance(ws), 20, "stale hold refunded, new bill charged once");
+    assert.equal(await balance(ws), 10, "stale hold refunded, new bill charged once");
   });
 
   it("rejects totals whose taxable value does not match the lines", async () => {
@@ -254,7 +267,7 @@ describe("e-way bill generation (gstinapi adapter, mocked provider)", () => {
     input.totals = { ...input.totals, taxable: input.totals.taxable - 100_000, tax: input.totals.tax + 100_000 };
     const result = await ws.call("POST", "/ewb/generate", { idempotencyKey: "key-tot-1", input });
     assert.equal(result.status, 422, JSON.stringify(result.body));
-    assert.equal(await balance(ws), 30);
+    assert.equal(await balance(ws), 15);
   });
 
   it("keeps workspaces apart: another workspace cannot read or act on a bill", async () => {
@@ -282,20 +295,20 @@ describe("credit purchases (Razorpay, mocked)", () => {
 
     const short = paidEvent(linkId, `sbx_${ws.id}`, 5_000);
     assert.equal((await webhook(short, sign(short))).status, 200);
-    assert.equal(await balance(ws), 30, "short payment adds nothing");
+    assert.equal(await balance(ws), 15, "short payment adds nothing");
 
     const full = paidEvent(linkId, `sbx_${ws.id}`, 10_000);
     assert.equal((await webhook(full, "0".repeat(64))).status, 401, "forged signature refused");
-    assert.equal(await balance(ws), 30);
+    assert.equal(await balance(ws), 15);
     assert.equal((await webhook(full, sign(full))).status, 200);
     assert.equal((await webhook(full, sign(full))).status, 200, "replayed delivery");
-    assert.equal(await balance(ws), 130, "credited exactly once");
+    assert.equal(await balance(ws), 115, "credited exactly once");
 
     // The app's status check after returning from checkout must not credit again.
     links.get(linkId)!.status = "paid";
     links.get(linkId)!.amount_paid = 10_000;
     const checked = await ws.call("GET", `/wallet/purchase/${linkId}`);
-    assert.equal(checked.body["balance"], 130);
+    assert.equal(checked.body["balance"], 115);
   });
 
   it("does not trust a client-supplied amount", async () => {

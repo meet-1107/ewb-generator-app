@@ -49,7 +49,7 @@ function load(): AuthClient | null {
   return {
     onChange(listener) {
       return onAuthStateChanged(auth, (user) => {
-        listener(user ? toAuthUser(user, () => getIdToken(user)) : null);
+        listener(user ? toAuthUser(user, (forceRefresh) => getIdToken(user, forceRefresh)) : null);
       });
     },
     async signInWithGoogle() {
