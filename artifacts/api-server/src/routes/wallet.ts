@@ -28,7 +28,30 @@ export function settlePurchase(workspace: Workspace, purchaseId: string, payment
 /** Signed-in wallet routes (mounted after requireWorkspace). */
 export const walletRouter: IRouter = Router();
 
+/** Asks Razorpay about an unpaid link and credits it once if it was paid. */
+async function recheckPurchase(req: Request, purchaseId: string) {
+  const current = await withWorkspace(req.workspaceId, (workspace) => structuredClone(workspace.purchases[purchaseId] ?? null));
+  if (!current || current.status !== "created" || current.provider !== "razorpay") return;
+  try {
+    const link = await fetchPaymentLink(current.id);
+    if (link.status === "paid" && link.amountPaid >= current.amountPaise) {
+      await withWorkspace(req.workspaceId, (workspace) => settlePurchase(workspace, current.id, link.paymentId));
+    } else if (link.status !== "created") {
+      await withWorkspace(req.workspaceId, (workspace) => { workspace.purchases[current.id]!.status = link.status; });
+    }
+  } catch (error) {
+    req.log?.warn({ err: (error as Error).message }, "Razorpay status check failed");
+  }
+}
+
 walletRouter.get("/wallet", async (req, res) => {
+  // A payment finished after the app was closed (and missed by the webhook) is credited
+  // the next time the wallet loads: the newest unpaid links of the last 7 days are re-checked.
+  const since = Date.now() - 7 * 86_400_000;
+  const unpaid = await withWorkspace(req.workspaceId, (workspace) => Object.values(workspace.purchases)
+    .filter((purchase) => purchase.status === "created" && purchase.provider === "razorpay" && Date.parse(purchase.createdAt) > since)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5).map((purchase) => purchase.id));
+  for (const id of unpaid) await recheckPurchase(req, id);
   res.json({ ...(await withWorkspace(req.workspaceId, (workspace) => walletSummary(workspace))), pricing: pricing() });
 });
 
@@ -75,20 +98,9 @@ walletRouter.post("/wallet/purchase", async (req, res) => {
 
 /** Re-checks a pending purchase with Razorpay (used when the user returns from the payment page). */
 walletRouter.get("/wallet/purchase/:id", async (req, res) => {
-  const current = await withWorkspace(req.workspaceId, (workspace) => structuredClone(workspace.purchases[req.params.id] ?? null));
-  if (!current) return res.status(404).json({ error: "not_found", message: "Purchase not found." });
-  if (current.status === "created" && current.provider === "razorpay") {
-    try {
-      const link = await fetchPaymentLink(current.id);
-      if (link.status === "paid" && link.amountPaid >= current.amountPaise) {
-        await withWorkspace(req.workspaceId, (workspace) => settlePurchase(workspace, current.id, link.paymentId));
-      } else if (link.status !== "created") {
-        await withWorkspace(req.workspaceId, (workspace) => { workspace.purchases[current.id]!.status = link.status; });
-      }
-    } catch (error) {
-      req.log?.warn({ err: (error as Error).message }, "Razorpay status check failed");
-    }
-  }
+  const exists = await withWorkspace(req.workspaceId, (workspace) => Boolean(workspace.purchases[req.params.id]));
+  if (!exists) return res.status(404).json({ error: "not_found", message: "Purchase not found." });
+  await recheckPurchase(req, req.params.id);
   return res.json(await withWorkspace(req.workspaceId, (workspace) => ({ purchase: workspace.purchases[req.params.id], balance: workspace.wallet.balance })));
 });
 
