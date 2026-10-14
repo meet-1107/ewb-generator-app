@@ -35,8 +35,9 @@ function useAuthGuard() {
     if (auth.isLoading || !store.isHydrated) return;
     const signedIn = auth.signedIn;
     if (!signedIn && first !== undefined && first !== 'index') router.replace('/');
-    else if (signedIn && !store.business && first !== undefined && first !== 'setup' && first !== 'index') router.replace('/setup');
-  }, [auth.isLoading, auth.signedIn, store.isHydrated, store.business, first]);
+    // Setup only once the server confirmed there is no business (not while it is loading).
+    else if (signedIn && !store.business && store.accountLoaded && first !== undefined && first !== 'setup' && first !== 'index') router.replace('/setup');
+  }, [auth.isLoading, auth.signedIn, store.isHydrated, store.business, store.accountLoaded, first]);
 }
 
 function RootLayoutNav() {

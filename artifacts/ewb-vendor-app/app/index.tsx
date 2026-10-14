@@ -42,10 +42,12 @@ export default function LoginScreen() {
   // Session-aware routing: a restored or new verified session goes straight to the app.
   useEffect(() => {
     if (auth.isLoading || !store.isHydrated) return;
-    if (auth.signedIn) {
+    // Signing in again (sign-out cleared this phone): wait for the account's details
+    // from the server, so an existing business is never asked to set up again.
+    if (auth.signedIn && (store.business || store.accountLoaded)) {
       router.replace(store.business ? '/(tabs)' : '/setup');
     }
-  }, [auth.isLoading, auth.signedIn, store.business, store.isHydrated]);
+  }, [auth.isLoading, auth.signedIn, store.business, store.accountLoaded, store.isHydrated]);
 
   useEffect(() => {
     if (resendIn <= 0) return;
@@ -133,6 +135,22 @@ export default function LoginScreen() {
 
   if (auth.isLoading) {
     return <View style={[styles.loading, { backgroundColor: colors.background }]}><ActivityIndicator color={colors.primary} /></View>;
+  }
+  if (auth.signedIn && store.isHydrated && !store.business && !store.accountLoaded) {
+    const failed = store.syncState === 'error' || store.syncState === 'offline';
+    return (
+      <View style={[styles.loading, { backgroundColor: colors.background, gap: 14, padding: 24 }]}>
+        {failed ? null : <ActivityIndicator color={colors.primary} />}
+        <TextBlock size={15} weight="semibold" style={{ textAlign: 'center' }}>{failed ? 'Could not load your account' : 'Loading your account…'}</TextBlock>
+        {failed ? (
+          <>
+            <TextBlock size={13} color={colors.mutedForeground} style={{ textAlign: 'center' }}>Check your internet connection. Your business details are safe in your account.</TextBlock>
+            <Button title="Try again" icon="refresh-cw" onPress={() => void store.syncNow()} testID="account-retry" />
+            <Button title="Sign out" variant="ghost" onPress={() => void auth.signOut()} />
+          </>
+        ) : null}
+      </View>
+    );
   }
 
   const title = { 'sign-in': 'Welcome back', register: 'Create your account', code: 'Verify your email', reset: 'Reset your password' }[mode];

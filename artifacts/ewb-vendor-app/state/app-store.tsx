@@ -51,6 +51,12 @@ type Persisted = {
 
 type StoreValue = Omit<Persisted, 'tombstones'> & {
   isHydrated: boolean;
+  /**
+   * The account's own details are known: a business on this device, or one sync with
+   * the server done. Until then a missing business means "not loaded yet" (e.g. signing
+   * in again after sign-out cleared the phone), not "never set up".
+   */
+  accountLoaded: boolean;
   previewOnly: boolean;
   storageError: string;
   workspaceId: string | null;
@@ -457,6 +463,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     gstCache: data.gstCache,
     lastSyncAt: data.lastSyncAt,
     isHydrated: !scope || hydratedScope === scope,
+    accountLoaded: previewMode || Boolean(data.business) || Boolean(data.lastSyncAt),
     previewOnly: previewMode,
     storageError,
     workspaceId,
