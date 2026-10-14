@@ -198,6 +198,8 @@ export const api = {
   /** One page of history, newest first: a month (YYYY-MM) or every month (''), after the entry `before`. */
   walletHistory: (month: string, limit: number, before?: string) =>
     request<{ month: string; entries: WalletEntry[]; more: boolean }>(`/wallet/history?month=${encodeURIComponent(month)}&limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ''}`),
+  /** Reset email from our server (link opens our page, then the app). */
+  requestPasswordReset: (email: string) => request<{ message: string }>('/auth/password-reset', { body: { email }, timeoutMs: 30_000 }),
   sendEmailOtp: (email: string) => request<{ message: string; cooldownSeconds: number }>('/auth/email-otp/send', { body: { email }, timeoutMs: 30_000 }),
   verifyEmailOtp: (email: string, code: string) => request<{ grant: string; expiresInSeconds: number }>('/auth/email-otp/verify', { body: { email, code } }),
   finalizeRegistration: (grant: string, idToken: string) => request<{ activated: boolean }>('/auth/register/finalize', { body: { grant }, idToken, timeoutMs: 30_000 }),

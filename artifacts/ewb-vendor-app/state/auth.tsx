@@ -8,7 +8,7 @@ import React, {
   type ReactNode,
 } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { api } from '@/lib/api';
+import { api, ApiError } from '@/lib/api';
 import { authClient } from '@/lib/auth-client';
 import { isRevokedSession, type AuthUser } from '@/lib/auth-types';
 
@@ -134,8 +134,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         const { grant } = await api.verifyEmailOtp(email.trim(), code.trim());
         await client.createVerifiedAccount(email.trim().toLowerCase(), password, grant);
       },
-      resetPassword(email) {
-        return requireClient().resetPassword(email.trim());
+      async resetPassword(email) {
+        // Our own email first; Firebase's email if the server cannot send it.
+        try {
+          await api.requestPasswordReset(email.trim());
+        } catch (error) {
+          if (error instanceof ApiError && error.status === 400) throw error;
+          await requireClient().resetPassword(email.trim());
+        }
       },
       async signOut() {
         setPreviewMode(false);

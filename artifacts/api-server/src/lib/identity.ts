@@ -9,6 +9,8 @@ export type IdentityUser = { uid: string; email: string; emailVerified: boolean;
 export interface Identity {
   getUserByEmail(email: string): Promise<IdentityUser | null>;
   markEmailVerified(uid: string): Promise<void>;
+  /** One-time password reset code (Firebase oobCode) for an existing account. */
+  passwordResetCode(email: string): Promise<string>;
 }
 
 function auth() {
@@ -34,5 +36,11 @@ export const firebaseIdentity: Identity = {
   },
   async markEmailVerified(uid) {
     await auth().updateUser(uid, { emailVerified: true });
+  },
+  async passwordResetCode(email) {
+    const link = await auth().generatePasswordResetLink(email);
+    const code = new URL(link).searchParams.get("oobCode");
+    if (!code) throw new Error("Firebase returned a reset link without a code.");
+    return code;
   },
 };
