@@ -7,13 +7,16 @@ import {
   StyleSheet,
   View,
   ActivityIndicator,
+  Linking,
 } from 'react-native';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Feather } from '@expo/vector-icons';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
-import { Button, Card, Field, Notice, TextBlock } from '@/components/AppUI';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Button, Card, Checkbox, Field, Notice, TextBlock } from '@/components/AppUI';
+import { LEGAL_VERSION, PENDING_CONSENT_KEY, PRIVACY_URL, TERMS_URL } from '@/lib/legal';
 import { useAuth } from '@/state/auth';
 import { ApiError } from '@/lib/api';
 import { authErrorMessage } from '@/lib/auth-types';
@@ -35,6 +38,11 @@ export default function LoginScreen() {
   const [resendIn, setResendIn] = useState(0);
   const [busy, setBusy] = useState(false);
   const [googleBusy, setGoogleBusy] = useState(false);
+  /** Terms & Privacy Policy accepted at sign-up (required to create an account). */
+  const [agreed, setAgreed] = useState(false);
+  const AGREE_FIRST = 'Tick the box to agree to the Terms & Conditions and Privacy Policy.';
+  // Recorded on the server by ConsentGate once the new account is signed in.
+  const rememberConsent = () => AsyncStorage.setItem(PENDING_CONSENT_KEY, LEGAL_VERSION).catch(() => undefined);
   const [message, setMessage] = useState<{ text: string; tone: 'info' | 'warning' | 'success' } | null>(null);
   const [pending, setPending] = useState(false);
   const submitting = useRef(false);
@@ -85,6 +93,11 @@ export default function LoginScreen() {
   // Google sign-in also creates the account on first use; the routing effect then opens the app.
   const continueWithGoogle = async () => {
     Keyboard.dismiss();
+    // Creating an account (this screen) needs the box; signing in asks after sign-in if needed.
+    if (mode === 'register') {
+      if (!agreed) return warn(AGREE_FIRST);
+      await rememberConsent();
+    }
     setGoogleBusy(true);
     setMessage(null);
     try {
@@ -107,6 +120,7 @@ export default function LoginScreen() {
   const sendCode = (resend = false) => run(async () => {
     if (!validEmail()) return warn('Enter a valid email address.');
     if (password.length < 8 || !/[A-Za-z]/.test(password) || !/\d/.test(password)) return warn('Use at least 8 characters with letters and numbers.');
+    if (!agreed) return warn(AGREE_FIRST);
     const cooldown = await auth.sendRegistrationCode(email);
     setResendIn(cooldown);
     setMode('code');
@@ -116,6 +130,7 @@ export default function LoginScreen() {
   const verifyCode = () => run(async () => {
     if (!CODE_PATTERN.test(code.trim())) return warn('Enter the 6-digit code from the email.');
     await auth.completeRegistration(email, password, code);
+    await rememberConsent();
     setPassword('');
     go('sign-in', { text: 'Account created and email verified. Sign in to continue.', tone: 'success' });
   });
@@ -245,6 +260,15 @@ export default function LoginScreen() {
             {mode === 'sign-in' ? (
               <Pressable onPress={() => go('reset')} style={styles.forgot} accessibilityRole="link"><TextBlock size={13} color={colors.primary} weight="semibold">Forgot password?</TextBlock></Pressable>
             ) : null}
+            {mode === 'register' ? (
+              <View style={{ gap: 6 }}>
+                <Checkbox checked={agreed} onToggle={() => setAgreed((value) => !value)} label="I agree to the Terms & Conditions and the Privacy Policy." testID="auth-agree" />
+                <View style={styles.legalLinks}>
+                  <Pressable onPress={() => void Linking.openURL(TERMS_URL)} accessibilityRole="link" hitSlop={6}><TextBlock size={12} weight="semibold" color={colors.primary}>Read Terms & Conditions</TextBlock></Pressable>
+                  <Pressable onPress={() => void Linking.openURL(PRIVACY_URL)} accessibilityRole="link" hitSlop={6}><TextBlock size={12} weight="semibold" color={colors.primary}>Read Privacy Policy</TextBlock></Pressable>
+                </View>
+              </View>
+            ) : null}
             {message ? <Notice title={message.tone === 'success' ? 'Done' : message.tone === 'warning' ? 'Check this' : 'Next step'} body={message.text} tone={message.tone} action={pending ? 'Verify email' : undefined} onAction={pending ? () => go('register', { text: 'Enter your password and we will email you a new code.', tone: 'info' }) : undefined} /> : null}
             <Button title={action} onPress={() => void primary()} loading={busy} disabled={!auth.firebaseConfigured || googleBusy} testID="auth-submit" />
             {mode === 'code' ? (
@@ -284,7 +308,12 @@ export default function LoginScreen() {
         </Card>
       )}
       <View style={styles.footer}>
-        {auth.firebaseConfigured ? <TextBlock size={11} color={colors.mutedForeground}>By continuing, you agree to our Terms and Privacy Policy.</TextBlock> : null}
+        {auth.firebaseConfigured ? (
+          <View style={styles.legalLinks}>
+            <Pressable onPress={() => void Linking.openURL(TERMS_URL)} accessibilityRole="link"><TextBlock size={11} color={colors.mutedForeground} style={{ textDecorationLine: 'underline' }}>Terms & Conditions</TextBlock></Pressable>
+            <Pressable onPress={() => void Linking.openURL(PRIVACY_URL)} accessibilityRole="link"><TextBlock size={11} color={colors.mutedForeground} style={{ textDecorationLine: 'underline' }}>Privacy Policy</TextBlock></Pressable>
+          </View>
+        ) : null}
       </View>
     </KeyboardAwareScrollViewCompat>
   );
@@ -316,6 +345,7 @@ const styles = StyleSheet.create({
   divider: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   rule: { flex: 1, height: StyleSheet.hairlineWidth },
   forgot: { alignSelf: 'flex-end', marginTop: -4 },
+  legalLinks: { flexDirection: 'row', flexWrap: 'wrap', gap: 16, paddingLeft: 2 },
   switchRow: { flexDirection: 'row', justifyContent: 'center', gap: 6, flexWrap: 'wrap' },
   footer: { marginTop: 'auto', paddingTop: 4 },
 });

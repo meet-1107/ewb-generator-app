@@ -17,6 +17,7 @@ import * as SplashScreen from 'expo-splash-screen';
 import { AuthProvider, useAuth } from '@/state/auth';
 import { AppStoreProvider, useAppStore } from '@/state/app-store';
 import { DialogProvider } from '@/components/Dialog';
+import ConsentGate from '@/components/ConsentGate';
 import { loadThemePreference } from '@/state/theme';
 import { useColors } from '@/hooks/useColors';
 
@@ -46,6 +47,7 @@ function RootLayoutNav() {
   return (
     <>
       <StatusBar style={colors.isDark ? 'light' : 'dark'} />
+      <ConsentGate>
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background }, animation: 'slide_from_right' }}>
         <Stack.Screen name="index" options={{ animation: 'fade' }} />
         <Stack.Screen name="setup" options={{ animation: 'fade' }} />
@@ -64,6 +66,7 @@ function RootLayoutNav() {
         <Stack.Screen name="saved/[kind]" />
         <Stack.Screen name="help" />
       </Stack>
+      </ConsentGate>
     </>
   );
 }

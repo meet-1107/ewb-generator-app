@@ -10,8 +10,24 @@ import { gstinApiConfigured } from "../lib/gstinapi";
 import { mailer } from "../lib/mailer";
 import { creditCosts } from "../lib/wallet";
 import { distanceConfigured } from "../lib/distance";
+import { consentOf, LEGAL_VERSION, recordConsent } from "../lib/legal";
 
 const router: IRouter = Router();
+
+/** Whether this account accepted the current Terms & Privacy Policy. */
+router.get("/consent", async (req, res) => {
+  const accepted = await consentOf(req.workspaceId);
+  res.json({ version: LEGAL_VERSION, accepted: accepted ? { version: accepted.version, acceptedAt: accepted.acceptedAt } : null, required: accepted?.version !== LEGAL_VERSION });
+});
+
+/** Records acceptance of the current version (the checkbox at sign-up, or the prompt after sign-in). */
+router.post("/consent", async (req, res) => {
+  const parsed = z.object({ version: z.string().max(40), method: z.enum(["signup", "google", "prompt"]) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "bad_request", message: "Consent could not be read." });
+  if (parsed.data.version !== LEGAL_VERSION) return res.status(409).json({ error: "outdated", message: "The Terms or Privacy Policy changed. Please read and accept the latest version.", version: LEGAL_VERSION });
+  const record = await recordConsent(req.workspaceId, { method: parsed.data.method, ip: String(req.ip ?? "").slice(0, 64), userAgent: String(req.header("user-agent") ?? "").slice(0, 200) });
+  return res.json({ version: record.version, acceptedAt: record.acceptedAt });
+});
 
 router.get("/config", (_req, res) => {
   res.json({

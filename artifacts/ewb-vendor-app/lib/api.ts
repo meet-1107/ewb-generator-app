@@ -168,6 +168,9 @@ export type SyncEnvelope = { id: string; updatedAt: string; deleted?: boolean; d
 export const api = {
   health: () => request<{ status: string }>('/healthz', { timeoutMs: 6000 }),
   config: () => request<ServiceConfig>('/config', { timeoutMs: 8000 }),
+  /** Whether this account accepted the current Terms & Privacy Policy. */
+  consent: () => request<{ version: string; accepted: { version: string; acceptedAt: string } | null; required: boolean }>('/consent', { timeoutMs: 15_000 }),
+  acceptConsent: (version: string, method: 'signup' | 'google' | 'prompt') => request<{ version: string; acceptedAt: string }>('/consent', { body: { version, method }, timeoutMs: 15_000 }),
   validateEwb: (input: unknown) => request<{ issues: ProviderIssue[]; warnings: string[]; provider: ProviderInfo }>('/ewb/validate', { body: { input } }),
   generateEwb: (idempotencyKey: string, input: unknown) => request<{ ewb: EwbRecord; replay?: boolean; balance?: number }>('/ewb/generate', { body: { idempotencyKey, input }, timeoutMs: 45_000 }),
   listEwbs: () => request<{ ewbs: EwbRecord[]; provider: ProviderInfo }>('/ewb'),

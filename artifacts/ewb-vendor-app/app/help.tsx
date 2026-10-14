@@ -6,6 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Card, Divider, KeyValue, ScreenHeader, StatusPill, TextBlock } from '@/components/AppUI';
 import { useColors } from '@/hooks/useColors';
 import { API_BASE, SUPPORT_EMAIL } from '@/lib/api';
+import { PRIVACY_URL, TERMS_URL } from '@/lib/legal';
 import { useAppStore } from '@/state/app-store';
 
 const FAQ = [
@@ -68,6 +69,10 @@ export default function HelpScreen() {
         ) : null}
         <Card>
           <TextBlock size={15} weight="semibold">How we handle your data</TextBlock>
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <Button title="Privacy Policy" icon="shield" size="sm" variant="outline" onPress={() => void Linking.openURL(PRIVACY_URL)} style={{ flex: 1 }} />
+            <Button title="Terms & Conditions" icon="file-text" size="sm" variant="outline" onPress={() => void Linking.openURL(TERMS_URL)} style={{ flex: 1 }} />
+          </View>
           {PRIVACY.map(([title, body]) => (
             <View key={title} style={{ gap: 3 }}>
               <TextBlock size={13} weight="semibold">{title}</TextBlock>
