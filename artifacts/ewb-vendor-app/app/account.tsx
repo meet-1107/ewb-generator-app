@@ -276,7 +276,7 @@ export default function AccountScreen() {
 
       <SectionTitle title="Help & data" />
       <Card style={{ padding: 0, gap: 0 }}>
-        <ListRow icon="play-circle" title="Video tutorial" detail="See how to make an invoice and an e-way bill" onPress={() => void openTutorial()} testID="video-tutorial" />
+        <ListRow icon="play-circle" title="Video tutorial" detail="How to create your e-way bill API username and password on the e-way bill portal" onPress={() => void openTutorial()} testID="video-tutorial" />
         <Divider inset={64} />
         <ListRow icon="help-circle" title="Help & support" detail="Guides, FAQs and contact" onPress={() => router.push('/help')} />
         <Divider inset={64} />
