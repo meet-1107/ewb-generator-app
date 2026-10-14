@@ -12,7 +12,7 @@ export const EWB_PORTAL_URL = 'https://ewaybillgst.gov.in';
 const STEPS: { title: string; body: string }[] = [
   { title: 'Log in to the e-way bill portal', body: 'Open ewaybillgst.gov.in and sign in with your normal e-way bill username and password.' },
   { title: 'Open Registration → For GSP', body: 'In the left menu choose Registration, then For GSP. Tap Send OTP and enter the OTP sent to your registered mobile.' },
-  { title: 'Add a new GSP login', body: 'Choose Add/New, select the GSP shown in the video, and create a new API username and password. This is different from your normal portal login.' },
+  { title: 'Add a new GSP login', body: 'Choose Add/New and select the GSP "Chartered Information Systems Pvt. Ltd." from the list. Then create a new API username and password. This is different from your normal portal login.' },
   { title: 'Enter it in E-Way Easy', body: 'Come back here and save the API username and password. We check it with the portal before saving it securely.' },
 ];
 
