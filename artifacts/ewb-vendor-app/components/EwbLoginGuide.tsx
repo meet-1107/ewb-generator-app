@@ -74,7 +74,7 @@ export function EwbLoginGuide({ visible, gstin, onClose }: { visible: boolean; g
     >
       <View style={{ gap: 14, paddingHorizontal: 18 }}>
         <TextBlock size={13} color={colors.mutedForeground} style={{ lineHeight: 19 }}>
-          E-Way Easy files e-way bills on the government portal using an API login that you create once for each GSTIN. It takes about 5 minutes.
+          E-Way Easy files e-way bills on the government portal using an API login that you create once for each GSTIN. It takes about 5 minutes, and your first GSTIN gets free credits to try it.
         </TextBlock>
         <Card onPress={() => void video.open()} accessibilityLabel="Watch the setup video" style={{ ...styles.video, backgroundColor: colors.primary }}>
           <View style={styles.play}><TextBlock size={20} color={colors.primary}>▶</TextBlock></View>

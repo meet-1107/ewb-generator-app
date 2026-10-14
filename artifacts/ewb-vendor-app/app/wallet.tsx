@@ -179,7 +179,9 @@ export default function WalletScreen() {
           ) : null}
         </Card>
 
-        {wallet && wallet.balance < wallet.costs.generate ? (
+        {wallet?.welcomeCredits ? (
+          <Notice tone="success" title={`Get ${wallet.welcomeCredits} free credits`} body="Save your e-way bill portal API login for your GSTIN and we add free credits to try E-Way Easy. Once per GSTIN." action="Add portal login" onAction={() => router.push('/ewb-login')} />
+        ) : wallet && wallet.balance < wallet.costs.generate ? (
           <Notice tone="warning" title="Low balance" body={`Generating an e-way bill needs ${wallet.costs.generate} credits. Add credits to keep generating.`} />
         ) : null}
 

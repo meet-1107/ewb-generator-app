@@ -80,7 +80,13 @@ export default function EwbLoginScreen() {
     setBusy(true);
     try {
       const result = await api.saveEwbCredential(gstin, username.trim(), password);
-      dialog.toast(result.checked ? 'Login checked with the portal and saved' : result.message || 'Login saved securely', result.checked ? 'success' : 'default');
+      if (result.welcomeCredits) {
+        if (result.balance !== undefined) store.setWalletBalance(result.balance);
+        void store.refreshWallet();
+        await dialog.alert({ title: `${result.welcomeCredits} free credits added`, message: 'Your portal login is saved. Use the free credits to generate your first e-way bills and see how E-Way Easy works.', tone: 'success', icon: 'gift' });
+      } else {
+        dialog.toast(result.checked ? 'Login checked with the portal and saved' : result.message || 'Login saved securely', result.checked ? 'success' : 'default');
+      }
       setEditing(null);
       setNewGstin('');
       // Opened from the first e-way bill: back to it, Generate is now unlocked.

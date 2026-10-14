@@ -128,7 +128,7 @@ export type WalletEntry = {
 export type WalletPricing = { creditPricePaise: number; packs: number[]; min: number; max: number; payments: 'razorpay' | 'sandbox' | 'off' };
 /** A month (YYYY-MM, India time) with wallet activity: entries, credits added and used. */
 export type WalletMonth = { month: string; count: number; added: number; used: number };
-export type WalletSummary = { balance: number; costs: CreditCosts; counts: Record<WalletAction, number>; creditsUsed: number; ledger: WalletEntry[]; ledgerMore?: boolean; historyMonths?: WalletMonth[]; pricing?: WalletPricing };
+export type WalletSummary = { balance: number; costs: CreditCosts; counts: Record<WalletAction, number>; creditsUsed: number; ledger: WalletEntry[]; ledgerMore?: boolean; historyMonths?: WalletMonth[]; pricing?: WalletPricing; /** Free trial credits still to come (after the first portal login is saved). */ welcomeCredits?: number };
 export type CreditPurchase = { id: string; provider: 'razorpay' | 'sandbox'; credits: number; amountPaise: number; status: 'created' | 'paid' | 'expired' | 'cancelled'; shortUrl?: string; createdAt: string; paidAt?: string; paymentId?: string; invoiceNumber?: string };
 /** Invoice for a credit purchase, numbered per financial year (EWE/2026-27/0001). */
 export type BillingInvoice = {
@@ -189,7 +189,7 @@ export const api = {
     request<{ cewb: CewbRecord; balance: number }>('/ewb-consolidated', { body, timeoutMs: 45_000 }),
   ewbCredentials: () => request<{ credentials: EwbCredential[]; required: boolean; canStore: boolean; provider?: 'live' | 'test' | 'none'; providerId?: string | null }>('/ewb-credentials'),
   saveEwbCredential: (gstin: string, username: string, password: string) =>
-    request<{ credential: EwbCredential; checked: boolean; message: string }>('/ewb-credentials', { method: 'PUT', body: { gstin, username, password }, timeoutMs: 30_000 }),
+    request<{ credential: EwbCredential; checked: boolean; message: string; welcomeCredits?: number; balance?: number }>('/ewb-credentials', { method: 'PUT', body: { gstin, username, password }, timeoutMs: 30_000 }),
   deleteEwbCredential: (gstin: string) => request<{ ok: true }>(`/ewb-credentials/${encodeURIComponent(gstin)}`, { method: 'DELETE' }),
   /** Road distance between two PIN codes (Google Routes, looked up once per pair on the server). */
   distance: (from: string, to: string) => request<{ from: string; to: string; km: number; cached: boolean }>(`/distance?from=${from}&to=${to}`, { timeoutMs: 20_000 }),

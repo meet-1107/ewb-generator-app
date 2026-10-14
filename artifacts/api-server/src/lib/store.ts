@@ -169,6 +169,8 @@ export type Workspace = {
   cewbs: Record<string, CewbRecord>;
   ewbCredentials: Record<string, EwbCredential>;
   purchases: Record<string, CreditPurchase>;
+  /** GSTIN whose free trial credits this account received (lib/welcome.ts). */
+  welcomeGstin?: string;
   audit: { at: string; actor: string; action: string; targetId: string; outcome: string }[];
   sync: Record<string, Record<string, SyncRecord>>;
 };

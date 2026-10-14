@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { grantWelcomeCredits } from "../lib/welcome";
 import { Router, type IRouter, type Response } from "express";
 import { z } from "zod";
 import { ewbProvider, type ProviderContext } from "../providers/ewb-provider";
@@ -489,7 +490,9 @@ router.put("/ewb-credentials", async (req, res) => {
     audit(workspace, req.actor, "ewb.credentials.save", gstin, "ok");
     return { gstin, username: parsed.data.username.trim(), updatedAt };
   });
-  return res.json({ credential: saved, checked: check.valid === true, message: check.message });
+  // First portal login of a GSTIN that never had free credits: the trial credits.
+  const welcome = await grantWelcomeCredits(req.workspaceId, gstin);
+  return res.json({ credential: saved, checked: check.valid === true, message: check.message, welcomeCredits: welcome.granted, balance: welcome.balance });
 });
 
 router.delete("/ewb-credentials/:gstin", async (req, res) => {
