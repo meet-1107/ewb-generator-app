@@ -25,6 +25,8 @@ router.get("/config", (_req, res) => {
     ewbCredentialsRequired: Boolean(ewbProvider?.needsCredentials),
     creditCosts,
     distanceLookup: distanceConfigured,
+    // Link for "Video tutorial" in Help & data (e.g. a YouTube video or playlist); changed without an app update.
+    tutorialVideoUrl: /^https:\/\/\S+$/.test(process.env["TUTORIAL_VIDEO_URL"]?.trim() ?? "") ? process.env["TUTORIAL_VIDEO_URL"]!.trim() : null,
   });
 });
 

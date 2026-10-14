@@ -41,7 +41,9 @@ router.post("/pdf/parse", async (req, res) => {
     if (text.replace(/\s/g, "").length < 30) {
       return res.status(422).json({ error: "no_text", message: "This PDF looks scanned (no selectable text). Enter the details manually." });
     }
-    const fields = extractInvoiceFields(text, pageCount, rows);
+    // The app sends the user's own GSTINs so they are never taken as the buyer's.
+    const ownGstins = Array.isArray(req.body?.ownGstins) ? (req.body.ownGstins as unknown[]).filter((item): item is string => typeof item === "string").slice(0, 50) : [];
+    const fields = extractInvoiceFields(text, pageCount, rows, ownGstins);
     return res.json({ fields, parserVersion: "heuristic-1", retention: "Not stored. Processed in memory and discarded." });
   } catch (error) {
     logger.warn({ err: (error as Error).message }, "PDF parse failed");

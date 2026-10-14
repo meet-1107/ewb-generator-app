@@ -108,6 +108,13 @@ export default function AccountScreen() {
     dialog.toast(`New invoices will use ${template.name}`, 'success');
   };
 
+  /** The tutorial link comes from the server, so it can change without an app update. */
+  const openTutorial = async () => {
+    const url = store.config?.tutorialVideoUrl;
+    if (!url) return dialog.toast(store.online === false ? 'Connect to the internet to watch the tutorial.' : 'The video tutorial is coming soon.', 'default');
+    await Linking.openURL(url).catch(() => dialog.toast('Could not open the video.', 'danger'));
+  };
+
   const exportData = async () => {
     const json = store.exportData();
     try {
@@ -269,6 +276,8 @@ export default function AccountScreen() {
 
       <SectionTitle title="Help & data" />
       <Card style={{ padding: 0, gap: 0 }}>
+        <ListRow icon="play-circle" title="Video tutorial" detail="See how to make an invoice and an e-way bill" onPress={() => void openTutorial()} testID="video-tutorial" />
+        <Divider inset={64} />
         <ListRow icon="help-circle" title="Help & support" detail="Guides, FAQs and contact" onPress={() => router.push('/help')} />
         <Divider inset={64} />
         <ListRow icon="lock" title="Privacy & terms" detail="How your data is handled" onPress={() => router.push({ pathname: '/help', params: { section: 'privacy' } })} />

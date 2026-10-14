@@ -75,7 +75,7 @@ export default function InvoicesScreen() {
 
   const dateFiltered = Boolean(dateFrom || dateTo);
 
-  // Saved invoices open as a preview (only Generate EWB there); drafts open in the editor.
+  // Every invoice opens as a preview; Edit there (or Edit invoice in ⋮) opens the form.
   const openInvoice = (invoice: Invoice) => router.push({ pathname: '/invoice/[id]', params: { id: invoice.id, view: '1' } });
 
   const actions = async (invoice: Invoice) => {

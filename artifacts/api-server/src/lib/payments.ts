@@ -14,7 +14,7 @@ const baseUrl = (process.env["RAZORPAY_BASE_URL"] ?? "https://api.razorpay.com")
 
 export const razorpayConfigured = Boolean(keyId && keySecret);
 export const creditPricePaise = Math.max(1, Number(process.env["CREDIT_PRICE_PAISE"] ?? 100));
-export const creditPacks: number[] = process.env["CREDIT_PACKS_JSON"] ? (JSON.parse(process.env["CREDIT_PACKS_JSON"]) as number[]) : [100, 250, 500, 1000, 2500];
+export const creditPacks: number[] = process.env["CREDIT_PACKS_JSON"] ? (JSON.parse(process.env["CREDIT_PACKS_JSON"]) as number[]) : [50, 100, 250, 500, 1000];
 export const MIN_PURCHASE = 50;
 export const MAX_PURCHASE = 100_000;
 

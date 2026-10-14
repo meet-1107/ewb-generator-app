@@ -83,6 +83,8 @@ export type WalletAction = 'generate' | 'part_b' | 'consolidate' | 'cancel' | 'e
 export type CreditCosts = Record<WalletAction, number>;
 export type ServiceConfig = {
   authMode: string;
+  /** "Video tutorial" link (Help & data); null until one is set on the server. */
+  tutorialVideoUrl?: string | null;
   ewbProvider: ProviderInfo;
   gstProvider: ProviderInfo;
   billingMode: string;
@@ -126,7 +128,7 @@ export type WalletEntry = {
 export type WalletPricing = { creditPricePaise: number; packs: number[]; min: number; max: number; payments: 'razorpay' | 'sandbox' | 'off' };
 /** A month (YYYY-MM, India time) with wallet activity: entries, credits added and used. */
 export type WalletMonth = { month: string; count: number; added: number; used: number };
-export type WalletSummary = { balance: number; costs: CreditCosts; counts: Record<WalletAction, number>; creditsUsed: number; ledger: WalletEntry[]; historyMonths?: WalletMonth[]; pricing?: WalletPricing };
+export type WalletSummary = { balance: number; costs: CreditCosts; counts: Record<WalletAction, number>; creditsUsed: number; ledger: WalletEntry[]; ledgerMore?: boolean; historyMonths?: WalletMonth[]; pricing?: WalletPricing };
 export type CreditPurchase = { id: string; provider: 'razorpay' | 'sandbox'; credits: number; amountPaise: number; status: 'created' | 'paid' | 'expired' | 'cancelled'; shortUrl?: string; createdAt: string };
 export type CewbRecord = {
   id: string;
@@ -157,7 +159,7 @@ export type ExtractedInvoice = {
   invoiceNumber?: Candidate; invoiceDate?: Candidate;
   sellerName?: Candidate; sellerGstin?: Candidate; sellerState?: Candidate; sellerPincode?: Candidate;
   buyerName?: Candidate; buyerGstin?: Candidate; buyerState?: Candidate; buyerPincode?: Candidate;
-  vehicleNumber?: Candidate; transporterName?: Candidate; transporterId?: Candidate; totalPaise?: Candidate<number>; taxablePaise?: Candidate<number>;
+  totalPaise?: Candidate<number>; taxablePaise?: Candidate<number>;
   lines: { description: string; hsn: string; quantity: string; unit?: string; unitPricePaise?: number; taxablePaise: number; taxRate: number; confidence: Confidence }[];
   pageCount: number;
 };
@@ -183,7 +185,9 @@ export const api = {
   distance: (from: string, to: string) => request<{ from: string; to: string; km: number; cached: boolean }>(`/distance?from=${from}&to=${to}`, { timeoutMs: 20_000 }),
   verifyGstin: (gstin: string) => request<{ gstin: VerifiedGstin; cached: boolean; stale?: boolean }>('/gstin/verify', { body: { gstin }, timeoutMs: 30_000 }),
   wallet: () => request<WalletSummary>('/wallet'),
-  walletHistory: (month: string) => request<{ month: string; entries: WalletEntry[] }>(`/wallet/history?month=${encodeURIComponent(month)}`),
+  /** One page of history, newest first: a month (YYYY-MM) or every month (''), after the entry `before`. */
+  walletHistory: (month: string, limit: number, before?: string) =>
+    request<{ month: string; entries: WalletEntry[]; more: boolean }>(`/wallet/history?month=${encodeURIComponent(month)}&limit=${limit}${before ? `&before=${encodeURIComponent(before)}` : ''}`),
   sendEmailOtp: (email: string) => request<{ message: string; cooldownSeconds: number }>('/auth/email-otp/send', { body: { email }, timeoutMs: 30_000 }),
   verifyEmailOtp: (email: string, code: string) => request<{ grant: string; expiresInSeconds: number }>('/auth/email-otp/verify', { body: { email, code } }),
   finalizeRegistration: (grant: string, idToken: string) => request<{ activated: boolean }>('/auth/register/finalize', { body: { grant }, idToken, timeoutMs: 30_000 }),
@@ -191,7 +195,8 @@ export const api = {
   purchaseStatus: (id: string) => request<{ purchase: CreditPurchase; balance: number }>(`/wallet/purchase/${encodeURIComponent(id)}`, { timeoutMs: 30_000 }),
   gstStatus: (gstin: string, period: string) => request<{ snapshots: GstSnapshot[]; provider: ProviderInfo }>(`/gst/status?gstin=${encodeURIComponent(gstin)}&period=${encodeURIComponent(period)}`),
   refreshGst: (gstin: string, period: string) => request<{ snapshots: GstSnapshot[]; provider: ProviderInfo }>('/gst/refresh', { body: { gstin, period } }),
-  parsePdf: (fileName: string, contentBase64: string) => request<{ fields: ExtractedInvoice; parserVersion: string; retention: string }>('/pdf/parse', { body: { fileName, contentBase64 }, timeoutMs: 60_000 }),
+  /** `ownGstins`: the user's registrations, so the PDF reader never takes one as the buyer's. */
+  parsePdf: (fileName: string, contentBase64: string, ownGstins: string[] = []) => request<{ fields: ExtractedInvoice; parserVersion: string; retention: string }>('/pdf/parse', { body: { fileName, contentBase64, ownGstins }, timeoutMs: 60_000 }),
   subscription: () => request<{ subscription: Subscription; plan: Plan; plans: Plan[]; plansAreSamples: boolean; billingMode: string }>('/subscription'),
   changePlan: (planId: string) => request<{ subscription: Subscription; plan: Plan }>('/subscription/change', { body: { planId } }),
   sync: (since: string | undefined, collections: Record<string, SyncEnvelope[]>) =>

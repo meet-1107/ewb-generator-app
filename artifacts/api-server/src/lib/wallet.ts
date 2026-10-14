@@ -110,9 +110,20 @@ function historyMonths(entries: WalletEntry[]) {
   return [...months.values()].sort((a, b) => b.month.localeCompare(a.month));
 }
 
-/** One month's history (YYYY-MM, India time), newest first. */
-export function walletHistory(workspace: Workspace, month: string) {
-  return { month, entries: visible(workspace).filter((entry) => istMonth(entry.at) === month).reverse().map(labelled) };
+/** Entries shown at first, and per "Show more". */
+export const HISTORY_PAGE = 20;
+
+/**
+ * History newest first: one month (YYYY-MM, India time) or every month ("").
+ * With `page`, one page: the entries after `page.before` (an entry id), and whether more follow.
+ * Without it, the whole month (older apps).
+ */
+export function walletHistory(workspace: Workspace, month: string, page?: { before?: string; limit: number }) {
+  const all = visible(workspace).filter((entry) => !month || istMonth(entry.at) === month).reverse();
+  if (!page) return { month, entries: all.map(labelled), more: false };
+  const start = page.before ? all.findIndex((entry) => entry.id === page.before) + 1 : 0;
+  const entries = all.slice(start, start + page.limit);
+  return { month, entries: entries.map(labelled), more: start + entries.length < all.length };
 }
 
 export function walletSummary(workspace: Workspace) {
@@ -123,7 +134,9 @@ export function walletSummary(workspace: Workspace) {
     costs: creditCosts,
     counts: { generate: count("generate"), part_b: count("part_b"), consolidate: count("consolidate"), cancel: count("cancel"), extend: count("extend") },
     creditsUsed: charged.reduce((sum, entry) => sum - entry.credits, 0),
-    ledger: visible(workspace).slice(-100).reverse().map(labelled),
+    // The first page only; the rest loads as the user taps Show more.
+    ledger: visible(workspace).slice(-HISTORY_PAGE).reverse().map(labelled),
+    ledgerMore: visible(workspace).length > HISTORY_PAGE,
     historyMonths: historyMonths(visible(workspace)),
   };
 }

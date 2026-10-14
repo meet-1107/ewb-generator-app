@@ -30,7 +30,7 @@ const LABELS: [keyof ExtractedInvoice, string][] = [
   ['invoiceNumber', 'Invoice number'], ['invoiceDate', 'Invoice date'],
   ['sellerName', 'Seller'], ['sellerGstin', 'Seller GSTIN'], ['sellerState', 'Seller state'], ['sellerPincode', 'Seller PIN'],
   ['buyerName', 'Buyer'], ['buyerGstin', 'Buyer GSTIN'], ['buyerState', 'Buyer state'], ['buyerPincode', 'Buyer PIN'],
-  ['vehicleNumber', 'Vehicle'], ['transporterName', 'Transporter'], ['transporterId', 'Transporter ID'], ['taxablePaise', 'Taxable value'], ['totalPaise', 'Invoice total'],
+  ['taxablePaise', 'Taxable value'], ['totalPaise', 'Invoice total'],
 ];
 
 export default function PdfImportScreen() {
@@ -43,6 +43,10 @@ export default function PdfImportScreen() {
   const [fields, setFields] = useState<ExtractedInvoice | null>(null);
   const [failure, setFailure] = useState('');
   const [retention, setRetention] = useState('');
+
+  /** Every GSTIN of this business, upper-case. */
+  const ownGstins = () => [...new Set([store.business?.gstin, store.business?.defaultGstin, store.activeGstin, ...(store.business?.gstRegistrations ?? []).map((item) => item.gstin)]
+    .map((gstin) => (gstin ?? '').trim().toUpperCase()).filter(Boolean))];
 
   const choosePdf = async () => {
     try {
@@ -69,7 +73,7 @@ export default function PdfImportScreen() {
       setStage('reading');
       const base64 = await toBase64(file);
       setStage('extracting');
-      const result = await api.parsePdf(file.name, base64);
+      const result = await api.parsePdf(file.name, base64, ownGstins());
       setFields(result.fields);
       setRetention(result.retention);
       setStage('review');
@@ -98,15 +102,11 @@ export default function PdfImportScreen() {
       const ownGstin = store.business.gstRegistrations?.some((item) => item.gstin === fields.sellerGstin?.value);
       if (fields.sellerGstin && ownGstin) take('sellerGstin', fields.sellerGstin);
       take('buyerName', fields.buyerName);
-      take('buyerGstin', fields.buyerGstin);
+      // Your own GSTIN is never the buyer's (an older server may still send it).
+      if (fields.buyerGstin && !ownGstins().includes(fields.buyerGstin.value.toUpperCase())) take('buyerGstin', fields.buyerGstin);
       take('buyerState', fields.buyerState);
       take('buyerPincode', fields.buyerPincode);
-      take('vehicleNumber', fields.vehicleNumber);
-      take('transporterName', fields.transporterName);
-      take('transporterId', fields.transporterId);
-      // No ID on the PDF: a transporter saved earlier brings its ID along.
-      const knownTransporter = store.transporters.find((item) => item.name.trim().toLowerCase() === invoice.transporterName.trim().toLowerCase());
-      if (!fields.transporterId && fields.transporterName && knownTransporter?.transporterId) invoice.transporterId = knownTransporter.transporterId;
+      // Transport details are not taken from the PDF: they are filled in for each e-way bill.
       if (fields.buyerState) invoice.placeOfSupply = fields.buyerState.value;
       invoice.supplyType = expectedSupplyType(invoice) ?? invoice.supplyType;
       if (fields.lines.length) {

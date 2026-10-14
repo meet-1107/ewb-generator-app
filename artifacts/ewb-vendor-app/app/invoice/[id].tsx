@@ -42,6 +42,7 @@ import {
   TRANSPORT_MODES,
   VEHICLE_PATTERN,
   invoiceBank,
+  invoiceEwbMeta,
   businessNameOf,
   transporterIdProblem,
   hasDispatch,
@@ -73,6 +74,8 @@ export default function InvoiceEditorScreen() {
   const [invoice, setInvoice] = useState<Invoice | null>(null);
   const [open, setOpen] = useState<Record<Section, boolean>>({ seller: false, buyer: true, invoice: true, items: true, transport: false });
   const [attempted, setAttempted] = useState(false);
+  /** Generate EWB was tapped: transport details are now required. */
+  const [ewbAttempted, setEwbAttempted] = useState(false);
   const [saveState, setSaveState] = useState<'saved' | 'saving' | 'idle'>('saved');
   const [picker, setPicker] = useState<null | 'buyer' | 'transporter'>(null);
   const [previewing, setPreviewing] = useState(false);
@@ -99,7 +102,7 @@ export default function InvoiceEditorScreen() {
       autoVerifiedBuyer.current = found.buyerGstin;
       setShowDispatch(hasDispatch(found));
       setShowShipTo(hasShipTo(found));
-      if (view && found.status !== 'draft') {
+      if (view) {
         setViewOnly(true);
         setPreviewing(true);
       }
@@ -156,7 +159,9 @@ export default function InvoiceEditorScreen() {
 
   const locked = invoice?.status === 'ewb_generated';
   const released = useMemo(() => releasedInvoiceIds(store.invoices, store.ewbs), [store.invoices, store.ewbs]);
-  const issues = useMemo(() => (invoice ? [...invoiceIssues(invoice, store.invoices, released), ...transportIssues(invoice)] : []), [invoice, store.invoices, released]);
+  // Transport is not needed to save an invoice (it is often unknown then): its
+  // problems show only after Generate EWB was tapped.
+  const issues = useMemo(() => (invoice ? [...invoiceIssues(invoice, store.invoices, released), ...(ewbAttempted ? transportIssues(invoice) : [])] : []), [invoice, store.invoices, released, ewbAttempted]);
   // The first invoice of a GSTIN is numbered by the user; later ones continue from it.
   const firstInvoice = useMemo(() => Boolean(invoice) && !store.invoices.some((other) => other.id !== invoice!.id && other.sellerGstin.toUpperCase() === invoice!.sellerGstin.toUpperCase() && !other.unsaved && other.invoiceNumber.trim()), [invoice, store.invoices]);
 
@@ -412,6 +417,7 @@ export default function InvoiceEditorScreen() {
     if (checked !== invoice) setInvoice(checked);
     if (problems.length) {
       setPreviewing(false);
+      setEwbAttempted(true);
       const transportOnly = problems.every((problem) => problem.section === 'transport');
       showProblems(problems, transportOnly ? 'Add the transport details to generate the e-way bill' : `Fix ${problems.length} item${problems.length === 1 ? '' : 's'} highlighted in red`);
       return;
@@ -451,6 +457,26 @@ export default function InvoiceEditorScreen() {
     />
   );
 
+  // The invoice as it prints. Opened from the list it is the whole screen (view only);
+  // from the editor it opens over the form to check before saving.
+  const previewPage = (
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <ScreenHeader
+        title={viewOnly ? invoice.invoiceNumber || 'Invoice' : 'Invoice preview'}
+        subtitle={viewOnly ? `${invoice.buyerName || 'No buyer'} · ${invoiceEwbMeta(invoice).label}` : 'Check everything before saving'}
+        onBack={() => { setPreviewing(false); if (viewOnly) router.back(); }}
+        right={<Button title="Edit" icon="edit-2" variant="outline" size="sm" onPress={() => { setViewOnly(false); setPreviewing(false); }} testID="preview-edit" />} />
+      <ScrollView contentContainerStyle={[styles.body, { paddingBottom: 24 }]}>
+        <InvoicePreview invoice={invoice} />
+      </ScrollView>
+      <View style={[styles.sticky, { backgroundColor: colors.card, borderColor: colors.border, paddingBottom: (Platform.OS === 'web' ? 12 : insets.bottom) + 10 }]}>
+        <Button title="Generate EWB" icon="truck" variant={viewOnly ? 'primary' : 'outline'} onPress={() => void continueToReview()} style={{ flex: 1 }} testID="continue-to-ewb" />
+        {viewOnly ? null : <Button title="Save invoice" icon="check" onPress={() => void finishInvoice()} style={{ flex: 1 }} testID="save-invoice" />}
+        {viewOnly && invoice.status !== 'ewb_generated' ? <Button title="Delete" icon="trash-2" variant="danger" onPress={() => void deleteInvoice(invoice, () => { discarded.current = true; }).then((done) => { if (done) { setPreviewing(false); router.back(); } })} style={{ flex: 0.7 }} testID="preview-delete" /> : null}
+      </View>
+    </View>
+  );
+
   if (locked) {
     return (
       <View style={{ flex: 1, backgroundColor: colors.background }}>
@@ -464,6 +490,9 @@ export default function InvoiceEditorScreen() {
       </View>
     );
   }
+
+  // Opened from the invoice list: only the preview; Edit (or a problem to fix) switches to the form.
+  if (viewOnly && previewing) return previewPage;
 
   const fromPdf = (field: string) => (invoice.extraction && !invoice.extraction.confirmed ? invoice.extraction.fields[field] : undefined);
   const sections: Record<Section, ReactNode> = {
@@ -556,6 +585,7 @@ export default function InvoiceEditorScreen() {
     ),
     transport: (
       <EditorSection key="transport" title="Transport (for e-way bill)" icon="truck" open={open.transport} onToggle={() => setOpen((c) => ({ ...c, transport: !c.transport }))} errors={sectionErrors('transport')} summary={`${invoice.transportMode} · ${invoice.vehicleNumber || 'No vehicle'} · ${invoice.distanceKm ? `${invoice.distanceKm} km` : 'Distance not set'}`}>
+        <TextBlock size={12} color={colors.mutedForeground} style={{ lineHeight: 17 }}>Optional for the invoice. Fill it in when you generate the e-way bill: a vehicle number, a transporter ID, or both.</TextBlock>
         <Segmented options={TRANSPORT_MODES.map((mode) => ({ label: mode, value: mode }))} value={invoice.transportMode} onChange={set('transportMode')} />
         <View style={{ gap: 7 }}>
           <TextBlock size={13} weight="semibold">Transporter</TextBlock>
@@ -574,12 +604,12 @@ export default function InvoiceEditorScreen() {
         </View>
         {invoice.transportMode !== 'Road' ? (
           <View style={styles.row}>
-            <View style={{ flex: 1 }}><Field label={`${invoice.transportMode} doc no.`} required value={invoice.transportDocNo} onChangeText={set('transportDocNo')} placeholder="RR / AWB / BL no." error={errorFor('transportDocNo')} /></View>
-            <View style={{ flex: 1 }}><DateField label="Doc date" required value={invoice.transportDocDate} onChange={set('transportDocDate')} error={errorFor('transportDocDate')} /></View>
+            <View style={{ flex: 1 }}><Field label={`${invoice.transportMode} doc no.`} value={invoice.transportDocNo} onChangeText={set('transportDocNo')} placeholder="RR / AWB / BL no." error={errorFor('transportDocNo')} /></View>
+            <View style={{ flex: 1 }}><DateField label="Doc date" value={invoice.transportDocDate} onChange={set('transportDocDate')} error={errorFor('transportDocDate')} /></View>
           </View>
         ) : null}
         <View style={styles.row}>
-          <View style={{ flex: 1 }}><Field label="Distance (km)" required value={invoice.distanceKm} onChangeText={(value) => patch({ distanceKm: value.replace(/\D/g, '').slice(0, 4) })} placeholder={distanceState === 'loading' ? 'Getting…' : 'e.g. 840'} keyboardType="number-pad" error={errorFor('distanceKm')} testID="distance"
+          <View style={{ flex: 1 }}><Field label="Distance (km)" value={invoice.distanceKm} onChangeText={(value) => patch({ distanceKm: value.replace(/\D/g, '').slice(0, 4) })} placeholder={distanceState === 'loading' ? 'Getting…' : 'e.g. 840'} keyboardType="number-pad" error={errorFor('distanceKm')} testID="distance"
             hint={distanceState === 'loading' ? 'Getting road distance from Google…' : distanceAuto ? `From Google maps: ${pins!.from} → ${pins!.to}. You can change it.` : distanceState === 'error' ? 'Could not get the distance. Enter it manually.' : pinKey ? undefined : 'Filled automatically from the PIN codes.'} /></View>
           <View style={{ flex: 1, gap: 7 }}>
             <TextBlock size={13} weight="semibold">Cargo</TextBlock>
@@ -587,7 +617,7 @@ export default function InvoiceEditorScreen() {
           </View>
         </View>
         {invoice.transportMode === 'Road' ? (
-          <Field label="Vehicle number" value={invoice.vehicleNumber} onChangeText={(value) => patch({ vehicleNumber: value.toUpperCase().replace(/[\s-]/g, '') })} placeholder="MH12AB1234" autoCapitalize="characters" maxLength={12} error={errorFor('vehicleNumber')} hint="Leave empty if the transporter will add the vehicle later (Part-B)." testID="vehicle" />
+          <Field label="Vehicle number" value={invoice.vehicleNumber} onChangeText={(value) => patch({ vehicleNumber: value.toUpperCase().replace(/[\s-]/g, '') })} placeholder="MH12AB1234" autoCapitalize="characters" maxLength={12} error={errorFor('vehicleNumber')} hint="Not known yet? Choose the transporter instead; the vehicle can be added later (Part-B)." testID="vehicle" />
         ) : null}
         <TextBlock size={11} color={colors.mutedForeground} style={{ lineHeight: 16 }}>Validity: 1 day per 200 km (20 km for over-dimensional cargo). The provider re-checks every value before generating.</TextBlock>
       </EditorSection>
@@ -637,22 +667,8 @@ export default function InvoiceEditorScreen() {
         <Button title="Preview invoice" icon="eye" size="sm" onPress={() => { Keyboard.dismiss(); setViewOnly(false); setPreviewing(true); }} testID="preview-invoice" />
       </View>
 
-      <Modal visible={previewing} animationType={viewOnly ? 'none' : 'slide'} onRequestClose={() => (viewOnly ? router.back() : setPreviewing(false))}>
-        <View style={{ flex: 1, backgroundColor: colors.background }}>
-          <ScreenHeader
-            title={viewOnly ? invoice.invoiceNumber || 'Invoice' : 'Invoice preview'}
-            subtitle={viewOnly ? `${invoice.buyerName || 'No buyer'} · ${invoice.ewbRequired === false ? 'E-way bill not required' : 'E-way bill pending'}` : 'Check everything before saving'}
-            onBack={() => { if (viewOnly) { setPreviewing(false); router.back(); } else setPreviewing(false); }}
-            right={<Button title="Edit" icon="edit-2" variant="outline" size="sm" onPress={() => { setViewOnly(false); setPreviewing(false); }} testID="preview-edit" />} />
-          <ScrollView contentContainerStyle={[styles.body, { paddingBottom: 24 }]}>
-            <InvoicePreview invoice={invoice} />
-          </ScrollView>
-          <View style={[styles.sticky, { backgroundColor: colors.card, borderColor: colors.border, paddingBottom: (Platform.OS === 'web' ? 12 : insets.bottom) + 10 }]}>
-            <Button title="Generate EWB" icon="truck" variant={viewOnly ? 'primary' : 'outline'} onPress={() => void continueToReview()} style={{ flex: 1 }} testID="continue-to-ewb" />
-            {viewOnly ? null : <Button title="Save invoice" icon="check" onPress={() => void finishInvoice()} style={{ flex: 1 }} testID="save-invoice" />}
-            {viewOnly && invoice.status !== 'ewb_generated' ? <Button title="Delete" icon="trash-2" variant="danger" onPress={() => void deleteInvoice(invoice, () => { discarded.current = true; }).then((done) => { if (done) { setPreviewing(false); router.back(); } })} style={{ flex: 0.7 }} testID="preview-delete" /> : null}
-          </View>
-        </View>
+      <Modal visible={previewing && !viewOnly} animationType="slide" onRequestClose={() => setPreviewing(false)}>
+        {previewPage}
       </Modal>
 
       <SelectSheet

@@ -18,9 +18,6 @@ export type ExtractedInvoice = {
   buyerGstin?: Candidate;
   buyerState?: Candidate;
   buyerPincode?: Candidate;
-  vehicleNumber?: Candidate;
-  transporterName?: Candidate;
-  transporterId?: Candidate;
   totalPaise?: Candidate<number>;
   taxablePaise?: Candidate<number>;
   lines: ExtractedLine[];
@@ -94,6 +91,17 @@ function nameNear(lines: string[], index: number) {
     ) {
       return line.replace(/^(m\/s\.?|name:?)\s*/i, "");
     }
+  }
+  return null;
+}
+
+/** Name after an "M/s." or "Name:" label above the GSTIN: on that line, or alone on the next one. */
+function labelledName(lines: string[], index: number) {
+  for (let offset = -6; offset <= 0; offset += 1) {
+    const match = /^(?:m\/s\.?|name)\s*:?\s*(.*)$/i.exec(lines[index + offset]?.trim() ?? "");
+    if (!match) continue;
+    const value = (match[1]!.trim() || lines[index + offset + 1]?.trim() || "").replace(/^[:\-\s]+/, "");
+    if (value.length >= 3 && value.length < 70 && /[a-z]/i.test(value) && !/gstin|add\.?\s*:|address|state\s*:/i.test(value)) return value;
   }
   return null;
 }
@@ -175,6 +183,18 @@ function documentRate(text: string) {
 }
 
 const center = (cell: { x: number; width: number }) => cell.x + cell.width / 2;
+/** A bare HSN/SAC code: 4, 6 or 8 digits. */
+const HSN_LIKE = /^\d{4}(?:\d{2}){0,2}$/;
+/** HSN and quantity printed as one text: "3917 700.000", "8536 12 Nos". */
+const HSN_THEN_QTY = /^(\d{4}(?:\d{2}){0,2})\s+(\d[\d,]*(?:\.\d+)?(?:\s*[A-Za-z.]+)?)$/;
+
+/** GST rate from the % values on a product row: one IGST rate, or CGST + SGST (9% and 9% → 18). */
+function rowRate(cells: { text: string }[]) {
+  const percents = cells.map((cell) => /^(\d{1,2}(?:\.\d+)?)\s*%$/.exec(cell.text)?.[1]).filter((value): value is string => Boolean(value)).map(Number);
+  if (percents.length >= 2 && percents[0] === percents[1] && GST_RATES.includes(percents[0]! * 2)) return percents[0]! * 2;
+  if (percents.length === 1 && GST_RATES.includes(percents[0]!)) return percents[0]!;
+  return null;
+}
 const STOP_ROW = /\b(sub ?total|grand total|total|amount chargeable|amount in words)\b/i;
 const TAX_ROW = /\b(cgst|sgst|utgst|igst|output|round(ed)? off|less|freight|packing)\b/i;
 
@@ -203,6 +223,11 @@ export function tableLines(rows: PdfRow[], fallbackRate: number): ExtractedLine[
       continue;
     }
     if (!header) continue;
+    // A header split over two lines ("HSN/" above "SAC", "Qty" under "Rate"…): add the missing columns.
+    if (!last && kinds.every((item) => item.kind) && kinds.some((item) => !header!.some((column) => column.kind === item.kind))) {
+      header = [...header, ...kinds.filter((item): item is { kind: Column; center: number } => item.kind !== null && !header!.some((column) => column.kind === item.kind))];
+      continue;
+    }
 
     const values = new Map<Column, string[]>();
     for (const cell of row.cells) {
@@ -212,8 +237,40 @@ export function tableLines(rows: PdfRow[], fallbackRate: number): ExtractedLine[
     }
     const get = (kind: Column) => (values.get(kind) ?? []).join(" ").trim();
     const getAll = (kind: Column) => values.get(kind) ?? [];
-    const hsn = /^\d{4,8}$/.test(get("hsn").replace(/\s/g, "")) ? get("hsn").replace(/\s/g, "") : "";
-    const description = get("desc").replace(/^\d+[.)]?\s+/, "").trim();
+    let hsn = "";
+    let descCells = getAll("desc");
+    let qtyCells = getAll("qty");
+    // The HSN column can also hold "3917 700.000" (HSN and Qty as one text) or a word
+    // of the description printed close to it.
+    for (const text of getAll("hsn")) {
+      const split = HSN_THEN_QTY.exec(text);
+      if (!hsn && /^\d[\d\s]{3,9}$/.test(text) && /^\d{4,8}$/.test(text.replace(/\s/g, ""))) hsn = text.replace(/\s/g, "");
+      else if (!hsn && split) {
+        hsn = split[1]!;
+        qtyCells = [split[2]!, ...qtyCells];
+      } else if (/[a-z]/i.test(text)) descCells = [...descCells, text];
+    }
+    // The HSN printed off its column lands in Description or Qty: take it out so it is
+    // not read as the quantity. A 6/8-digit whole number alone in Qty is an HSN too.
+    if (!hsn && qtyCells[0] && HSN_THEN_QTY.test(qtyCells[0])) {
+      const split = HSN_THEN_QTY.exec(qtyCells[0])!;
+      hsn = split[1]!;
+      qtyCells = [split[2]!, ...qtyCells.slice(1)];
+    }
+    if (!hsn) {
+      const inDesc = descCells.length > 1 ? descCells.findIndex((text) => HSN_LIKE.test(text)) : -1;
+      if (inDesc >= 0) {
+        hsn = descCells[inDesc]!;
+        descCells = descCells.filter((_, index) => index !== inDesc);
+      } else if (qtyCells.length > 1 && HSN_LIKE.test(qtyCells[0]!)) {
+        hsn = qtyCells[0]!;
+        qtyCells = qtyCells.slice(1);
+      } else if (qtyCells.length === 1 && /^\d{6}(?:\d{2})?$/.test(qtyCells[0]!)) {
+        hsn = qtyCells[0]!;
+        qtyCells = [];
+      }
+    }
+    const description = descCells.join(" ").trim().replace(/^\d+[.)]?\s+/, "").trim();
     const rowText = row.cells.map((cell) => cell.text).join(" ");
 
     if (!hsn && STOP_ROW.test(rowText)) {
@@ -223,14 +280,14 @@ export function tableLines(rows: PdfRow[], fallbackRate: number): ExtractedLine[
     }
     if (!hsn && TAX_ROW.test(description)) continue;
 
-    const quantity = quantityOf(get("qty"));
+    const quantity = quantityOf(qtyCells.join(" "));
     const rate = toPaise(get("rate").split(/\s+/)[0] ?? "");
     const amountText = get("taxable") || getAll("amount")[0] || "";
     let taxablePaise = toPaise(amountText.split(/\s+/)[0] ?? "");
     if (!taxablePaise && quantity && rate) taxablePaise = Math.round(Number(quantity.quantity) * rate);
 
     if ((hsn || quantity) && taxablePaise && (description || hsn)) {
-      const gst = rateOf(get("gst"));
+      const gst = rateOf(get("gst")) ?? rowRate(row.cells);
       last = {
         description: description || `Item ${lines.length + 1}`,
         hsn,
@@ -251,51 +308,9 @@ export function tableLines(rows: PdfRow[], fallbackRate: number): ExtractedLine[
   return lines;
 }
 
-const TRANSPORTER_LABEL = /^(transporter(?:'s)?(?: name)?|transport(?:er)? co\.?|transport|dispatched through|despatched through|carrier(?: name)?|courier(?: name)?|name of transporter)\s*[:\-]?\s*/i;
-// Neighbouring labels that are not a transporter's name.
-const NOT_A_NAME = /^(destination|vehicle|motor|lr|gr|l\.r|g\.r|date|dated|bill of lading|terms|delivery|mode|transporter id|trans(?:porter)? id|gstin|e-?way|ewb|place|dispatch doc)/i;
-
-function cleanName(raw: string) {
-  const value = raw.replace(/^[:\-\s]+/, "").split(/\s{2,}|\s+(?:vehicle|lr|gr|destination|date|gstin|transporter id)\b/i)[0]!.trim();
-  return value.length >= 3 && value.length <= 60 && /[a-z]/i.test(value) && !NOT_A_NAME.test(value) && !/^[\d\s/.-]+$/.test(value) ? value : null;
-}
-
-/**
- * Transporter's name from a label such as "Transporter:", "Dispatched through"
- * or "Carrier": the text after it, the next cell on that row, or the cell
- * right under it (Tally prints labels and values in stacked boxes).
- */
-function transporterName(rows: PdfRow[], lines: string[]) {
-  for (const [index, row] of rows.entries()) {
-    for (const [cellIndex, cell] of row.cells.entries()) {
-      const label = TRANSPORTER_LABEL.exec(cell.text);
-      if (!label || /transporter id|trans id/i.test(cell.text)) continue;
-      const inline = cleanName(cell.text.slice(label[0].length));
-      if (inline) return inline;
-      const right = row.cells[cellIndex + 1];
-      if (right && right.x - (cell.x + cell.width) < 80) {
-        const value = cleanName(right.text);
-        if (value) return value;
-      }
-      const below = rows[index + 1];
-      if (below && below.page === row.page) {
-        const under = below.cells.reduce<PdfRow["cells"][number] | null>((best, item) => (!best || Math.abs(item.x - cell.x) < Math.abs(best.x - cell.x) ? item : best), null);
-        const value = under && Math.abs(under.x - cell.x) < 40 ? cleanName(under.text) : null;
-        if (value) return value;
-      }
-    }
-  }
-  for (const line of lines) {
-    const match = /(?:transporter(?:'s)?(?: name)?|dispatched through|despatched through|carrier(?: name)?|name of transporter)\s*[:\-]\s*(.+)$/i.exec(line);
-    const value = match ? cleanName(match[1]!) : null;
-    if (value) return value;
-  }
-  return null;
-}
-
 const TRANSPORTER_ID_LABEL = /(transporter|transport|trans)\.?\s*(id|gstin|gst no|gst)|transin/i;
 
-/** Transporter ID (a GSTIN or 15-character TRANSIN) on a labelled line or the line under it. */
+/** Transporter ID (a GSTIN or 15-character TRANSIN) on a labelled line or the line under it; only used to keep it out of seller/buyer. */
 function transporterId(lines: string[]) {
   for (const [index, line] of lines.entries()) {
     const label = TRANSPORTER_ID_LABEL.exec(line);
@@ -308,14 +323,19 @@ function transporterId(lines: string[]) {
   return null;
 }
 
-export function extractInvoiceFields(text: string, pageCount: number, rows: PdfRow[] = []): ExtractedInvoice {
+/**
+ * `ownGstins`: the user's own registrations. A GSTIN on the PDF that is one of
+ * them is the seller and never the buyer. Transport details (vehicle, transporter)
+ * are not read: the user fills them in for each e-way bill.
+ */
+export function extractInvoiceFields(text: string, pageCount: number, rows: PdfRow[] = [], ownGstins: string[] = []): ExtractedInvoice {
   const normalized = text.replace(/\r/g, "").replace(/[ \t]+/g, " ");
   const lines = normalized.split("\n").map((line) => line.trim()).filter(Boolean);
   const result: ExtractedInvoice = { lines: [], pageCount, characters: normalized.length };
 
   // The transporter's GSTIN/TRANSIN is neither the seller nor the buyer.
   const transporterIdValue = transporterId(lines);
-  if (transporterIdValue) result.transporterId = { value: transporterIdValue, confidence: "medium" };
+  const own = new Set(ownGstins.map((gstin) => gstin.trim().toUpperCase()).filter(Boolean));
 
   // GSTINs in reading order: first is usually the seller, the next distinct one the buyer.
   const gstins: { value: string; line: number; checksum: boolean }[] = [];
@@ -325,9 +345,17 @@ export function extractInvoiceFields(text: string, pageCount: number, rows: PdfR
       if (!gstins.some((item) => item.value === match[1])) gstins.push({ value: match[1]!, line: index, checksum: gstinChecksumOk(match[1]!) });
     }
   });
-  const sellerIndex = gstins.findIndex((item) => /sold by|seller|supplier|from|consignor/i.test(lines.slice(Math.max(0, item.line - 4), item.line + 1).join(" ")));
-  const seller = gstins[sellerIndex >= 0 ? sellerIndex : 0];
-  const buyer = gstins.find((item) => item !== seller);
+  // Seller: one of the user's own GSTINs, else one under a seller label, else the first
+  // that is not under a buyer label. Buyer: one under a buyer label ("Details of
+  // Receiver (Billed to)", "M/s"), else the next one; never one of the user's own.
+  const near = (item: { line: number }) => lines.slice(Math.max(0, item.line - 6), item.line + 1).join(" ");
+  const BUYER_LABEL = /bill(?:ed)? to|buyer|consignee|ship(?:ped)? to|recipient|receiver|customer|party|\bm\/s\b/i;
+  const others = gstins.filter((item) => !own.has(item.value));
+  const buyerLabeled = others.find((item) => BUYER_LABEL.test(near(item)));
+  const seller = gstins.find((item) => own.has(item.value))
+    ?? gstins.find((item) => item !== buyerLabeled && /sold by|seller|supplier|consignor/i.test(near(item)))
+    ?? (own.size ? undefined : gstins.find((item) => item !== buyerLabeled));
+  const buyer = buyerLabeled && buyerLabeled !== seller ? buyerLabeled : others.find((item) => item !== seller);
   if (seller) {
     result.sellerGstin = { value: seller.value, confidence: seller.checksum ? "high" : "low" };
     const name = nameNear(lines, seller.line);
@@ -339,7 +367,7 @@ export function extractInvoiceFields(text: string, pageCount: number, rows: PdfR
   }
   if (buyer) {
     result.buyerGstin = { value: buyer.value, confidence: buyer.checksum ? "high" : "low" };
-    const name = nameNear(lines, buyer.line);
+    const name = nameNear(lines, buyer.line) ?? labelledName(lines, buyer.line);
     if (name) result.buyerName = { value: name, confidence: "medium" };
     const state = STATES.find((item) => item.code === buyer.value.slice(0, 2))?.name ?? stateNear(lines, buyer.line);
     if (state) result.buyerState = { value: state, confidence: "high" };
@@ -371,13 +399,6 @@ export function extractInvoiceFields(text: string, pageCount: number, rows: PdfR
     }
   }
 
-  const vehicle = /\b([A-Z]{2}[\s-]?\d{1,2}[\s-]?[A-Z]{0,3}[\s-]?\d{4})\b/.exec(normalized.toUpperCase());
-  if (vehicle && /vehicle|truck|lorry|veh/i.test(normalized)) {
-    result.vehicleNumber = { value: vehicle[1]!.replace(/[\s-]/g, ""), confidence: "medium" };
-  }
-  const transporter = transporterName(rows, lines);
-  if (transporter) result.transporterName = { value: transporter, confidence: "medium" };
-
   const total = amountAfter(normalized, ["grand total", "invoice total", "total amount", "amount payable", "net amount", "total"]);
   if (total) result.totalPaise = { value: total, confidence: "medium" };
   const taxable = amountAfter(normalized, ["taxable value", "taxable amount", "sub ?total", "assessable value"]);
@@ -386,6 +407,8 @@ export function extractInvoiceFields(text: string, pageCount: number, rows: PdfR
   // Line items: from the item table's columns when the PDF has one; otherwise
   // rows that carry an HSN code followed by amounts.
   result.lines = tableLines(rows, documentRate(normalized));
+  // With the products read, their sum is the taxable value ("Sub Total" can be the total quantity).
+  if (result.lines.length) result.taxablePaise = { value: result.lines.reduce((sum, line) => sum + line.taxablePaise, 0), confidence: "medium" };
   for (const line of result.lines.length ? [] : lines) {
     const match = /^(.{3,60}?)\s+(\d{4}|\d{6}|\d{8})\s+([0-9.]+)\s*([A-Za-z]{0,5})\s+(.*)$/.exec(line);
     if (!match) continue;

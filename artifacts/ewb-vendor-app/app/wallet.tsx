@@ -1,6 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as WebBrowser from 'expo-web-browser';
-import { Linking, Pressable, RefreshControl, Share, StyleSheet, View } from 'react-native';
+import { Linking, Pressable, RefreshControl, Share, StyleSheet, TextInput, View } from 'react-native';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Card, Chip, ChipRow, Divider, EmptyState, Field, KeyValue, ListRow, Notice, ScreenHeader, SectionTitle, StatCard, TextBlock } from '@/components/AppUI';
@@ -9,6 +9,9 @@ import { useColors } from '@/hooks/useColors';
 import { api, ApiError, SUPPORT_EMAIL, type CreditPurchase, type WalletAction, type WalletEntry, type WalletSummary } from '@/lib/api';
 import { formatDate } from '@/lib/domain';
 import { useAppStore } from '@/state/app-store';
+
+/** The "Other" choice among the quick-add packs. */
+const OTHER = -1;
 
 const COST_ROWS: { action: WalletAction; label: string }[] = [
   { action: 'generate', label: 'Generate a new e-way bill' },
@@ -34,7 +37,9 @@ export default function WalletScreen() {
   /** Pack chosen on the balance card; the middle pack until the user picks one. */
   const [pick, setPick] = useState<number | null>(null);
   const packs = pricing?.packs ?? [];
-  const quickPack = pick && packs.includes(pick) ? pick : packs[Math.floor((packs.length - 1) / 2)] ?? 0;
+  /** "Other": the user types any number of credits (150, 200…). */
+  const other = pick === OTHER;
+  const quickPack = other ? Number(custom) || 0 : pick && packs.includes(pick) ? pick : packs[Math.floor((packs.length - 1) / 2)] ?? 0;
 
   useEffect(() => {
     void store.refreshWallet();
@@ -133,8 +138,40 @@ export default function WalletScreen() {
                     </Pressable>
                   );
                 })}
+                <Pressable
+                  onPress={() => setPick(OTHER)}
+                  accessibilityRole="radio"
+                  accessibilityState={{ selected: other }}
+                  accessibilityLabel="Other amount"
+                  style={[styles.quickPack, { borderColor: colors.primaryForeground, backgroundColor: other ? colors.primaryForeground : 'transparent' }]}
+                  testID="wallet-quick-other"
+                >
+                  <TextBlock size={13} weight="bold" color={other ? colors.primary : colors.primaryForeground}>Other</TextBlock>
+                  <TextBlock size={10} color={other ? colors.primary : colors.primaryForeground}>any amount</TextBlock>
+                </Pressable>
               </View>
-              <Button title={buying === quickPack ? 'Opening…' : `Add ${quickPack.toLocaleString('en-IN')} credits · ${rupees(quickPack)}`} icon="plus" variant="outline" onPress={() => void buy(quickPack)} disabled={buying !== null} loading={buying === quickPack} testID="wallet-quick-add" />
+              {other ? (
+                <TextInput
+                  value={custom}
+                  onChangeText={(value) => setCustom(value.replace(/\D/g, '').slice(0, 6))}
+                  keyboardType="number-pad"
+                  placeholder={`Credits, ${pricing.min} or more`}
+                  placeholderTextColor={colors.mutedForeground}
+                  autoFocus
+                  style={[styles.quickInput, { backgroundColor: colors.primaryForeground, color: colors.primary }]}
+                  accessibilityLabel="Number of credits"
+                  testID="wallet-quick-custom"
+                />
+              ) : null}
+              <Button
+                title={buying !== null && buying === quickPack ? 'Opening…' : quickPack ? `Add ${quickPack.toLocaleString('en-IN')} credits · ${rupees(quickPack)}` : 'Enter the credits to add'}
+                icon="plus"
+                variant="outline"
+                onPress={() => void buy(quickPack)}
+                disabled={buying !== null || !quickPack}
+                loading={buying !== null && buying === quickPack}
+                testID="wallet-quick-add"
+              />
             </View>
           ) : pricing ? (
             <Button title="Request credits" icon="mail" variant="outline" onPress={() => void requestCredits()} style={{ marginTop: 10 }} />
@@ -203,53 +240,76 @@ export default function WalletScreen() {
   );
 }
 
-const RECENT = 10;
-const MONTH_PAGE = 25;
+/** Entries loaded at a time; Show more loads the next page from the server. */
+const PAGE = 20;
 
 function monthLabel(month: string) {
   return new Date(`${month}-01T00:00:00+05:30`).toLocaleString('en-IN', { month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
 }
 
-/** Latest entries by default; older ones month by month, so the list stays short. */
+/**
+ * Latest entries first (all months, or one month), PAGE at a time: Show more
+ * loads only the next page, so nothing is fetched that the user does not open.
+ */
 function WalletHistory({ wallet }: { wallet: WalletSummary | null }) {
   const colors = useColors();
   const months = wallet?.historyMonths ?? [];
   const [month, setMonth] = useState<string | null>(null);
+  /** Pages loaded after the first; null while the first page of a month loads. */
   const [entries, setEntries] = useState<WalletEntry[] | null>(null);
+  const [more, setMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState('');
-  const [limit, setLimit] = useState(MONTH_PAGE);
 
-  // Reload the chosen month whenever the wallet refreshes (new charges, top-ups).
+  // First page: "Recent" comes with the wallet; a month is fetched. Both start
+  // over whenever the wallet refreshes (new charges, top-ups).
   useEffect(() => {
-    if (!month) return;
-    let active = true;
     setError('');
-    api.walletHistory(month)
-      .then((result) => active && setEntries(result.entries))
+    if (!month) {
+      setEntries(wallet?.ledger.slice(0, PAGE) ?? []);
+      setMore(wallet?.ledgerMore ?? (wallet?.ledger.length ?? 0) > PAGE);
+      return;
+    }
+    let active = true;
+    setEntries(null);
+    api.walletHistory(month, PAGE)
+      .then((result) => {
+        if (!active) return;
+        setEntries(result.entries);
+        setMore(result.more);
+      })
       .catch((caught: unknown) => active && setError(caught instanceof ApiError ? caught.message : 'Could not load this month.'));
     return () => {
       active = false;
     };
   }, [month, wallet]);
 
-  const choose = (next: string | null) => {
-    setMonth(next);
-    setEntries(null);
-    setLimit(MONTH_PAGE);
+  const showMore = async () => {
+    const last = entries?.[entries.length - 1];
+    if (!last || loadingMore) return;
+    setLoadingMore(true);
+    setError('');
+    try {
+      const result = await api.walletHistory(month ?? '', PAGE, last.id);
+      setEntries((current) => [...(current ?? []), ...result.entries.filter((entry) => !current?.some((item) => item.id === entry.id))]);
+      setMore(result.more);
+    } catch (caught) {
+      setError(caught instanceof ApiError ? caught.message : 'Could not load more entries.');
+    } finally {
+      setLoadingMore(false);
+    }
   };
 
   const summary = months.find((item) => item.month === month);
-  const list = month ? entries ?? [] : (wallet?.ledger ?? []).slice(0, RECENT);
-  const shown = month ? list.slice(0, limit) : list;
-  const hasOlder = (wallet?.ledger.length ?? 0) > RECENT || months.length > 1;
+  const shown = entries ?? [];
 
   return (
     <>
       <SectionTitle title="History" />
       {months.length ? (
         <ChipRow>
-          <Chip label="Recent" icon="clock" selected={!month} onPress={() => choose(null)} />
-          {months.map((item) => <Chip key={item.month} label={monthLabel(item.month)} count={item.count} selected={month === item.month} onPress={() => choose(item.month)} />)}
+          <Chip label="Recent" icon="clock" selected={!month} onPress={() => setMonth(null)} />
+          {months.map((item) => <Chip key={item.month} label={monthLabel(item.month)} count={item.count} selected={month === item.month} onPress={() => setMonth(item.month)} />)}
         </ChipRow>
       ) : null}
       {summary ? (
@@ -279,11 +339,8 @@ function WalletHistory({ wallet }: { wallet: WalletSummary | null }) {
       ) : month ? null : (
         <Card><EmptyState icon="credit-card" title="No activity yet" body="Every e-way bill action and credit top-up appears here." /></Card>
       )}
-      {month && list.length > limit ? (
-        <Button title={`Show ${Math.min(MONTH_PAGE, list.length - limit)} more`} icon="chevrons-down" variant="outline" onPress={() => setLimit((value) => value + MONTH_PAGE)} />
-      ) : null}
-      {!month && hasOlder ? (
-        <TextBlock size={12} color={colors.mutedForeground}>Showing the latest {RECENT}. Pick a month above to see older entries.</TextBlock>
+      {entries && more ? (
+        <Button title={loadingMore ? 'Loading…' : 'Show more'} icon="chevrons-down" variant="outline" onPress={() => void showMore()} loading={loadingMore} disabled={loadingMore} testID="wallet-history-more" />
       ) : null}
     </>
   );
@@ -294,7 +351,8 @@ const styles = StyleSheet.create({
   balance: { gap: 4, borderWidth: 0 },
   quickAdd: { gap: 10, marginTop: 10 },
   quickPacks: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  quickPack: { flexGrow: 1, flexBasis: '22%', borderWidth: 1, borderRadius: 12, paddingVertical: 7, alignItems: 'center', gap: 1 },
+  quickInput: { borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 16, fontWeight: '600' },
+  quickPack: { flexGrow: 1, flexBasis: '30%', borderWidth: 1, borderRadius: 12, paddingVertical: 7, alignItems: 'center', gap: 1 },
   stats: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },
   stat: { flexBasis: '47%', flexGrow: 1 },
   packs: { flexDirection: 'row', flexWrap: 'wrap', gap: 10 },

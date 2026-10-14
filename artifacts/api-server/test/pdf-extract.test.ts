@@ -27,32 +27,91 @@ describe("PDF line items from the item table", () => {
     assert.equal(fields.lines[2]!.taxablePaise, 200_000);
   });
 
-  it("reads the transporter's name from a label, on the same line or in the box below it", () => {
+  it("does not read transport details, and keeps the transporter's GSTIN out of the buyer", () => {
     const tally = [
       row(1, [[300, 80, "Dispatched through"], [420, 60, "Destination"]]),
       row(1, [[302, 90, "VRL Logistics Ltd"], [420, 50, "Surat"]]),
       row(1, [[300, 80, "Motor Vehicle No."]]),
       row(1, [[302, 70, "GJ05AB1234"]]),
     ];
-    const fromTally = extractInvoiceFields(textOf(tally), 1, tally);
-    assert.equal(fromTally.transporterName?.value, "VRL Logistics Ltd");
-    assert.equal(fromTally.vehicleNumber?.value, "GJ05AB1234");
-    const inline = [row(1, [[20, 200, "Transporter: Shree Roadways"], [300, 120, "LR No: 4521"]])];
-    assert.equal(extractInvoiceFields(textOf(inline), 1, inline).transporterName?.value, "Shree Roadways");
-    const nextCell = [row(1, [[20, 70, "Transporter Name"], [100, 100, "Om Sai Transport"], [300, 100, "Vehicle: MH12XY9876"]])];
-    assert.equal(extractInvoiceFields(textOf(nextCell), 1, nextCell).transporterName?.value, "Om Sai Transport");
-    // The transporter's GSTIN is not taken as the buyer's.
+    const fromTally = extractInvoiceFields(textOf(tally), 1, tally) as Record<string, unknown>;
+    assert.equal(fromTally.transporterName, undefined);
+    assert.equal(fromTally.vehicleNumber, undefined);
+    assert.equal(fromTally.transporterId, undefined);
     const withId = [
       row(1, [[20, 200, "Seller GSTIN: 27AAPFU0939F1ZV"]]),
       row(1, [[20, 200, "Transporter: Shree Roadways"], [300, 200, "Transporter ID: 24AAACT2727Q1ZW"]]),
       row(1, [[20, 200, "Buyer GSTIN: 29AAGCR4375J1ZU"]]),
     ];
-    const parsed = extractInvoiceFields(textOf(withId), 1, withId);
-    assert.equal(parsed.transporterId?.value, "24AAACT2727Q1ZW");
-    assert.equal(parsed.buyerGstin?.value, "29AAGCR4375J1ZU");
-    assert.equal(parsed.transporterName?.value, "Shree Roadways");
-    const none = [row(1, [[20, 70, "Dispatched through"]]), row(1, [[300, 50, "Destination"]])];
-    assert.equal(extractInvoiceFields(textOf(none), 1, none).transporterName, undefined);
+    assert.equal(extractInvoiceFields(textOf(withId), 1, withId).buyerGstin?.value, "29AAGCR4375J1ZU");
+  });
+
+  it("never takes the user's own GSTIN as the buyer's, wherever it is printed", () => {
+    // Buyer block printed first, the user's GSTIN (seller) lower down.
+    const rows = [
+      row(1, [[20, 200, "Bill To: ATLANTIS AGRITECH PVT LTD"]]),
+      row(1, [[20, 200, "GSTIN: 24AAGCP5430N1Z8"]]),
+      row(1, [[20, 200, "Dispatch from our works"]]),
+      row(1, [[20, 200, "Remarks"]]),
+      row(1, [[20, 200, "Terms"]]),
+      row(1, [[20, 200, "Supplier: IRON AGE INDUSTRIES GSTIN: 24CCNPR0179J1Z6"]]),
+    ];
+    const known = extractInvoiceFields(textOf(rows), 1, rows, ["24CCNPR0179J1Z6"]);
+    assert.equal(known.sellerGstin?.value, "24CCNPR0179J1Z6");
+    assert.equal(known.buyerGstin?.value, "24AAGCP5430N1Z8");
+    // Only the user's own GSTIN on the PDF: no buyer GSTIN at all.
+    const onlyOwn = [row(1, [[20, 200, "GSTIN: 24CCNPR0179J1Z6"]]), row(1, [[20, 200, "Bill To: Cash customer"]])];
+    assert.equal(extractInvoiceFields(textOf(onlyOwn), 1, onlyOwn, ["24CCNPR0179J1Z6"]).buyerGstin, undefined);
+    // Without the user's GSTINs (older app), the seller label decides.
+    assert.equal(extractInvoiceFields(textOf(rows), 1, rows).buyerGstin?.value, "24AAGCP5430N1Z8");
+  });
+
+  it("does not read the HSN code as the quantity", () => {
+    // HSN header split over two lines, and the code printed nearer to Qty.
+    const split = [
+      row(1, [[20, 20, "Sr"], [50, 100, "Description of Goods"], [215, 30, "HSN/"], [260, 40, "Quantity"], [320, 30, "Rate"], [400, 40, "Amount"]]),
+      row(1, [[215, 30, "SAC"]]),
+      row(1, [[22, 6, "1"], [50, 90, "R. D. SHAFT SEMI 10T"], [240, 30, "998898"], [262, 30, "55 Nos"], [320, 30, "50.00"], [400, 40, "2,750.00"]]),
+      row(1, [[50, 25, "Total"], [400, 40, "2,750.00"]]),
+    ];
+    const first = extractInvoiceFields(textOf(split), 1, split).lines[0]!;
+    assert.equal(first.hsn, "998898");
+    assert.equal(first.quantity, "55");
+    // No HSN column: the code sits in the Qty column ahead of the quantity.
+    const noColumn = [
+      row(1, [[20, 20, "Sr"], [50, 100, "Particulars"], [260, 40, "Qty"], [320, 30, "Rate"], [400, 40, "Amount"]]),
+      row(1, [[22, 6, "1"], [50, 90, "Dosa Tawa"], [250, 30, "73239110"], [285, 20, "10"], [320, 30, "399.00"], [400, 40, "3,990.00"]]),
+    ];
+    const second = extractInvoiceFields(textOf(noColumn), 1, noColumn).lines[0]!;
+    assert.equal(second.hsn, "73239110");
+    assert.equal(second.quantity, "10");
+  });
+
+  it("splits HSN and Qty printed as one text, and reads CGST + SGST rates per row (Sale bill layout)", () => {
+    const rows = [
+      row(1, [[30, 133, "Details of Receiver (Billed to)"]]),
+      row(1, [[30, 27, "M/s. :"]]),
+      row(1, [[68, 157, "RUDRAKSH CONSTRUCTION"]]),
+      row(1, [[30, 25, "Add. :"], [68, 45, "JUNAGADH"]]),
+      row(1, [[30, 35, "GSTIN :"], [68, 75, "24ABIFR9607F1Z2"], [182, 67, "State : Gujarat"]]),
+      row(1, [[31, 13, "Sr."], [57, 64, "Product Name"], [152, 17, "HSN"], [179, 16, "Qty"], [213, 21, "Rate"], [258, 23, "Total"]]),
+      row(1, [[44, 4, "1"], [53, 89, "25MM POLYCAB LMS PVC"], [154, 49, "3917 700.000"], [225, 20, "65.00"], [260, 34, "45500.00"], [354, 17, "9.0%"], [390, 26, "4095.00"], [436, 17, "9.0%"], [466, 26, "4095.00"]]),
+      row(1, [[44, 4, "2"], [53, 49, "JK 750 VOLTE"], [154, 18, "8541"], [182, 20, "1.000"], [216, 29, "7500.00"], [265, 29, "7500.00"], [354, 17, "2.5%"], [394, 22, "187.50"], [436, 17, "2.5%"], [470, 22, "187.50"]]),
+      row(1, [[39, 9, "3"], [53, 64, "JAQ AREVA PRIME"], [123, 16, "15W"], [154, 18, "9405"], [178, 25, "20.000"], [221, 25, "610.00"], [260, 34, "12200.00"], [354, 17, "9.0%"], [436, 17, "9.0%"]]),
+      row(1, [[75, 39, "Sub Total :"], [164, 34, "721.000"], [234, 38, "65200.00"]]),
+      row(1, [[35, 47, "GSTIN No."], [86, 3, ":"], [98, 76, "24BPAPP7025L1ZS"]]),
+    ];
+    const fields = extractInvoiceFields(textOf(rows), 1, rows, ["24CCNPR0179J1Z6"]);
+    assert.deepEqual(fields.lines.map((line) => [line.description, line.hsn, line.quantity, line.taxRate, line.taxablePaise]), [
+      ["25MM POLYCAB LMS PVC", "3917", "700", 18, 4_550_000],
+      ["JK 750 VOLTE", "8541", "1", 5, 750_000],
+      ["JAQ AREVA PRIME 15W", "9405", "20", 18, 1_220_000],
+    ]);
+    assert.equal(fields.buyerGstin?.value, "24ABIFR9607F1Z2");
+    assert.equal(fields.buyerName?.value, "RUDRAKSH CONSTRUCTION");
+    assert.equal(fields.taxablePaise?.value, 6_520_000);
+    // An older app sends no GSTINs: the seller's GSTIN at the bottom still is not the buyer's.
+    assert.equal(extractInvoiceFields(textOf(rows), 1, rows).buyerGstin?.value, "24ABIFR9607F1Z2");
   });
 
   it("uses the invoice-wide GST rate and a taxable-value column when rows have no rate", () => {

@@ -269,7 +269,7 @@ export function MoneyField({ label, paise, onChange, error, required, editable =
 
 export function ConfidenceTag({ level }: { level: 'high' | 'medium' | 'low' }) {
   const colors = useColors();
-  const meta = { high: { label: 'Read from PDF', bg: colors.successBackground, fg: colors.successForeground }, medium: { label: 'Please check', bg: colors.warningBackground, fg: colors.warningForeground }, low: { label: 'Uncertain', bg: colors.dangerBackground, fg: colors.dangerForeground } }[level];
+  const meta = { high: { label: 'From PDF', bg: colors.successBackground, fg: colors.successForeground }, medium: { label: 'Please check', bg: colors.warningBackground, fg: colors.warningForeground }, low: { label: 'Uncertain', bg: colors.dangerBackground, fg: colors.dangerForeground } }[level];
   return <View style={[styles.tag, { backgroundColor: meta.bg }]}><TextBlock size={10} weight="semibold" color={meta.fg}>{meta.label}</TextBlock></View>;
 }
 
@@ -645,7 +645,8 @@ const styles = StyleSheet.create({
   sectionTitle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginTop: 4 },
   count: { minWidth: 22, height: 22, borderRadius: 11, paddingHorizontal: 6, alignItems: 'center', justifyContent: 'center' },
   fieldWrap: { gap: 7 },
-  labelRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 },
+  // Wraps in a narrow column (Invoice number next to Date) so a tag never runs into the next field.
+  labelRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', columnGap: 8, rowGap: 4 },
   fieldLabel: { marginLeft: 1 },
   inputShell: { minHeight: 52, borderWidth: 1, borderRadius: 14, flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, gap: 8 },
   input: { flex: 1, paddingVertical: 13, fontSize: 15, fontFamily: 'Inter_400Regular', minWidth: 0 },
@@ -653,7 +654,7 @@ const styles = StyleSheet.create({
   multilineInput: { minHeight: 72, textAlignVertical: 'top' },
   reveal: { padding: 4 },
   errorRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
-  tag: { paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6 },
+  tag: { paddingHorizontal: 7, paddingVertical: 3, borderRadius: 6, flexShrink: 0 },
   button: { minHeight: 52, paddingHorizontal: 18, borderRadius: 15, borderWidth: 1, alignItems: 'center', justifyContent: 'center', flexDirection: 'row', gap: 9 },
   buttonSm: { minHeight: 44, paddingHorizontal: 13, borderRadius: 12, gap: 7 },
   disabled: { opacity: 0.45 },

@@ -33,9 +33,13 @@ walletRouter.get("/wallet", async (req, res) => {
 });
 
 walletRouter.get("/wallet/history", async (req, res) => {
+  // month: YYYY-MM, or empty for every month. limit/before: one page after the entry `before`.
   const month = typeof req.query["month"] === "string" ? req.query["month"] : "";
-  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return res.status(400).json({ error: "bad_request", message: "Choose a month as YYYY-MM." });
-  return res.json(await withWorkspace(req.workspaceId, (workspace) => walletHistory(workspace, month)));
+  const limit = Number(req.query["limit"]) || 0;
+  const before = typeof req.query["before"] === "string" ? req.query["before"].slice(0, 100) : undefined;
+  if ((month || !limit) && !/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) return res.status(400).json({ error: "bad_request", message: "Choose a month as YYYY-MM." });
+  const page = limit ? { before, limit: Math.min(Math.max(Math.trunc(limit), 1), 100) } : undefined;
+  return res.json(await withWorkspace(req.workspaceId, (workspace) => walletHistory(workspace, month, page)));
 });
 
 walletRouter.post("/wallet/purchase", async (req, res) => {
