@@ -87,6 +87,38 @@ describe("PDF line items from the item table", () => {
     assert.equal(second.quantity, "10");
   });
 
+  it("reads a bill with ORIGINAL FOR RECIPIENT, side-by-side Bill To / Ship To and an Amount that includes tax", () => {
+    const rows = [
+      row(1, [[28, 59, "TAX INVOICE"], [98, 119, "ORIGINAL FOR RECIPIENT"]]),
+      row(1, [[33, 207, "SHIVAM ENTERPRISE"]]),
+      row(1, [[33, 349, "CHANDRASNAGAR MAIN ROAD, NEW ASHAPURA PARK,, Rajkot, Gujarat, 360002"]]),
+      row(1, [[33, 32, "Mobile:"], [70, 55, "9825771419"], [143, 31, "GSTIN:"], [178, 82, "24BILPG8938F1Z1"]]),
+      row(1, [[42, 56, "Invoice No.:"], [102, 12, "45"], [432, 61, "Invoice Date:"], [498, 56, "29/09/2026"]]),
+      row(1, [[30, 39, "BILL TO"], [298, 42, "SHIP TO"]]),
+      row(1, [[30, 152, "ATLANTIS AGRITECH PVT LTD"], [298, 152, "ATLANTIS AGRITECH PVT LTD"]]),
+      row(1, [[30, 100, "Rajkot, Gujarat, 360024"], [298, 100, "Rajkot, Gujarat, 360024"]]),
+      row(1, [[30, 91, "Mobile: 7698400580"]]),
+      row(1, [[30, 30, "GSTIN:"], [71, 88, "24AAGCP5430N1Z8"]]),
+      row(1, [[36, 31, "ITEMS"], [220, 21, "HSN"], [294, 22, "QTY."], [348, 25, "RATE"], [443, 20, "TAX"], [515, 44, "AMOUNT"]]),
+      row(1, [[36, 98, "R. D. SHAFT SEMI 10T"], [220, 22, "9988"], [279, 37, "234 PCS"], [363, 11, "43"], [425, 37, "1,811.16"], [517, 43, "11,873.16"]]),
+      row(1, [[443, 19, "(18%)"]]),
+      row(1, [[36, 48, "SUBTOTAL"], [299, 17, "234"], [424, 39, "1,811.16"], [515, 44, "11,873.16"]]),
+      row(1, [[426, 48, "CGST @9%"], [535, 30, "905.58"]]),
+      row(1, [[416, 59, "Total Amount"], [527, 5, "₹"], [534, 30, "11,873"]]),
+      row(1, [[455, 105, "Total Amount (in words)"]]),
+      row(1, [[35, 179, "1 Goods once sold will not be taken back."]]),
+    ];
+    const fields = extractInvoiceFields(textOf(rows), 1, rows, ["24CCNPR0179J1Z6"]);
+    assert.equal(fields.buyerGstin?.value, "24AAGCP5430N1Z8");
+    assert.equal(fields.buyerName?.value, "ATLANTIS AGRITECH PVT LTD");
+    assert.equal(fields.buyerPincode?.value, "360024");
+    assert.equal(fields.sellerGstin?.value, "24BILPG8938F1Z1");
+    assert.equal(fields.sellerName?.value, "SHIVAM ENTERPRISE");
+    assert.deepEqual(fields.lines.map((line) => [line.hsn, line.quantity, line.taxRate, line.taxablePaise]), [["9988", "234", 18, 1_006_200]]);
+    assert.equal(fields.taxablePaise?.value, 1_006_200);
+    assert.equal(fields.totalPaise?.value, 1_187_300);
+  });
+
   it("takes a PIN code that belongs to the party's state, and skips other 6-digit numbers", () => {
     const rows = [
       row(1, [[20, 200, "Bill To: ROYAL ENTERPRISE"]]),

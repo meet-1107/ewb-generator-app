@@ -64,7 +64,9 @@ function toPaise(raw: string) {
   return Number.isFinite(value) && value > 0 ? Math.round(value * 100) : null;
 }
 
-const AMOUNT = String.raw`(?:₹|rs\.?|inr)?\s*([0-9][0-9,]*\.?[0-9]{0,2})`;
+// Spaces only between the label and the amount: "Total Amount (in words)" must not take
+// the "1" that starts the next line.
+const AMOUNT = String.raw`(?:₹|rs\.?|inr)?[ \t]*([0-9][0-9,]*\.?[0-9]{0,2})`;
 
 function amountAfter(text: string, labels: string[]) {
   for (const label of labels) {
@@ -79,6 +81,41 @@ function amountAfter(text: string, labels: string[]) {
   return null;
 }
 
+/** The issuer's name printed as the bill's heading: the first plain text line at the top. */
+function headerName(lines: string[]) {
+  for (const line of lines.slice(0, 4)) {
+    const value = line.replace(COPY_MARK, "").trim();
+    if (!value || /invoice|bill of supply|memo|estimate|challan|receipt|quotation|gstin|original|duplicate|triplicate/i.test(value)) continue;
+    return value.length >= 3 && value.length < 70 && /[a-z]/i.test(value) && !/\d{3,}|[:@]/.test(value) ? value : null;
+  }
+  return null;
+}
+
+/** "BILL TO" and "SHIP TO" side by side print the name twice on one line: keep it once. */
+function singleName(text: string) {
+  const value = text.trim();
+  return /^(.{3,}?)\s+\1$/i.exec(value)?.[1] ?? value;
+}
+
+/** Labels that head the buyer's block. ("ORIGINAL FOR RECIPIENT" on every GST invoice is not one.) */
+const BUYER_LABEL = /bill(?:ed)? to|buyer|consignee|ship(?:ped)? to|details of (?:recipient|receiver)|receiver|customer|party|\bm\/s\b/i;
+const COPY_MARK = /\b(?:original|duplicate|triplicate)\s+(?:copy\s+)?for\s+\w+/gi;
+
+/** Name on the line under the buyer label above the GSTIN ("BILL TO" / "ATLANTIS AGRITECH PVT LTD"). */
+function nameUnderLabel(lines: string[], index: number) {
+  for (let at = index - 1; at >= Math.max(0, index - 8); at -= 1) {
+    const line = (lines[at] ?? "").replace(COPY_MARK, "").trim();
+    const label = BUYER_LABEL.exec(line);
+    if (!label) continue;
+    // Name after the label on the same line ("Bill To: XYZ"), else the next line.
+    const rest = line.slice(label.index + label[0].length).replace(/^[\s:()\-]+|(?:\s*(?:ship(?:ped)? to|consignee).*)$/gi, "").replace(/^(m\/s\.?|name:?)\s*/i, "").trim();
+    const value = singleName(rest.length >= 3 && /[a-z]/i.test(rest) ? rest : lines[at + 1] ?? "");
+    if (value.length >= 3 && value.length < 80 && /[a-z]/i.test(value) && !/gstin|address|state\s*:|mobile|phone/i.test(value)) return value.replace(/^(m\/s\.?|name:?)\s*/i, "");
+    return null;
+  }
+  return null;
+}
+
 function nameNear(lines: string[], index: number) {
   for (let offset = -3; offset <= 3; offset += 1) {
     const line = lines[index + offset]?.trim() ?? "";
@@ -87,9 +124,9 @@ function nameNear(lines: string[], index: number) {
       line.length < 70 &&
       /[a-z]/i.test(line) &&
       !/gstin|gst no|invoice|date|state|address|phone|email|pin|tax|bill to|ship to|sold by|buyer|seller|consignee|consignor/i.test(line) &&
-      /(pvt|private|ltd|limited|llp|enterprises|traders|industries|company|co\.|corporation|agency|stores|mart|&)/i.test(line)
+      /(pvt|private|ltd|limited|llp|enterprises?|traders|trading|industries|company|co\.|corporation|agency|agencies|stores|mart|&)/i.test(line)
     ) {
-      return line.replace(/^(m\/s\.?|name:?)\s*/i, "");
+      return singleName(line.replace(/^(m\/s\.?|name:?)\s*/i, ""));
     }
   }
   return null;
@@ -313,6 +350,13 @@ export function tableLines(rows: PdfRow[], fallbackRate: number): ExtractedLine[
 
     if ((hsn || quantity) && taxablePaise && (description || hsn)) {
       const gst = rateOf(get("gst")) ?? rowRate(row.cells);
+      const taxRate = gst ?? (GST_RATES.includes(fallbackRate) && fallbackRate ? fallbackRate : 18);
+      // An Amount column that includes the tax (234 × 43 = 10,062 + 18% = 11,873.16):
+      // the taxable value is Qty × Rate.
+      if (quantity && rate) {
+        const base = Math.round(Number(quantity.quantity) * rate);
+        if (taxablePaise > base && Math.abs(taxablePaise - base * (1 + taxRate / 100)) <= Math.max(100, base * 0.002)) taxablePaise = base;
+      }
       last = {
         description: description || `Item ${lines.length + 1}`,
         hsn,
@@ -320,7 +364,7 @@ export function tableLines(rows: PdfRow[], fallbackRate: number): ExtractedLine[
         ...(quantity?.unit || unitName(get("unit")) ? { unit: quantity?.unit ?? unitName(get("unit")) } : {}),
         ...(rate ? { unitPricePaise: rate } : {}),
         taxablePaise,
-        taxRate: gst ?? (GST_RATES.includes(fallbackRate) && fallbackRate ? fallbackRate : 18),
+        taxRate,
         confidence: hsn && quantity ? "medium" : "low",
       };
       lines.push(last);
@@ -373,17 +417,18 @@ export function extractInvoiceFields(text: string, pageCount: number, rows: PdfR
   // Seller: one of the user's own GSTINs, else one under a seller label, else the first
   // that is not under a buyer label. Buyer: one under a buyer label ("Details of
   // Receiver (Billed to)", "M/s"), else the next one; never one of the user's own.
-  const near = (item: { line: number }) => lines.slice(Math.max(0, item.line - 6), item.line + 1).join(" ");
-  const BUYER_LABEL = /bill(?:ed)? to|buyer|consignee|ship(?:ped)? to|recipient|receiver|customer|party|\bm\/s\b/i;
+  const near = (item: { line: number }) => lines.slice(Math.max(0, item.line - 6), item.line + 1).join(" ").replace(COPY_MARK, "");
   const others = gstins.filter((item) => !own.has(item.value));
   const buyerLabeled = others.find((item) => BUYER_LABEL.test(near(item)));
+  // The issuer is reported even when it is not the user (a bill of another business),
+  // so the app can say so; the app keeps the user as the seller.
   const seller = gstins.find((item) => own.has(item.value))
     ?? gstins.find((item) => item !== buyerLabeled && /sold by|seller|supplier|consignor/i.test(near(item)))
-    ?? (own.size ? undefined : gstins.find((item) => item !== buyerLabeled));
+    ?? gstins.find((item) => item !== buyerLabeled);
   const buyer = buyerLabeled && buyerLabeled !== seller ? buyerLabeled : others.find((item) => item !== seller);
   if (seller) {
     result.sellerGstin = { value: seller.value, confidence: seller.checksum ? "high" : "low" };
-    const name = nameNear(lines, seller.line);
+    const name = headerName(lines) ?? nameNear(lines, seller.line);
     if (name) result.sellerName = { value: name, confidence: "medium" };
     const state = STATES.find((item) => item.code === seller.value.slice(0, 2))?.name ?? stateNear(lines, seller.line);
     if (state) result.sellerState = { value: state, confidence: "high" };
@@ -392,7 +437,7 @@ export function extractInvoiceFields(text: string, pageCount: number, rows: PdfR
   }
   if (buyer) {
     result.buyerGstin = { value: buyer.value, confidence: buyer.checksum ? "high" : "low" };
-    const name = nameNear(lines, buyer.line) ?? labelledName(lines, buyer.line);
+    const name = nameUnderLabel(lines, buyer.line) ?? nameNear(lines, buyer.line) ?? labelledName(lines, buyer.line);
     if (name) result.buyerName = { value: name, confidence: "medium" };
     const state = STATES.find((item) => item.code === buyer.value.slice(0, 2))?.name ?? stateNear(lines, buyer.line);
     if (state) result.buyerState = { value: state, confidence: "high" };
@@ -432,8 +477,18 @@ export function extractInvoiceFields(text: string, pageCount: number, rows: PdfR
   // Line items: from the item table's columns when the PDF has one; otherwise
   // rows that carry an HSN code followed by amounts.
   result.lines = tableLines(rows, documentRate(normalized));
-  // With the products read, their sum is the taxable value ("Sub Total" can be the total quantity).
-  if (result.lines.length) result.taxablePaise = { value: result.lines.reduce((sum, line) => sum + line.taxablePaise, 0), confidence: "medium" };
+  // With the products read, their sum is the taxable value ("Sub Total" can be the total
+  // quantity), and the invoice total is the amount printed that matches it plus GST
+  // (within the round-off), wherever its label is.
+  if (result.lines.length) {
+    const taxable = result.lines.reduce((sum, line) => sum + line.taxablePaise, 0);
+    result.taxablePaise = { value: taxable, confidence: "medium" };
+    const gross = result.lines.reduce((sum, line) => sum + line.taxablePaise * (1 + line.taxRate / 100), 0);
+    const printed = [...normalized.matchAll(/(?<![\d.])([0-9][0-9,]*\.?[0-9]{0,2})(?![\d])/g)].map((match) => toPaise(match[1]!)).filter((value): value is number => Boolean(value));
+    // The last such amount: the grand total after round-off sits below the line amounts.
+    const match = printed.filter((value) => Math.abs(value - gross) <= Math.max(200, gross * 0.002)).at(-1);
+    if (match) result.totalPaise = { value: match, confidence: "high" };
+  }
   for (const line of result.lines.length ? [] : lines) {
     const match = /^(.{3,60}?)\s+(\d{4}|\d{6}|\d{8})\s+([0-9.]+)\s*([A-Za-z]{0,5})\s+(.*)$/.exec(line);
     if (!match) continue;
