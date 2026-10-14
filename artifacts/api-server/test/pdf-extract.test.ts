@@ -87,6 +87,19 @@ describe("PDF line items from the item table", () => {
     assert.equal(second.quantity, "10");
   });
 
+  it("takes a PIN code that belongs to the party's state, and skips other 6-digit numbers", () => {
+    const rows = [
+      row(1, [[20, 200, "Bill To: ROYAL ENTERPRISE"]]),
+      row(1, [[20, 200, "Ref 272455"]]),
+      row(1, [[20, 200, "Station Road, Junagadh - 362001"]]),
+      row(1, [[20, 200, "GSTIN: 24ABIFR9607F1Z2"]]),
+    ];
+    assert.deepEqual(extractInvoiceFields(textOf(rows), 1, rows, ["27AAPFU0939F1ZV"]).buyerPincode, { value: "362001", confidence: "high" });
+    // Only a number that cannot be a Gujarat PIN: leave the PIN empty instead of a wrong one.
+    const wrong = [row(1, [[20, 200, "Bill To: ROYAL ENTERPRISE 272455"]]), row(1, [[20, 200, "GSTIN: 24ABIFR9607F1Z2"]])];
+    assert.equal(extractInvoiceFields(textOf(wrong), 1, wrong, ["27AAPFU0939F1ZV"]).buyerPincode, undefined);
+  });
+
   it("splits HSN and Qty printed as one text, and reads CGST + SGST rates per row (Sale bill layout)", () => {
     const rows = [
       row(1, [[30, 133, "Details of Receiver (Billed to)"]]),

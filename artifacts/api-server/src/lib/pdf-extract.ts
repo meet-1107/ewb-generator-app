@@ -115,10 +115,35 @@ function stateNear(lines: string[], index: number) {
   return null;
 }
 
-function pinNear(lines: string[], index: number) {
-  for (let offset = -4; offset <= 6; offset += 1) {
-    const match = /\b([1-9]\d{2}\s?\d{3})\b/.exec(lines[index + offset] ?? "");
-    if (match && !/gstin|invoice|phone|mobile|hsn/i.test(lines[index + offset] ?? "")) return match[1]!.replace(/\s/g, "");
+/** First two digits of the PIN codes of each state (India Post circles). */
+const PIN_PREFIXES: Record<string, number[]> = {
+  "Delhi": [11], "Haryana": [12, 13], "Punjab": [14, 15, 16], "Chandigarh": [16], "Himachal Pradesh": [17],
+  "Jammu and Kashmir": [18, 19], "Ladakh": [19], "Uttar Pradesh": [20, 21, 22, 23, 24, 25, 26, 27, 28], "Uttarakhand": [24, 26],
+  "Rajasthan": [30, 31, 32, 33, 34], "Gujarat": [36, 37, 38, 39], "Dadra and Nagar Haveli and Daman and Diu": [39],
+  "Maharashtra": [40, 41, 42, 43, 44], "Goa": [40], "Madhya Pradesh": [45, 46, 47, 48], "Chhattisgarh": [49],
+  "Telangana": [50], "Andhra Pradesh": [51, 52, 53], "Karnataka": [56, 57, 58, 59], "Tamil Nadu": [60, 61, 62, 63, 64],
+  "Puducherry": [53, 60, 67], "Kerala": [67, 68, 69], "Lakshadweep": [68], "West Bengal": [70, 71, 72, 73, 74],
+  "Sikkim": [73], "Andaman and Nicobar Islands": [74], "Odisha": [75, 76, 77], "Assam": [78],
+  "Arunachal Pradesh": [79], "Nagaland": [79], "Manipur": [79], "Mizoram": [79], "Tripura": [79], "Meghalaya": [79],
+  "Bihar": [80, 81, 82, 84, 85], "Jharkhand": [81, 82, 83, 84, 85],
+};
+
+/**
+ * PIN code of the party whose GSTIN is on line `index`: the nearest 6-digit number
+ * that is a PIN of its state (Gujarat 36–39…). A number that cannot be a PIN of that
+ * state (a phone or bill number) is skipped. "high" next to an address or PIN label.
+ */
+function pinNear(lines: string[], index: number, state: string | null): Candidate | null {
+  const prefixes = state ? PIN_PREFIXES[state] : undefined;
+  for (const offset of [0, -1, 1, -2, 2, -3, 3, -4, 4, -5, 5, -6, 6]) {
+    const line = lines[index + offset] ?? "";
+    if (/invoice|phone|mobile|\bmob\b|\bph\b|hsn|a\/c|account|ifsc|bill no/i.test(line)) continue;
+    for (const match of line.matchAll(/(?<![\d.,])([1-9]\d{2}\s?\d{3})(?![\d.,])/g)) {
+      const pin = match[1]!.replace(/\s/g, "");
+      if (!prefixes) return { value: pin, confidence: "low" };
+      if (!prefixes.includes(Number(pin.slice(0, 2)))) continue;
+      return { value: pin, confidence: /pin|address|add\.|city|dist|[a-z]\s*[-–]\s*\d{6}/i.test(line) ? "high" : "medium" };
+    }
   }
   return null;
 }
@@ -362,8 +387,8 @@ export function extractInvoiceFields(text: string, pageCount: number, rows: PdfR
     if (name) result.sellerName = { value: name, confidence: "medium" };
     const state = STATES.find((item) => item.code === seller.value.slice(0, 2))?.name ?? stateNear(lines, seller.line);
     if (state) result.sellerState = { value: state, confidence: "high" };
-    const pin = pinNear(lines, seller.line);
-    if (pin) result.sellerPincode = { value: pin, confidence: "low" };
+    const pin = pinNear(lines, seller.line, state ?? null);
+    if (pin) result.sellerPincode = pin;
   }
   if (buyer) {
     result.buyerGstin = { value: buyer.value, confidence: buyer.checksum ? "high" : "low" };
@@ -371,8 +396,8 @@ export function extractInvoiceFields(text: string, pageCount: number, rows: PdfR
     if (name) result.buyerName = { value: name, confidence: "medium" };
     const state = STATES.find((item) => item.code === buyer.value.slice(0, 2))?.name ?? stateNear(lines, buyer.line);
     if (state) result.buyerState = { value: state, confidence: "high" };
-    const pin = pinNear(lines, buyer.line);
-    if (pin) result.buyerPincode = { value: pin, confidence: "low" };
+    const pin = pinNear(lines, buyer.line, state ?? null);
+    if (pin) result.buyerPincode = pin;
   } else {
     const billTo = lines.findIndex((line) => /bill(ed)? to|buyer|consignee|ship to/i.test(line));
     if (billTo >= 0) {
