@@ -22,7 +22,8 @@ import {
   VEHICLE_REASONS,
   type EwbRecord,
 } from '@/lib/domain';
-import { ewbHtml, printHtml, shareHtmlAsPdf } from '@/lib/documents';
+import { ewbHtml, printHtml } from '@/lib/documents';
+import { usePdfActions } from '@/hooks/usePdfActions';
 import { useAppStore } from '@/state/app-store';
 
 const HOUR = 3_600_000;
@@ -33,6 +34,7 @@ export default function EwbDetailScreen() {
   const insets = useSafeAreaInsets();
   const store = useAppStore();
   const dialog = useDialog();
+  const pdf = usePdfActions();
   const credits = useCredits();
   const cached = store.ewbs.find((item) => item.id === id) ?? null;
   const [fetched, setEwb] = useState<EwbRecord | null>(null);
@@ -218,10 +220,9 @@ export default function EwbDetailScreen() {
     }).catch(() => undefined);
   };
 
-  const docAction = async (kind: 'print' | 'share') => {
+  const docAction = async (kind: 'print') => {
     try {
       if (kind === 'print') await printHtml(ewbHtml(ewb, sandbox, invoice));
-      else await shareHtmlAsPdf(ewbHtml(ewb, sandbox, invoice), `EWB ${ewb.ewbNumber}`);
     } catch (error) {
       dialog.toast((error as Error).message || 'Could not create the PDF', 'danger');
     }
@@ -261,7 +262,8 @@ export default function EwbDetailScreen() {
         </Card>
 
         <ActionGrid>
-          <ActionCard icon="download" title={Platform.OS === 'web' ? 'Save PDF' : 'Download'} detail="PDF to save or share" onPress={() => void docAction('share')} testID="ewb-download" />
+          <ActionCard icon="download" title={Platform.OS === 'web' ? 'Save PDF' : 'Download'} detail="Save PDF to your phone" onPress={() => void pdf.download(ewbHtml(ewb, sandbox, invoice), `EWB ${ewb.ewbNumber}`)} testID="ewb-download" />
+          {Platform.OS !== 'web' ? <ActionCard icon="share-2" title="Share" detail="WhatsApp, email and more" onPress={() => void pdf.share(ewbHtml(ewb, sandbox, invoice), `EWB ${ewb.ewbNumber}`)} testID="ewb-share-pdf" /> : null}
           <ActionCard icon="printer" title="Print" detail="Print a paper copy" onPress={() => void docAction('print')} testID="ewb-print" />
           <ActionCard icon="eye" title="Preview" detail="See the bill as it prints" onPress={() => setPreview(true)} testID="ewb-preview" />
           <ActionCard icon="x-octagon" title="Cancel" danger detail={status === 'cancelled' ? 'Already cancelled' : canCancel ? `${credits.costs.cancel} credits · within 24 h` : '24-hour window closed'} disabled={!canCancel} busy={busy === 'Cancel'} onPress={() => void cancel()} testID="ewb-cancel" />

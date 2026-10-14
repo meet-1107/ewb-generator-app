@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Reset password · E-Way Easy</title>
+<link rel="icon" type="image/png" href="/favicon.png">
+<link rel="stylesheet" href="/legal.css">
+<style>
+  main { max-width: 460px; }
+  label { display: block; font-weight: 600; font-size: 14px; margin: 12px 0 6px; }
+  input { width: 100%; font: inherit; padding: 12px 14px; border-radius: 12px; border: 1px solid var(--line); background: var(--bg); color: var(--fg); }
+  input:focus { outline: 2px solid var(--primary); outline-offset: 1px; }
+  .btn { display: block; width: 100%; text-align: center; margin-top: 18px; padding: 13px 16px; border: 0; border-radius: 12px; background: #175b42; color: #fff; font: 600 16px/1.2 inherit; font-family: inherit; text-decoration: none; cursor: pointer; }
+  .btn[disabled] { opacity: .6; cursor: default; }
+  .msg { margin-top: 12px; font-size: 14px; }
+  .err { color: #c0392b; }
+  .ok { font-size: 40px; line-height: 1; margin-bottom: 6px; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <a href="/"><img src="/favicon.png" alt="">E-Way Easy</a>
+  <h1 id="title">Reset password</h1>
+  <p id="subtitle">Choose a new password for your account</p>
+</div></header>
+<main>
+  <section id="loading"><p>Checking your link…</p></section>
+
+  <section id="form" hidden>
+    <form id="reset">
+      <p>Account: <strong id="email"></strong></p>
+      <label for="pw">New password</label>
+      <input id="pw" type="password" autocomplete="new-password" placeholder="At least 8 characters, letters and numbers" required>
+      <label for="pw2">Confirm new password</label>
+      <input id="pw2" type="password" autocomplete="new-password" required>
+      <p id="formError" class="msg err" hidden></p>
+      <button id="save" class="btn" type="submit">Save password</button>
+    </form>
+  </section>
+
+  <section id="done" hidden>
+    <div class="ok">✓</div>
+    <h2 id="doneTitle">Password changed</h2>
+    <p id="doneBody">Sign in to E-Way Easy with your new password. Opening the app…</p>
+    <a id="openApp" class="btn" href="#">Open E-Way Easy</a>
+    <p class="msg note" id="desktopNote" hidden>On a computer? Open the E-Way Easy app on your phone and sign in.</p>
+  </section>
+
+  <section id="failed" hidden>
+    <h2>This link can't be used</h2>
+    <p id="failedBody">It has expired or was already used. Open the app, tap <strong>Forgot password?</strong> and request a new link.</p>
+    <a class="btn appLink" href="#">Open E-Way Easy</a>
+  </section>
+</main>
+<script>
+(function () {
+  // Firebase web API key (public by design; it identifies the project, it is not a secret).
+  var KEY = 'AIzaSyCqgwExXJC5mw0hGLv9EfIlQzVcz_nVqIA';
+  var API = 'https://identitytoolkit.googleapis.com/v1/accounts:';
+  // Opens the app's sign-in screen (scheme "ewayeasy"); Play Store if the app is not installed.
+  var APP_URL = /Android/i.test(navigator.userAgent)
+    ? 'intent://#Intent;scheme=ewayeasy;package=com.ewayeasy.app;S.browser_fallback_url=' + encodeURIComponent('https://play.google.com/store/apps/details?id=com.ewayeasy.app') + ';end'
+    : 'ewayeasy://';
+  var params = new URLSearchParams(location.search);
+  var mode = params.get('mode');
+  var code = params.get('oobCode');
+  var $ = function (id) { return document.getElementById(id); };
+  var show = function (id) { ['loading', 'form', 'done', 'failed'].forEach(function (s) { $(s).hidden = s !== id; }); };
+  document.querySelectorAll('#openApp, .appLink').forEach(function (a) { a.href = APP_URL; });
+  if (!/Android|iPhone|iPad/i.test(navigator.userAgent)) $('desktopNote').hidden = false;
+
+  function call(method, body) {
+    return fetch(API + method + '?key=' + KEY, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+      .then(function (r) { return r.json().then(function (j) { if (!r.ok) throw new Error((j.error && j.error.message) || 'ERROR'); return j; }); });
+  }
+  function fail(text) { if (text) $('failedBody').textContent = text; show('failed'); }
+  function finished(title, body) {
+    $('title').textContent = title; $('subtitle').textContent = 'E-Way Easy account';
+    $('doneTitle').textContent = title; $('doneBody').textContent = body;
+    show('done');
+    // Back to the app's sign-in screen (the button stays in case the browser blocks it).
+    if (/Android|iPhone|iPad/i.test(navigator.userAgent)) setTimeout(function () { location.href = APP_URL; }, 1200);
+  }
+
+  if (!code) return fail('This link is incomplete. Open the app and request a new one.');
+
+  if (mode === 'resetPassword') {
+    call('resetPassword', { oobCode: code })
+      .then(function (r) { $('email').textContent = r.email || ''; show('form'); $('pw').focus(); })
+      .catch(function () { fail(); });
+    $('reset').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var pw = $('pw').value, err = $('formError');
+      var problem = pw.length < 8 || !/[A-Za-z]/.test(pw) || !/\d/.test(pw) ? 'Use at least 8 characters with letters and numbers.'
+        : pw !== $('pw2').value ? 'The two passwords do not match.' : '';
+      err.hidden = !problem; err.textContent = problem;
+      if (problem) return;
+      $('save').disabled = true; $('save').textContent = 'Saving…';
+      call('resetPassword', { oobCode: code, newPassword: pw })
+        .then(function () { finished('Password changed', 'Sign in to E-Way Easy with your new password. Opening the app…'); })
+        .catch(function (error) {
+          $('save').disabled = false; $('save').textContent = 'Save password';
+          if (/WEAK_PASSWORD/.test(error.message)) { err.textContent = 'Choose a stronger password.'; err.hidden = false; }
+          else fail();
+        });
+    });
+  } else if (mode === 'verifyEmail' || mode === 'recoverEmail') {
+    $('title').textContent = mode === 'verifyEmail' ? 'Verify email' : 'Restore email';
+    call('update', { oobCode: code })
+      .then(function () { finished(mode === 'verifyEmail' ? 'Email verified' : 'Email restored', 'You can now sign in to E-Way Easy. Opening the app…'); })
+      .catch(function () { fail(); });
+  } else {
+    fail('This link is not supported. Open the app and try again.');
+  }
+})();
+</script>
+</body>
+</html>

@@ -9,7 +9,8 @@ import { useColors } from '@/hooks/useColors';
 import { useCredits } from '@/hooks/useCredits';
 import { api, ApiError, type ProviderIssue } from '@/lib/api';
 import { formatDate, formatInr, invoiceTotals, toEwbInput, uid, type EwbRecord } from '@/lib/domain';
-import { ewbHtml, printHtml, shareHtmlAsPdf } from '@/lib/documents';
+import { ewbHtml, printHtml } from '@/lib/documents';
+import { usePdfActions } from '@/hooks/usePdfActions';
 import { ActionCard, ActionGrid } from '@/components/ActionCard';
 import { EwbPreview } from '@/components/EwbPreview';
 import { useAppStore } from '@/state/app-store';
@@ -265,6 +266,7 @@ function GeneratedView({ ewb, sandbox }: { ewb: EwbRecord; sandbox: boolean }) {
   const invoice = useAppStore().invoices.find((item) => item.id === ewb.invoiceId);
   const insets = useSafeAreaInsets();
   const dialog = useDialog();
+  const pdf = usePdfActions();
   const [previewOpen, setPreviewOpen] = useState(false);
   const scale = useRef(new Animated.Value(0.6)).current;
   useEffect(() => {
@@ -289,7 +291,8 @@ function GeneratedView({ ewb, sandbox }: { ewb: EwbRecord; sandbox: boolean }) {
       <View style={{ marginTop: 'auto', gap: 10 }}>
         <Button title="View e-way bill" icon="eye" onPress={() => router.replace(`/ewb/${ewb.id}`)} testID="view-generated" />
         <ActionGrid>
-          <ActionCard icon="download" title="Download" detail="PDF to save or share" onPress={() => void shareHtmlAsPdf(ewbHtml(ewb, sandbox, invoice), `EWB ${ewb.ewbNumber}`).catch((error: Error) => dialog.toast(error.message, 'danger'))} />
+          <ActionCard icon="download" title="Download" detail="Save PDF to your phone" onPress={() => void pdf.download(ewbHtml(ewb, sandbox, invoice), `EWB ${ewb.ewbNumber}`)} />
+          {Platform.OS !== 'web' ? <ActionCard icon="share-2" title="Share" detail="WhatsApp, email and more" onPress={() => void pdf.share(ewbHtml(ewb, sandbox, invoice), `EWB ${ewb.ewbNumber}`)} /> : null}
           <ActionCard icon="printer" title="Print" detail="Print a paper copy" onPress={() => void printHtml(ewbHtml(ewb, sandbox, invoice)).catch((error: Error) => dialog.toast(error.message, 'danger'))} />
           <ActionCard icon="eye" title="Preview" detail="See the bill as it prints" onPress={() => setPreviewOpen(true)} />
           <ActionCard icon="x-octagon" title="Cancel" danger detail="Within 24 h · opens the bill" onPress={() => router.replace({ pathname: '/ewb/[id]', params: { id: ewb.id, action: 'cancel' } })} />

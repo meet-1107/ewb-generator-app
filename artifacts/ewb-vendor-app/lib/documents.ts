@@ -1,6 +1,8 @@
 import { Platform } from 'react-native';
 import * as Print from 'expo-print';
 import * as Sharing from 'expo-sharing';
+import * as LegacyFS from 'expo-file-system/legacy';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   amountInWords,
   formatDate,
@@ -175,4 +177,47 @@ export async function shareHtmlAsPdf(html: string, fileLabel: string) {
   if (!(await Sharing.isAvailableAsync())) throw new Error('Sharing is not available on this device.');
   await Sharing.shareAsync(uri, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf', dialogTitle: fileLabel });
   return 'shared';
+}
+
+/** Folder the user allowed once (Android); later downloads save there without asking. */
+const DOWNLOAD_DIR_KEY = 'ewb-vendor-v1:download-dir';
+
+export type SavedPdf = { status: 'saved'; fileName: string; uri: string } | { status: 'cancelled' | 'printed' | 'shared' };
+
+/**
+ * Saves the PDF on the phone. Android: into the folder chosen the first time (the picker
+ * opens at Download), remembered after that. iOS has no shared Downloads folder, so the
+ * share sheet's "Save to Files" is used; web prints.
+ */
+export async function downloadHtmlAsPdf(html: string, fileLabel: string): Promise<SavedPdf> {
+  if (Platform.OS !== 'android') return { status: await shareHtmlAsPdf(html, fileLabel) as 'printed' | 'shared' };
+  const { uri } = await Print.printToFileAsync({ html });
+  const fileName = `${fileLabel.replace(/[^\w.-]+/g, '_')}.pdf`;
+  const data = await LegacyFS.readAsStringAsync(uri, { encoding: LegacyFS.EncodingType.Base64 });
+  const SAF = LegacyFS.StorageAccessFramework;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    let dir = await AsyncStorage.getItem(DOWNLOAD_DIR_KEY).catch(() => null);
+    if (!dir) {
+      const permission = await SAF.requestDirectoryPermissionsAsync(SAF.getUriForDirectoryInRoot('Download'));
+      if (!permission.granted) return { status: 'cancelled' };
+      dir = permission.directoryUri;
+      await AsyncStorage.setItem(DOWNLOAD_DIR_KEY, dir).catch(() => undefined);
+    }
+    try {
+      const target = await SAF.createFileAsync(dir, fileName.replace(/\.pdf$/, ''), 'application/pdf');
+      await LegacyFS.writeAsStringAsync(target, data, { encoding: LegacyFS.EncodingType.Base64 });
+      return { status: 'saved', fileName, uri };
+    } catch (error) {
+      // Folder removed or access revoked: ask for a folder again (once).
+      await AsyncStorage.removeItem(DOWNLOAD_DIR_KEY).catch(() => undefined);
+      if (attempt === 1) throw error;
+    }
+  }
+  return { status: 'cancelled' };
+}
+
+/** Opens the share sheet for a PDF already rendered on the phone. */
+export async function sharePdfFile(uri: string, fileLabel: string) {
+  if (!(await Sharing.isAvailableAsync())) throw new Error('Sharing is not available on this device.');
+  await Sharing.shareAsync(uri, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf', dialogTitle: fileLabel });
 }
