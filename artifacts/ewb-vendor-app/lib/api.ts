@@ -129,7 +129,14 @@ export type WalletPricing = { creditPricePaise: number; packs: number[]; min: nu
 /** A month (YYYY-MM, India time) with wallet activity: entries, credits added and used. */
 export type WalletMonth = { month: string; count: number; added: number; used: number };
 export type WalletSummary = { balance: number; costs: CreditCosts; counts: Record<WalletAction, number>; creditsUsed: number; ledger: WalletEntry[]; ledgerMore?: boolean; historyMonths?: WalletMonth[]; pricing?: WalletPricing };
-export type CreditPurchase = { id: string; provider: 'razorpay' | 'sandbox'; credits: number; amountPaise: number; status: 'created' | 'paid' | 'expired' | 'cancelled'; shortUrl?: string; createdAt: string };
+export type CreditPurchase = { id: string; provider: 'razorpay' | 'sandbox'; credits: number; amountPaise: number; status: 'created' | 'paid' | 'expired' | 'cancelled'; shortUrl?: string; createdAt: string; paidAt?: string; paymentId?: string; invoiceNumber?: string };
+/** Invoice for a credit purchase, numbered per financial year (EWE/2026-27/0001). */
+export type BillingInvoice = {
+  number: string; purchaseId: string; issuedAt: string; paidAt: string; paymentId: string | null; provider: 'razorpay' | 'sandbox';
+  credits: number; amountPaise: number; ratePaise: number;
+  buyer: { name: string; gstin: string; address: string; state: string; pincode: string; email: string; phone: string };
+  emailedTo?: string; emailedAt?: string;
+};
 export type CewbRecord = {
   id: string;
   cewbNumber: string;
@@ -195,6 +202,9 @@ export const api = {
   verifyEmailOtp: (email: string, code: string) => request<{ grant: string; expiresInSeconds: number }>('/auth/email-otp/verify', { body: { email, code } }),
   finalizeRegistration: (grant: string, idToken: string) => request<{ activated: boolean }>('/auth/register/finalize', { body: { grant }, idToken, timeoutMs: 30_000 }),
   buyCredits: (credits: number) => request<{ purchase: CreditPurchase; balance?: number }>('/wallet/purchase', { body: { credits }, timeoutMs: 30_000 }),
+  billingInvoices: () => request<{ invoices: BillingInvoice[]; payments: CreditPurchase[] }>('/wallet/invoices', { timeoutMs: 30_000 }),
+  billingInvoice: (id: string) => request<{ invoice: BillingInvoice; html: string }>(`/wallet/invoices/${encodeURIComponent(id)}`, { timeoutMs: 20_000 }),
+  emailBillingInvoice: (id: string) => request<{ emailedTo: string; emailedAt: string }>(`/wallet/invoices/${encodeURIComponent(id)}/email`, { body: {}, timeoutMs: 30_000 }),
   purchaseStatus: (id: string) => request<{ purchase: CreditPurchase; balance: number }>(`/wallet/purchase/${encodeURIComponent(id)}`, { timeoutMs: 30_000 }),
   gstStatus: (gstin: string, period: string) => request<{ snapshots: GstSnapshot[]; provider: ProviderInfo }>(`/gst/status?gstin=${encodeURIComponent(gstin)}&period=${encodeURIComponent(period)}`),
   refreshGst: (gstin: string, period: string) => request<{ snapshots: GstSnapshot[]; provider: ProviderInfo }>('/gst/refresh', { body: { gstin, period } }),

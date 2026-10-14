@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as WebBrowser from 'expo-web-browser';
+import { router } from 'expo-router';
 import { Linking, Pressable, RefreshControl, Share, StyleSheet, TextInput, View } from 'react-native';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -198,6 +199,10 @@ export default function WalletScreen() {
             </React.Fragment>
           ))}
           <TextBlock size={11} color={colors.mutedForeground}>Credits are taken only when the action succeeds. If the government portal rejects it, they are refunded automatically.</TextBlock>
+        </Card>
+
+        <Card style={{ padding: 0, gap: 0 }}>
+          <ListRow icon="file-text" title="Billing invoices" detail="Invoices and history of your payments" onPress={() => router.push('/billing')} testID="wallet-billing" />
         </Card>
 
         <SectionTitle title="Buy credits" />

@@ -14,6 +14,7 @@ import { setSuspended } from "../lib/suspensions";
 import { adjustCredits, creditCosts, walletSummary } from "../lib/wallet";
 import { ewbProvider, ewbProviderSetting } from "../providers/ewb-provider";
 import { settlePurchase } from "./wallet";
+import { issueBillingInvoice } from "../lib/billing";
 
 /**
  * Admin panel API, under /api/admin (the panel itself is /admin on Hosting).
@@ -374,6 +375,7 @@ router.post("/payments/:uid/:id/recheck", allow("payments.recheck"), sensitive, 
     if (record.status === "created" && link.status !== "created") record.status = link.status;
     return { before, credited: false, status: record.status };
   });
+  if (outcome.credited) await issueBillingInvoice(param(req, "uid"), purchase.id);
   await adminAudit(req, { action: "admin.payment.recheck", target: purchase.id, outcome: outcome.credited ? "credited" : "no_change", before: { status: outcome.before }, after: { status: outcome.status, gateway: link.status, amountPaid: link.amountPaid } });
   invalidateSnapshot();
   return res.json({ gateway: link, ...outcome });

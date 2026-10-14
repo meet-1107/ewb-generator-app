@@ -61,6 +61,7 @@ function RootLayoutNav() {
         <Stack.Screen name="account" />
         <Stack.Screen name="bank-details" />
         <Stack.Screen name="wallet" />
+        <Stack.Screen name="billing" />
         <Stack.Screen name="ewb-login" />
         <Stack.Screen name="subscription" />
         <Stack.Screen name="saved/[kind]" />

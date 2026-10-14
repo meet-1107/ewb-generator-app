@@ -6,6 +6,8 @@ import { logger } from "../lib/logger";
 import { createPaymentLink, creditPacks, creditPricePaise, fetchPaymentLink, MAX_PURCHASE, MIN_PURCHASE, razorpayConfigured, webhookSignatureValid } from "../lib/payments";
 import { appendLog, audit, withWorkspace, type Workspace } from "../lib/store";
 import { addCredits, walletHistory, walletSummary } from "../lib/wallet";
+import { billingInvoiceHtml, emailBillingInvoice, issueBillingInvoice, type BillingInvoice } from "../lib/billing";
+import { readDoc } from "../lib/store";
 
 const paymentsMode = razorpayConfigured ? "razorpay" : authMode === "sandbox" ? "sandbox" : "off";
 
@@ -35,7 +37,8 @@ async function recheckPurchase(req: Request, purchaseId: string) {
   try {
     const link = await fetchPaymentLink(current.id);
     if (link.status === "paid" && link.amountPaid >= current.amountPaise) {
-      await withWorkspace(req.workspaceId, (workspace) => settlePurchase(workspace, current.id, link.paymentId));
+      const credited = await withWorkspace(req.workspaceId, (workspace) => settlePurchase(workspace, current.id, link.paymentId));
+      if (credited) await issueBillingInvoice(req.workspaceId, current.id);
     } else if (link.status !== "created") {
       await withWorkspace(req.workspaceId, (workspace) => { workspace.purchases[current.id]!.status = link.status; });
     }
@@ -77,9 +80,10 @@ walletRouter.post("/wallet/purchase", async (req, res) => {
       const id = `sbx_${Date.now().toString(36)}`;
       workspace.purchases[id] = { id, provider: "sandbox", credits, amountPaise, status: "created", createdAt: new Date().toISOString() };
       settlePurchase(workspace, id);
-      return { purchase: workspace.purchases[id], balance: workspace.wallet.balance };
+      return { purchase: workspace.purchases[id]!, balance: workspace.wallet.balance };
     });
-    return res.status(201).json(result);
+    const invoice = await issueBillingInvoice(req.workspaceId, result.purchase.id);
+    return res.status(201).json({ ...result, purchase: { ...result.purchase, invoiceNumber: invoice?.number } });
   }
 
   let link: { id: string; shortUrl: string };
@@ -102,6 +106,42 @@ walletRouter.get("/wallet/purchase/:id", async (req, res) => {
   if (!exists) return res.status(404).json({ error: "not_found", message: "Purchase not found." });
   await recheckPurchase(req, req.params.id);
   return res.json(await withWorkspace(req.workspaceId, (workspace) => ({ purchase: workspace.purchases[req.params.id], balance: workspace.wallet.balance })));
+});
+
+/** Billing invoices (date-wise, newest first) and every payment attempt. Older paid purchases get their invoice here. */
+walletRouter.get("/wallet/invoices", async (req, res) => {
+  const purchases = await withWorkspace(req.workspaceId, (workspace) => Object.values(workspace.purchases).map((purchase) => structuredClone(purchase)));
+  for (const purchase of purchases) {
+    if (purchase.status === "paid" && !purchase.invoiceNumber) purchase.invoiceNumber = (await issueBillingInvoice(req.workspaceId, purchase.id, { email: false }))?.number;
+  }
+  const paid = purchases.filter((purchase) => purchase.status === "paid" && purchase.invoiceNumber);
+  const invoices = (await Promise.all(paid.map((purchase) => readDoc<BillingInvoice>("billing_invoices", purchase.id)))).filter((invoice): invoice is BillingInvoice => Boolean(invoice));
+  invoices.sort((a, b) => b.paidAt.localeCompare(a.paidAt));
+  const payments = purchases.sort((a, b) => (b.paidAt ?? b.createdAt).localeCompare(a.paidAt ?? a.createdAt)).slice(0, 200)
+    .map(({ id, provider, credits, amountPaise, status, createdAt, paidAt, paymentId, invoiceNumber }) => ({ id, provider, credits, amountPaise, status, createdAt, paidAt, paymentId, invoiceNumber }));
+  res.json({ invoices, payments });
+});
+
+async function ownInvoice(req: Request) {
+  const id = String(req.params["id"] ?? "");
+  const owned = await withWorkspace(req.workspaceId, (workspace) => workspace.purchases[id]?.status === "paid");
+  return owned ? (await readDoc<BillingInvoice>("billing_invoices", id)) ?? issueBillingInvoice(req.workspaceId, id, { email: false }) : null;
+}
+
+/** One invoice and its printable page (the app saves or shares it as a PDF). */
+walletRouter.get("/wallet/invoices/:id", async (req, res) => {
+  const invoice = await ownInvoice(req);
+  if (!invoice) return res.status(404).json({ error: "not_found", message: "Invoice not found." });
+  return res.json({ invoice, html: billingInvoiceHtml(invoice) });
+});
+
+/** Emails the invoice again to the account email. */
+walletRouter.post("/wallet/invoices/:id/email", async (req, res) => {
+  const invoice = await ownInvoice(req);
+  if (!invoice) return res.status(404).json({ error: "not_found", message: "Invoice not found." });
+  const sent = await emailBillingInvoice({ ...invoice, emailedAt: undefined });
+  if (!sent.emailedAt) return res.status(502).json({ error: "email_failed", message: "Could not send the email. Try again in a moment." });
+  return res.json({ emailedTo: sent.emailedTo, emailedAt: sent.emailedAt });
 });
 
 /** Public routes (mounted before requireWorkspace). */
@@ -151,6 +191,7 @@ adminRouter.post("/payments/razorpay/webhook", async (req, res) => {
     if (!purchase || (link.amount_paid ?? 0) < purchase.amountPaise) return false;
     return settlePurchase(workspace, link.id!, event.payload?.payment?.entity?.id);
   });
+  if (credited) await issueBillingInvoice(workspaceId, link.id);
   logger.info({ link: link.id, credited }, "Razorpay payment_link.paid");
   // Every verified delivery is kept, so replays and late deliveries are visible in the admin panel.
   await appendLog("payment_events", { at: new Date().toISOString(), provider: "razorpay", event: event.event, signatureValid: true, linkId: link.id, paymentId: event.payload?.payment?.entity?.id ?? null, workspaceId, amountPaid: link.amount_paid ?? 0, credited }).catch(() => undefined);

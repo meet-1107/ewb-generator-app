@@ -148,6 +148,8 @@ export type CreditPurchase = {
   paymentId?: string;
   createdAt: string;
   paidAt?: string;
+  /** Billing invoice (lib/billing.ts), set once the payment is invoiced. */
+  invoiceNumber?: string;
 };
 
 /** E-way bill portal API login for one GSTIN. The password is encrypted at rest. */
