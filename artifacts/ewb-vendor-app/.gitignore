@@ -39,3 +39,7 @@ yarn-error.*
 .vercel
 
 .env
+
+# Signing key downloaded from EAS for local builds (never commit)
+credentials.json
+credentials/
