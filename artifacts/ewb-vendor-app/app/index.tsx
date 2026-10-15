@@ -16,7 +16,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Button, Card, Checkbox, Field, Notice, TextBlock } from '@/components/AppUI';
-import { LEGAL_VERSION, PENDING_CONSENT_KEY, PRIVACY_URL, TERMS_URL } from '@/lib/legal';
+import { PENDING_CONSENT_KEY, PRIVACY_URL, TERMS_URL, pendingConsent } from '@/lib/legal';
 import { useAuth } from '@/state/auth';
 import { ApiError } from '@/lib/api';
 import { authErrorMessage } from '@/lib/auth-types';
@@ -42,7 +42,7 @@ export default function LoginScreen() {
   const [agreed, setAgreed] = useState(false);
   const AGREE_FIRST = 'Tick the box to agree to the Terms & Conditions and Privacy Policy.';
   // Recorded on the server by ConsentGate once the new account is signed in.
-  const rememberConsent = () => AsyncStorage.setItem(PENDING_CONSENT_KEY, LEGAL_VERSION).catch(() => undefined);
+  const rememberConsent = (forEmail = '') => AsyncStorage.setItem(PENDING_CONSENT_KEY, pendingConsent(forEmail)).catch(() => undefined);
   const [message, setMessage] = useState<{ text: string; tone: 'info' | 'warning' | 'success' } | null>(null);
   const [pending, setPending] = useState(false);
   const submitting = useRef(false);
@@ -130,7 +130,7 @@ export default function LoginScreen() {
   const verifyCode = () => run(async () => {
     if (!CODE_PATTERN.test(code.trim())) return warn('Enter the 6-digit code from the email.');
     await auth.completeRegistration(email, password, code);
-    await rememberConsent();
+    await rememberConsent(email);
     setPassword('');
     go('sign-in', { text: 'Account created and email verified. Sign in to continue.', tone: 'success' });
   });

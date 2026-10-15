@@ -108,12 +108,13 @@ router.post("/sync", async (req, res) => {
       const target = (workspace.sync[name] ??= {});
       for (const record of records) {
         const existing = target[record.id];
-        if (!existing || existing.updatedAt < record.updatedAt) target[record.id] = record;
+        if (!existing || existing.updatedAt < record.updatedAt) target[record.id] = { ...record, receivedAt: serverTime };
       }
     }
     const out: Record<string, unknown[]> = {};
     for (const [name, records] of Object.entries(workspace.sync)) {
-      out[name] = Object.values(records).filter((record) => !since || record.updatedAt > since);
+      // By arrival time: a change made offline yesterday but uploaded now is still new to other devices.
+      out[name] = Object.values(records).filter((record) => !since || (record.receivedAt ?? record.updatedAt) > since);
     }
     return out;
   }, { sync: since ? { since, keys: Object.entries(collections).flatMap(([name, records]) => records.map((record) => `${name}/${record.id}`)) } : "all" });

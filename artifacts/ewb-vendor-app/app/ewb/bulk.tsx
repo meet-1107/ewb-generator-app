@@ -1,4 +1,4 @@
-import React, { useCallback, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
@@ -35,6 +35,10 @@ export default function BulkEwbScreen() {
   const [missingLogins, setMissingLogins] = useState<string[]>([]);
   const [guide, setGuide] = useState(false);
   const stop = useRef(false);
+  // Leaving the screen stops after the bill in progress: no credits spent behind the user's back.
+  useEffect(() => () => {
+    stop.current = true;
+  }, []);
 
   const released = useMemo(() => releasedInvoiceIds(store.invoices, store.ewbs), [store.invoices, store.ewbs]);
   const chosen = useMemo(() => {

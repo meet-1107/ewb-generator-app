@@ -5,7 +5,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Card, Checkbox, Notice, TextBlock } from '@/components/AppUI';
 import { useColors } from '@/hooks/useColors';
 import { api, ApiError } from '@/lib/api';
-import { consentKey, LEGAL_VERSION, PENDING_CONSENT_KEY, PRIVACY_URL, TERMS_URL } from '@/lib/legal';
+import { consentKey, LEGAL_VERSION, PENDING_CONSENT_KEY, pendingConsentFor, PRIVACY_URL, TERMS_URL } from '@/lib/legal';
 import { useAppStore } from '@/state/app-store';
 import { useAuth } from '@/state/auth';
 
@@ -34,7 +34,7 @@ export default function ConsentGate({ children }: { children: ReactNode }) {
       // Ticked at sign-up (before the account existed): record it now.
       const pending = await AsyncStorage.getItem(PENDING_CONSENT_KEY).catch(() => null);
       try {
-        if (pending === LEGAL_VERSION) {
+        if (pendingConsentFor(pending, auth.user?.email)) {
           await api.acceptConsent(LEGAL_VERSION, 'signup');
           await AsyncStorage.removeItem(PENDING_CONSENT_KEY).catch(() => undefined);
         } else if ((await api.consent()).required) {

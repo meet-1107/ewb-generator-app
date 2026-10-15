@@ -102,7 +102,12 @@ export default function EwbLoginScreen() {
   const remove = async (gstin: string) => {
     const ok = await dialog.confirm({ title: `Remove login for ${gstin}?`, message: 'E-way bills for this GSTIN cannot be generated until you add it again.', confirmLabel: 'Remove', tone: 'danger', icon: 'trash-2' });
     if (!ok) return;
-    await api.deleteEwbCredential(gstin).catch(() => undefined);
+    try {
+      await api.deleteEwbCredential(gstin);
+    } catch (error) {
+      return dialog.toast(error instanceof ApiError ? error.message : 'Could not remove the login. Check your connection and try again.', 'danger');
+    }
+    dialog.toast(`Login for ${gstin} removed`, 'success');
     setEditing(null);
     await load();
   };

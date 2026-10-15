@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as WebBrowser from 'expo-web-browser';
 import { router } from 'expo-router';
-import { Linking, Pressable, RefreshControl, Share, StyleSheet, TextInput, View } from 'react-native';
+import { AppState, Linking, Platform, Pressable, RefreshControl, Share, StyleSheet, TextInput, View } from 'react-native';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Card, Chip, ChipRow, Divider, EmptyState, Field, KeyValue, ListRow, Notice, ScreenHeader, SectionTitle, StatCard, TextBlock } from '@/components/AppUI';
@@ -55,18 +55,38 @@ export default function WalletScreen() {
 
   /** Waits for Razorpay to report the payment (the webhook may also credit it first). */
   const confirmPaid = async (purchase: CreditPurchase) => {
-    for (let attempt = 0; attempt < 6; attempt++) {
-      const { purchase: latest, balance } = await api.purchaseStatus(purchase.id);
-      if (latest.status === 'paid') {
-        store.setWalletBalance(balance);
-        dialog.toast(`${latest.credits} credits added`, 'success');
-        return;
+    try {
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const { purchase: latest, balance } = await api.purchaseStatus(purchase.id);
+        if (latest.status === 'paid') {
+          store.setWalletBalance(balance);
+          dialog.toast(`${latest.credits} credits added`, 'success');
+          return;
+        }
+        if (latest.status !== 'created') break;
+        await new Promise((resolve) => setTimeout(resolve, 2500));
       }
-      if (latest.status !== 'created') break;
-      await new Promise((resolve) => setTimeout(resolve, 2500));
+      dialog.toast('Payment not confirmed yet. Credits are added automatically once it is.', 'default');
+    } catch {
+      dialog.toast('Could not check the payment right now. If you paid, credits are added automatically within a few minutes.', 'default');
+    } finally {
+      void store.refreshWallet();
     }
-    dialog.toast('Payment not confirmed yet. Credits are added automatically once it is.', 'default');
   };
+
+  // Android: the payment page opens on top and openBrowserAsync returns at once, so the
+  // payment is checked when the user comes back to the app instead.
+  const awaitingPayment = useRef<CreditPurchase | null>(null);
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (next) => {
+      const purchase = awaitingPayment.current;
+      if (next !== 'active' || !purchase) return;
+      awaitingPayment.current = null;
+      void confirmPaid(purchase);
+    });
+    return () => subscription.remove();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const buy = async (credits: number) => {
     if (!pricing || pricing.payments === 'off') return requestCredits();
@@ -84,8 +104,9 @@ export default function WalletScreen() {
         store.setWalletBalance(balance);
         dialog.toast(`${credits} credits added`, 'success');
       } else if (purchase.shortUrl) {
+        if (Platform.OS === 'android') awaitingPayment.current = purchase;
         await WebBrowser.openBrowserAsync(purchase.shortUrl).catch(() => Linking.openURL(purchase.shortUrl!));
-        await confirmPaid(purchase);
+        if (Platform.OS !== 'android') await confirmPaid(purchase);
       }
       await store.refreshWallet();
       setCustom('');

@@ -242,6 +242,11 @@ describe("e-way bill generation (gstinapi adapter, mocked provider)", () => {
     assert.match(String(made.body["message"]), /602198434715.*portal/);
     assert.equal(await balance(ws), 15, "not charged");
     assert.equal((await ws.call("GET", "/ewb")).body["ewbs"].length, 0, "the old bill is not attached to this invoice");
+    // Tapping Generate again sends the same key: still refused, still not charged.
+    const again = await ws.call("POST", "/ewb/generate", { idempotencyKey: "key-portal-9", input: invoice("portal-9", "PORTAL-9") });
+    assert.equal(again.status, 409, JSON.stringify(again.body));
+    assert.equal(await balance(ws), 15, "second tap not charged");
+    assert.equal((await ws.call("GET", "/ewb")).body["ewbs"].length, 0);
   });
 
   it("a cut connection after the provider created the bill is reported as unknown, and the retry recovers the same bill with one charge", async () => {

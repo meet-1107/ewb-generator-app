@@ -155,7 +155,8 @@ export type CreditPurchase = {
 /** E-way bill portal API login for one GSTIN. The password is encrypted at rest. */
 export type EwbCredential = { gstin: string; username: string; passwordEnc: string; updatedAt: string };
 
-export type SyncRecord = { id: string; updatedAt: string; deleted?: boolean; data?: unknown };
+/** `updatedAt`: when the device made the change (newest wins). `receivedAt`: when the server stored it (what `since` compares). */
+export type SyncRecord = { id: string; updatedAt: string; receivedAt?: string; deleted?: boolean; data?: unknown };
 
 export type Workspace = {
   id: string;
@@ -365,7 +366,7 @@ type RecordDoc = { key: string; name?: string; json: string; updatedAt?: string 
 function sectionEntries(workspace: Workspace, section: Section): { id: string; doc: RecordDoc }[] {
   if (section === "sync") {
     return Object.entries(workspace.sync).flatMap(([name, records]) =>
-      Object.entries(records).map(([key, record]) => ({ id: docId(`${name}/${key}`), doc: { key, name, json: JSON.stringify(record), updatedAt: record.updatedAt } })),
+      Object.entries(records).map(([key, record]) => ({ id: docId(`${name}/${key}`), doc: { key, name, json: JSON.stringify(record), updatedAt: record.receivedAt ?? record.updatedAt } })),
     );
   }
   return Object.entries(workspace[section] as Record<string, unknown>).map(([key, record]) => ({ id: docId(key), doc: { key, json: JSON.stringify(record) } }));

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { grantWelcomeCredits } from "../lib/welcome";
+import { rateLimit } from "../lib/rate-limit";
 import { Router, type IRouter, type Response } from "express";
 import { z } from "zod";
 import { ewbProvider, type ProviderContext } from "../providers/ewb-provider";
@@ -141,6 +142,8 @@ router.post("/ewb/generate", async (req, res) => {
       refundCredits(workspace, existing.holdId ?? null, "Previous attempt did not finish");
       audit(workspace, req.actor, "ewb.generate", input.invoiceId, "stale_pending_reclaimed");
     }
+    // Only an attempt whose outcome is unknown may have created a bill at the portal; a refused one did not.
+    const retry = existing?.state === "unknown" || existing?.state === "pending";
     const live = Object.values(workspace.ewbs).filter((ewb) => refreshStatus(ewb).status !== "cancelled");
     const duplicate = live.find((ewb) => ewb.invoiceId === input.invoiceId);
     if (duplicate) return { kind: "duplicate" as const, ewb: duplicate };
@@ -165,7 +168,7 @@ router.post("/ewb/generate", async (req, res) => {
     workspace.requests[requestKey] = request;
     workspace.requests[lockKey] = { id: request.id, idempotencyKey: requestKey, invoiceId: input.invoiceId, state: "pending", createdAt: now, claimedAt: now };
     // A retry of this request may get back the bill its lost first attempt created; a first attempt may not.
-    return { kind: "claimed" as const, requestId: request.id, holdId: hold.entryId, ctx, knownNumbers, retry: Boolean(existing) };
+    return { kind: "claimed" as const, requestId: request.id, holdId: hold.entryId, ctx, knownNumbers, retry };
   }, { requests: [requestKey, lockKey], ewbs: "all" });
 
   if (claim.kind === "replay") return res.json({ ewb: claim.ewb, replay: true });
@@ -482,7 +485,10 @@ router.get("/ewb-credentials", async (req, res) => {
   res.json({ credentials, required: Boolean(ewbProvider?.needsCredentials), canStore: secretsConfigured, provider: ewbProvider ? (ewbProvider.sandbox ? "test" : "live") : "none", providerId: ewbProvider?.id ?? null });
 });
 
-router.put("/ewb-credentials", async (req, res) => {
+/** Saving a login asks the portal to check it: a few per account, so it cannot be used to probe logins. */
+const credentialLimit = rateLimit({ windowMs: 15 * 60_000, max: 20, by: "workspace" });
+
+router.put("/ewb-credentials", credentialLimit, async (req, res) => {
   const parsed = z.object({ gstin: z.string().length(15), username: z.string().min(1).max(60), password: z.string().min(1).max(100) }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "bad_request", message: "Enter the GSTIN, API username and password." });
   const gstin = parsed.data.gstin.toUpperCase();
@@ -504,8 +510,9 @@ router.put("/ewb-credentials", async (req, res) => {
     audit(workspace, req.actor, "ewb.credentials.save", gstin, "ok");
     return { gstin, username: parsed.data.username.trim(), updatedAt };
   });
-  // First portal login of a GSTIN that never had free credits: the trial credits.
-  const welcome = await grantWelcomeCredits(req.workspaceId, gstin);
+  // First portal login of a GSTIN that never had free credits: the trial credits, only once the
+  // portal has accepted the login (an unchecked one could be made up to collect them).
+  const welcome = check.valid === true || ewbProvider?.id !== "gstinapi" ? await grantWelcomeCredits(req.workspaceId, gstin) : { granted: 0, balance: undefined };
   return res.json({ credential: saved, checked: check.valid === true, message: check.message, welcomeCredits: welcome.granted, balance: welcome.balance });
 });
 

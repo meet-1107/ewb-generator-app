@@ -254,12 +254,21 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       const result = await api.sync(since, collections);
       setOnline(true);
       update((state) => {
-        let next: Persisted = { ...state, lastSyncAt: result.serverTime, lastPushAt: snapshotAt, tombstones: {} };
+        // Deletes made while this sync was in flight were not sent: keep them for the next sync.
+        const pending: Persisted['tombstones'] = {};
+        for (const [name, ids] of Object.entries(state.tombstones)) {
+          for (const [id, at] of Object.entries(ids)) {
+            if (current.tombstones[name]?.[id] !== at) pending[name] = { ...pending[name], [id]: at };
+          }
+        }
+        let next: Persisted = { ...state, lastSyncAt: result.serverTime, lastPushAt: snapshotAt, tombstones: pending };
         const merge = <T extends { id: string; updatedAt: string }>(key: Collections, map: (raw: unknown) => T) => {
           const incoming = result.changes[key] ?? [];
           if (!incoming.length) return;
           const list = [...(next[key] as unknown as T[])];
           for (const record of incoming) {
+            // Deleted on this phone and not yet sent: the server's copy must not bring it back.
+            if (pending[key]?.[record.id]) continue;
             const index = list.findIndex((item) => item.id === record.id);
             if (record.deleted) {
               if (index >= 0 && list[index]!.updatedAt <= record.updatedAt) list.splice(index, 1);
@@ -278,12 +287,6 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         if (remoteBusiness?.data && (!next.business || (next.business.updatedAt ?? '') < remoteBusiness.updatedAt)) {
           next.business = remoteBusiness.data as Business;
           next.activeGstin = next.activeGstin || next.business.defaultGstin || next.business.gstin;
-        }
-        // Keep tombstones created while this sync was in flight.
-        for (const [name, ids] of Object.entries(dataRef.current.tombstones)) {
-          for (const [id, at] of Object.entries(ids)) {
-            if (state.tombstones[name]?.[id] !== at) next.tombstones = { ...next.tombstones, [name]: { ...next.tombstones[name], [id]: at } };
-          }
         }
         return next;
       });
