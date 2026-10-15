@@ -69,3 +69,4 @@ ui-debug.log
 
 # Built APKs downloaded into the project (not uploaded to EAS)
 *.apk
+*.aab
