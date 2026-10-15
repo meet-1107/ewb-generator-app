@@ -166,7 +166,7 @@ export default function AccountScreen() {
       await store.clearLocalData();
     }
     await auth.signOut();
-    router.replace('/');
+    router.replace('/sign-in');
   };
 
   const clearPreview = async () => {

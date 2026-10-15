@@ -75,7 +75,7 @@ export default function TabLayout() {
   const { signedIn, isLoading } = useAuth();
   const store = useAppStore();
   if (isLoading || !store.isHydrated) return null;
-  if (!signedIn) return <Redirect href="/" />;
+  if (!signedIn) return <Redirect href="/sign-in" />;
   if (!store.business) return <Redirect href="/setup" />;
   return isLiquidGlassAvailable() ? <NativeTabLayout /> : <ClassicTabLayout />;
 }

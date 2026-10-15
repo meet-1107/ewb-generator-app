@@ -32,13 +32,15 @@ function useAuthGuard() {
   const store = useAppStore();
   const segments = useSegments();
   const first = segments[0] as string | undefined;
+  /** The sign-in screen ("/" or "/sign-in"); "/" alone is ambiguous with the Dashboard tab. */
+  const onSignIn = first === undefined || first === 'index' || first === 'sign-in';
   useEffect(() => {
     if (auth.isLoading || !store.isHydrated) return;
     const signedIn = auth.signedIn;
-    if (!signedIn && first !== undefined && first !== 'index') router.replace('/');
+    if (!signedIn && !onSignIn) router.replace('/sign-in');
     // Setup only once the server confirmed there is no business (not while it is loading).
-    else if (signedIn && !store.business && store.accountLoaded && first !== undefined && first !== 'setup' && first !== 'index') router.replace('/setup');
-  }, [auth.isLoading, auth.signedIn, store.isHydrated, store.business, store.accountLoaded, first]);
+    else if (signedIn && !store.business && store.accountLoaded && !onSignIn && first !== 'setup') router.replace('/setup');
+  }, [auth.isLoading, auth.signedIn, store.isHydrated, store.business, store.accountLoaded, first, onSignIn]);
 }
 
 function RootLayoutNav() {
@@ -50,6 +52,7 @@ function RootLayoutNav() {
       <ConsentGate>
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background }, animation: 'slide_from_right' }}>
         <Stack.Screen name="index" options={{ animation: 'fade' }} />
+        <Stack.Screen name="sign-in" options={{ animation: 'fade' }} />
         <Stack.Screen name="setup" options={{ animation: 'fade' }} />
         <Stack.Screen name="(tabs)" options={{ animation: 'fade' }} />
         <Stack.Screen name="invoice/new" options={{ presentation: 'modal' }} />

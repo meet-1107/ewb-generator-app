@@ -47,7 +47,7 @@ export default function BusinessSetupScreen() {
   };
 
   useEffect(() => {
-    if (!auth.signedIn) router.replace('/');
+    if (!auth.signedIn) router.replace('/sign-in');
   }, [auth.signedIn]);
 
   // Fetch the registered details as soon as a complete, valid GSTIN is entered (once per GSTIN).
