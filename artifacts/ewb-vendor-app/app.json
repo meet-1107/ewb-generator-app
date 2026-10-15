@@ -2,7 +2,7 @@
   "expo": {
     "name": "E-Way Easy",
     "slug": "eway-easy",
-    "version": "1.3.1",
+    "version": "1.3.2",
     "orientation": "portrait",
     "icon": "./assets/images/icon.png",
     "scheme": "ewayeasy",
@@ -13,7 +13,7 @@
     },
     "android": {
       "package": "com.ewayeasy.app",
-      "versionCode": 5,
+      "versionCode": 6,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundImage": "./assets/images/adaptive-background.png",
