@@ -11,6 +11,8 @@ import {
   hasShipTo,
   invoiceTotals,
   lineTax,
+  signatureHtml,
+  type Signature,
   templates,
   type EwbRecord,
   type Invoice,
@@ -43,7 +45,8 @@ const baseCss = (accent: string, compact: boolean) => `
   .watermark { position: fixed; top: 40%; left: 0; right: 0; text-align: center; font-size: 46px; font-weight: 800; color: rgba(184,63,50,.12); transform: rotate(-24deg); pointer-events: none; }
 `;
 
-export function invoiceHtml(invoice: Invoice) {
+/** `signature`: the business's saved signature, printed above "Authorised signatory". */
+export function invoiceHtml(invoice: Invoice, signature?: Signature) {
   const template = templates.find((item) => item.id === invoice.templateId) ?? templates[0];
   const minimal = template.id === 'minimal';
   const compact = template.id === 'compact';
@@ -111,7 +114,7 @@ export function invoiceHtml(invoice: Invoice) {
       <tr class="grand"><td>Total</td><td class="num">${formatInr(totals.total)}</td></tr></table></div></div>
   ${template.id !== 'dispatch' && !minimal && (invoice.vehicleNumber || invoice.ewbNumber) ? transport : ''}
   <div class="foot"><div class="muted" style="font-size:9px">Computer-generated document. Layout: ${esc(template.name)}.</div>
-    <div style="text-align:center"><div style="height:40px"></div><div style="border-top:1px solid #999;padding-top:4px;font-size:10px">For ${esc(invoice.sellerName)}<br/>Authorised signatory</div></div></div>
+    <div style="text-align:center;min-width:150px"><div style="height:52px;display:flex;align-items:flex-end;justify-content:center">${signatureHtml(signature)}</div><div style="border-top:1px solid #999;padding-top:4px;font-size:10px">For ${esc(invoice.sellerName)}<br/>Authorised signatory</div></div></div>
   </body></html>`;
 }
 

@@ -236,6 +236,10 @@ export default function AccountScreen() {
         <Divider inset={64} />
         <ListRow icon="truck" title="Transporters" detail={`${store.transporters.length} saved`} onPress={() => router.push('/saved/transporters')} />
         <Divider inset={64} />
+        <ListRow icon="edit-3" title="Signature" detail={business?.signature ? 'Saved · printed on every invoice' : 'Not added · add it once'} onPress={() => router.push('/signature')} testID="saved-signature" />
+        <Divider inset={64} />
+        <ListRow icon="bar-chart-2" title="Reports" detail="Sales & e-way bill reports as PDF for your CA" onPress={() => router.push('/reports')} testID="saved-reports" />
+        <Divider inset={64} />
         <ListRow icon="layout" title="Default invoice layout" detail={templates.find((item) => item.id === (business?.defaultTemplateId ?? 'classic'))?.name} onPress={() => void chooseLayout()} />
       </Card>
 

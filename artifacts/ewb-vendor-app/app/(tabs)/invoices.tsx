@@ -105,8 +105,8 @@ export default function InvoicesScreen() {
     if (choice.choice === 'Open') openInvoice(invoice);
     if (choice.choice === 'Edit invoice') router.push(`/invoice/${invoice.id}`);
     try {
-      if (choice.choice === 'Share as PDF') await shareHtmlAsPdf(invoiceHtml(invoice), invoice.invoiceNumber || 'Invoice');
-      if (choice.choice === 'Print invoice') await printHtml(invoiceHtml(invoice));
+      if (choice.choice === 'Share as PDF') await shareHtmlAsPdf(invoiceHtml(invoice, store.business?.signature), invoice.invoiceNumber || 'Invoice');
+      if (choice.choice === 'Print invoice') await printHtml(invoiceHtml(invoice, store.business?.signature));
     } catch (error) {
       dialog.toast((error as Error).message || 'Could not open the document', 'danger');
     }

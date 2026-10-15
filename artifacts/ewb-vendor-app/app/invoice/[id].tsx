@@ -446,8 +446,8 @@ export default function InvoiceEditorScreen() {
     const result = await dialog.prompt({ title: 'Invoice actions', choices, confirmLabel: 'Continue' });
     if (!result) return;
     try {
-      if (result.choice === 'Print invoice') await printHtml(invoiceHtml(invoice));
-      if (result.choice === 'Share as PDF') await shareHtmlAsPdf(invoiceHtml(invoice), invoice.invoiceNumber || 'Invoice');
+      if (result.choice === 'Print invoice') await printHtml(invoiceHtml(invoice, store.business?.signature));
+      if (result.choice === 'Share as PDF') await shareHtmlAsPdf(invoiceHtml(invoice, store.business?.signature), invoice.invoiceNumber || 'Invoice');
     } catch (error) {
       dialog.toast((error as Error).message || 'Could not open the document', 'danger');
     }
@@ -476,7 +476,10 @@ export default function InvoiceEditorScreen() {
         onBack={() => { setPreviewing(false); if (viewOnly) router.back(); }}
         right={<Button title="Edit" icon="edit-2" variant="outline" size="sm" onPress={() => { setViewOnly(false); setPreviewing(false); }} testID="preview-edit" />} />
       <ScrollView contentContainerStyle={[styles.body, { paddingBottom: 24 }]}>
-        <InvoicePreview invoice={invoice} />
+        {!store.business?.signature ? (
+          <Notice title="Add your signature once" body="It prints above “Authorised signatory” on every invoice, so you never sign each one." action="Add signature" onAction={() => router.push('/signature')} />
+        ) : null}
+        <InvoicePreview invoice={invoice} signature={store.business?.signature} />
       </ScrollView>
       <View style={[styles.sticky, { backgroundColor: colors.card, borderColor: colors.border, paddingBottom: (Platform.OS === 'web' ? 12 : insets.bottom) + 10 }]}>
         <Button title="Generate EWB" icon="truck" variant={viewOnly ? 'primary' : 'outline'} onPress={() => void continueToReview()} style={{ flex: 1 }} testID="continue-to-ewb" />
@@ -493,8 +496,8 @@ export default function InvoiceEditorScreen() {
         <KeyboardAwareScrollViewCompat contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 30 }]}>
           <ProgressSteps steps={['Invoice', 'Review EWB', 'Generated']} current={2} />
           <Notice tone="success" title={`E-way bill ${invoice.ewbNumber} is generated`} body="Generated bills keep the invoice exactly as submitted." action="Open e-way bill" onAction={() => router.push(`/ewb/${invoice.ewbId}`)} />
-          <InvoicePreview invoice={invoice} />
-          <Button title="Share invoice PDF" icon="share" onPress={() => void shareHtmlAsPdf(invoiceHtml(invoice), invoice.invoiceNumber).catch((error: Error) => dialog.toast(error.message, 'danger'))} />
+          <InvoicePreview invoice={invoice} signature={store.business?.signature} />
+          <Button title="Share invoice PDF" icon="share" onPress={() => void shareHtmlAsPdf(invoiceHtml(invoice, store.business?.signature), invoice.invoiceNumber).catch((error: Error) => dialog.toast(error.message, 'danger'))} />
         </KeyboardAwareScrollViewCompat>
       </View>
     );

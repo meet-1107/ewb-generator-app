@@ -89,6 +89,25 @@ export type GstRegistration = {
   isDefault: boolean;
 };
 
+/**
+ * The authorised signatory's signature, saved once and printed on every invoice:
+ * drawn in the app (SVG path strokes in a width × height box) or an uploaded image.
+ */
+export type Signature =
+  | { kind: 'drawn'; paths: string[]; width: number; height: number; updatedAt: string }
+  | { kind: 'image'; dataUri: string; updatedAt: string };
+
+/** Largest uploaded signature image (base64 data URI), so the profile stays small to sync. */
+export const MAX_SIGNATURE_BYTES = 250_000;
+
+/** The signature as HTML for the PDF (inline SVG or image), sized to fit the signatory box. */
+export function signatureHtml(signature: Signature | undefined, color = '#1b2420') {
+  if (!signature) return '';
+  if (signature.kind === 'image') return `<img src="${signature.dataUri}" alt="" style="max-height:48px;max-width:160px;object-fit:contain" />`;
+  const paths = signature.paths.map((d) => `<path d="${d.replace(/[^0-9MLQCZmlqcz .,-]/g, '')}" fill="none" stroke="${color}" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/>`).join('');
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${signature.width} ${signature.height}" style="height:48px;max-width:160px">${paths}</svg>`;
+}
+
 export type Business = {
   name: string;
   gstin: string;
@@ -107,6 +126,8 @@ export type Business = {
   /** Bank accounts that can be printed on invoices; `defaultBankId` fills new invoices. */
   bankAccounts?: BankAccount[];
   defaultBankId?: string;
+  /** Printed above "Authorised signatory" on every invoice. */
+  signature?: Signature;
   updatedAt?: string;
 };
 

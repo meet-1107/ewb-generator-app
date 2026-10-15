@@ -2,10 +2,11 @@ import React from 'react';
 import { StyleSheet, View } from 'react-native';
 import { TextBlock } from '@/components/AppUI';
 import { useColors } from '@/hooks/useColors';
-import { amountInWords, formatDate, formatInr, hasDispatch, hasShipTo, invoiceTotals, lineTax, type Invoice } from '@/lib/domain';
+import { amountInWords, formatDate, formatInr, hasDispatch, hasShipTo, invoiceTotals, lineTax, type Invoice, type Signature } from '@/lib/domain';
+import { SignatureView } from '@/components/SignatureView';
 
 /** The invoice laid out like the printed copy, for checking before it is saved. */
-export function InvoicePreview({ invoice }: { invoice: Invoice }) {
+export function InvoicePreview({ invoice, signature }: { invoice: Invoice; signature?: Signature }) {
   const colors = useColors();
   const totals = invoiceTotals(invoice);
   const lines = invoice.lines.filter((line) => line.description.trim() || line.taxablePaise);
@@ -105,7 +106,10 @@ export function InvoicePreview({ invoice }: { invoice: Invoice }) {
         </View>
       ) : null}
       {invoice.notes ? <TextBlock size={11} color={muted}>Notes: {invoice.notes}</TextBlock> : null}
-      <TextBlock size={11} color={muted} style={{ textAlign: 'right', marginTop: 8 }}>For {invoice.sellerName} · Authorised signatory</TextBlock>
+      <View style={{ alignItems: 'flex-end', marginTop: 8, gap: 2 }}>
+        {signature ? <View style={{ backgroundColor: '#ffffff', borderRadius: 6, paddingHorizontal: 4 }}><SignatureView signature={signature} height={40} /></View> : null}
+        <TextBlock size={11} color={muted} style={{ textAlign: 'right' }}>For {invoice.sellerName} · Authorised signatory</TextBlock>
+      </View>
     </View>
   );
 }
