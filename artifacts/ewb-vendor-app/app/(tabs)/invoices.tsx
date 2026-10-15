@@ -31,6 +31,22 @@ export default function InvoicesScreen() {
   const [sheet, setSheet] = useState(false);
   const list = useLoadMore(PAGE);
   const deleteInvoice = useDeleteInvoice();
+  /** Choosing invoices for bulk e-way bills; null when not choosing. */
+  const [picked, setPicked] = useState<Set<string> | null>(null);
+  const canPick = (invoice: Invoice) => invoice.status !== 'ewb_generated' && invoice.ewbRequired !== false;
+  const toggle = (invoice: Invoice) => {
+    if (!canPick(invoice)) return dialog.toast(invoice.status === 'ewb_generated' ? 'This invoice already has an e-way bill.' : 'This invoice is marked as not needing an e-way bill.', 'default');
+    setPicked((current) => {
+      const next = new Set(current ?? []);
+      if (next.has(invoice.id)) next.delete(invoice.id); else next.add(invoice.id);
+      return next;
+    });
+  };
+  const bulkGenerate = () => {
+    if (!picked?.size) return;
+    router.push({ pathname: '/ewb/bulk', params: { ids: [...picked].join(',') } });
+    setPicked(null);
+  };
 
   useEffect(() => {
     if (params.period && /^\d{4}-\d{2}$/.test(params.period)) {
@@ -147,11 +163,22 @@ export default function InvoicesScreen() {
         <Button title="Import PDF" icon="upload" variant="outline" onPress={() => router.push('/invoice/import')} style={{ flex: 1 }} />
       </View>
 
-      <SectionTitle title={party ? `Invoices of ${party}` : search || dateFiltered || party ? 'Matching invoices' : 'All invoices'} count={filtered.length} />
+      <SectionTitle title={party ? `Invoices of ${party}` : search || dateFiltered || party ? 'Matching invoices' : 'All invoices'} count={filtered.length} action={filtered.some(canPick) ? (picked ? 'Cancel' : 'Bulk e-way bill') : undefined} onPress={() => setPicked(picked ? null : new Set())} />
+      {picked ? (
+        <Card style={styles.bulkBar}>
+          <View style={{ flex: 1, gap: 2 }}>
+            <TextBlock size={14} weight="bold">{picked.size ? `${picked.size} invoice${picked.size === 1 ? '' : 's'} selected` : 'Tap invoices to select them'}</TextBlock>
+            <Pressable onPress={() => setPicked(new Set(filtered.filter(canPick).map((invoice) => invoice.id)))} hitSlop={6}>
+              <TextBlock size={12} weight="semibold" color={colors.primary}>Select all without e-way bill ({filtered.filter(canPick).length})</TextBlock>
+            </Pressable>
+          </View>
+          <Button title={picked.size ? `Generate (${picked.size})` : 'Generate'} icon="send" size="sm" onPress={bulkGenerate} disabled={!picked.size} testID="bulk-ewb" />
+        </Card>
+      ) : null}
       {filtered.length ? (
         <View style={{ gap: 10 }}>
           {filtered.slice(0, list.limit).map((invoice) => (
-            <InvoiceCard key={invoice.id} invoice={invoice} onPress={() => openInvoice(invoice)} onLongPress={() => void actions(invoice)} onMore={() => void actions(invoice)} />
+            <InvoiceCard key={invoice.id} invoice={invoice} onPress={() => (picked ? toggle(invoice) : openInvoice(invoice))} onLongPress={() => (picked ? toggle(invoice) : void actions(invoice))} onMore={() => void actions(invoice)} selected={picked ? picked.has(invoice.id) : undefined} />
           ))}
           <LoadMore remaining={filtered.length - list.limit} loading={list.loading} onPress={() => list.more(filtered.length)} noun="more invoices" />
           <TextBlock size={11} color={colors.mutedForeground} style={{ textAlign: 'center' }}>Tip: tap ⋮ on an invoice to share, print, edit or delete it.</TextBlock>
@@ -211,5 +238,6 @@ export default function InvoicesScreen() {
 const styles = StyleSheet.create({
   page: { gap: 16 },
   quickActions: { flexDirection: 'row', gap: 10 },
+  bulkBar: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14 },
   partySummary: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14 },
 });

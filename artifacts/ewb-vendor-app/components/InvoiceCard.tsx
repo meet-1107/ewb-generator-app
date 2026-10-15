@@ -7,14 +7,15 @@ import { formatDate, formatInr, invoiceEwbMeta, invoiceTotals, type Invoice } fr
 import { Card, StatusPill, TextBlock } from '@/components/AppUI';
 
 /** Buyer · invoice no. and value · date · e-way bill status, one per line. */
-export default function InvoiceCard({ invoice, onPress, onLongPress, onMore }: { invoice: Invoice; onPress: () => void; onLongPress?: () => void; onMore?: () => void }) {
+/** `selected` is set while choosing invoices (bulk e-way bills): a check mark replaces ⋮. */
+export default function InvoiceCard({ invoice, onPress, onLongPress, onMore, selected }: { invoice: Invoice; onPress: () => void; onLongPress?: () => void; onMore?: () => void; selected?: boolean }) {
   const colors = useColors();
   const total = invoiceTotals(invoice).total;
   const meta = invoiceEwbMeta(invoice);
   return (
     <Pressable onPress={onPress} onLongPress={onLongPress} accessibilityRole="button" accessibilityLabel={`${invoice.buyerName || 'No buyer'}, invoice ${invoice.invoiceNumber || 'without number'}, ${formatInr(total)}, ${meta.label}`} accessibilityHint={onLongPress ? 'Long press for more actions' : undefined}>
       {({ pressed }) => (
-        <Card style={[styles.card, pressed ? { opacity: 0.88, transform: [{ scale: 0.995 }] } : undefined] as never}>
+        <Card style={[styles.card, pressed ? { opacity: 0.88, transform: [{ scale: 0.995 }] } : undefined, selected ? { borderColor: colors.primary, borderWidth: 2 } : undefined] as never}>
           <TextBlock size={16} weight="bold" numberOfLines={1}>{invoice.buyerName || 'Buyer not added'}</TextBlock>
           <View style={styles.row}>
             <TextBlock size={13} weight="semibold" color={colors.primary} numberOfLines={1} style={{ flexShrink: 1 }}>{invoice.invoiceNumber || 'No number'}</TextBlock>
@@ -36,7 +37,11 @@ export default function InvoiceCard({ invoice, onPress, onLongPress, onMore }: {
                 <View style={styles.ewbLink}><Feather name="paperclip" size={12} color={colors.mutedForeground} /><TextBlock size={11} color={colors.mutedForeground}>From PDF</TextBlock></View>
               ) : null}
             </View>
-            {onMore ? (
+            {selected !== undefined ? (
+              <View style={[styles.check, { borderColor: selected ? colors.primary : colors.input, backgroundColor: selected ? colors.primary : 'transparent' }]} accessibilityRole="checkbox" accessibilityState={{ checked: selected }}>
+                {selected ? <Feather name="check" size={14} color={colors.primaryForeground} /> : null}
+              </View>
+            ) : onMore ? (
               <Pressable onPress={onMore} hitSlop={8} style={({ pressed }) => [styles.more, { opacity: pressed ? 0.6 : 1 }]} accessibilityRole="button" accessibilityLabel={`More actions for invoice ${invoice.invoiceNumber || ''}`} testID="invoice-more">
                 <Feather name="more-vertical" size={18} color={colors.mutedForeground} />
               </Pressable>
@@ -49,6 +54,7 @@ export default function InvoiceCard({ invoice, onPress, onLongPress, onMore }: {
 }
 
 const styles = StyleSheet.create({
+  check: { width: 24, height: 24, borderRadius: 7, borderWidth: 2, alignItems: 'center', justifyContent: 'center' },
   card: { padding: 14, gap: 6, borderRadius: 18 },
   row: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
   dateRow: { flexDirection: 'row', alignItems: 'center', gap: 5 },
