@@ -232,6 +232,18 @@ describe("e-way bill generation (gstinapi adapter, mocked provider)", () => {
     assert.equal(list.body["ewbs"].length, 1);
   });
 
+  it("refuses a document number that already has a bill on the portal (made outside the app), without charging", async () => {
+    const ws = await readyWorkspace();
+    // Made on the NIC portal days ago: gstinapi.in hands that old bill back with already_existed.
+    gstin.bills.set("PORTAL-9", { ewbNumber: "602198434715", docNo: "PORTAL-9" });
+    const made = await ws.call("POST", "/ewb/generate", { idempotencyKey: "key-portal-9", input: invoice("portal-9", "PORTAL-9") });
+    assert.equal(made.status, 409, JSON.stringify(made.body));
+    assert.equal(made.body["error"], "duplicate_number");
+    assert.match(String(made.body["message"]), /602198434715.*portal/);
+    assert.equal(await balance(ws), 15, "not charged");
+    assert.equal((await ws.call("GET", "/ewb")).body["ewbs"].length, 0, "the old bill is not attached to this invoice");
+  });
+
   it("a cut connection after the provider created the bill is reported as unknown, and the retry recovers the same bill with one charge", async () => {
     const ws = await readyWorkspace();
     gstin.next = "drop";

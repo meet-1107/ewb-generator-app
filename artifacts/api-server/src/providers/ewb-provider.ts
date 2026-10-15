@@ -10,7 +10,8 @@ import { GstinApiEwbProvider } from "./gstinapi-ewb-provider";
  */
 
 export type GenerateResult =
-  | { ok: true; providerBillId: string; ewbNumber: string; generatedAt: Date; validUntil: Date; validityDays: number; partBPending: boolean; distanceKm?: number }
+  /** `alreadyExisted`: the portal returned a bill it already had for this document number instead of a new one. */
+  | { ok: true; providerBillId: string; ewbNumber: string; generatedAt: Date; validUntil: Date; validityDays: number; partBPending: boolean; distanceKm?: number; alreadyExisted?: boolean }
   | { ok: false; code: string; message: string; issues: FieldIssue[] };
 
 export type ActionResult = { ok: true; validUntil?: Date } | { ok: false; code: string; message: string };

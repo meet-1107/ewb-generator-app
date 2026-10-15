@@ -228,6 +228,7 @@ export class GstinApiEwbProvider implements EwbProvider {
       validityDays: Math.max(1, Math.ceil((validUntil.getTime() - generatedAt.getTime()) / 86_400_000)),
       partBPending: !hasPartB(input),
       ...(nicKm ? { distanceKm: nicKm } : {}),
+      ...(pick(body, ["already_existed", "alreadyExisted"]) === true ? { alreadyExisted: true } : {}),
     };
   }
 

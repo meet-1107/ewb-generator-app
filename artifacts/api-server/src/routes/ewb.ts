@@ -164,7 +164,8 @@ router.post("/ewb/generate", async (req, res) => {
     request.holdId = hold.entryId ?? undefined;
     workspace.requests[requestKey] = request;
     workspace.requests[lockKey] = { id: request.id, idempotencyKey: requestKey, invoiceId: input.invoiceId, state: "pending", createdAt: now, claimedAt: now };
-    return { kind: "claimed" as const, requestId: request.id, holdId: hold.entryId, ctx, knownNumbers };
+    // A retry of this request may get back the bill its lost first attempt created; a first attempt may not.
+    return { kind: "claimed" as const, requestId: request.id, holdId: hold.entryId, ctx, knownNumbers, retry: Boolean(existing) };
   }, { requests: [requestKey, lockKey], ewbs: "all" });
 
   if (claim.kind === "replay") return res.json({ ewb: claim.ewb, replay: true });
@@ -205,6 +206,15 @@ router.post("/ewb/generate", async (req, res) => {
       refundCredits(workspace, claim.holdId, unknown ? `Outcome unknown: ${result.code}` : `Rejected: ${result.code}`);
       audit(workspace, req.actor, "ewb.generate", input.invoiceId, `${unknown ? "unknown" : "rejected"}:${result.code}`);
       return { ok: false as const, unknown, result };
+    }
+    if (result.alreadyExisted && !claim.retry) {
+      // The document number already had a bill on the portal (made there, or by an invoice since deleted):
+      // that old bill is not this invoice's. Not charged; the invoice needs a new number.
+      request.state = "rejected";
+      request.safeErrorCode = "DOC_ON_PORTAL";
+      refundCredits(workspace, claim.holdId, "Rejected: document number already has an e-way bill on the portal");
+      audit(workspace, req.actor, "ewb.generate", input.invoiceId, "rejected:DOC_ON_PORTAL");
+      return { ok: false as const, unknown: false, onPortal: { ewbNumber: result.ewbNumber, generatedAt: result.generatedAt } };
     }
     if (claim.knownNumbers.includes(result.ewbNumber)) {
       // The provider handed back a bill this workspace already holds for another invoice.
@@ -258,6 +268,10 @@ router.post("/ewb/generate", async (req, res) => {
   }, { requests: [requestKey, lockKey], ewbs: [] });
 
   if (!outcome.ok) {
+    if ("onPortal" in outcome && outcome.onPortal) {
+      const day = outcome.onPortal.generatedAt.toLocaleDateString("en-IN", { day: "2-digit", month: "short", year: "numeric", timeZone: "Asia/Kolkata" });
+      return res.status(409).json({ error: "duplicate_number", message: `Invoice number ${input.invoiceNumber} already has e-way bill ${outcome.onPortal.ewbNumber} on the e-way bill portal (generated ${day}). Give this invoice a new number and generate again. No credits were used.` });
+    }
     if ("duplicateOf" in outcome) return res.status(409).json({ error: "duplicate_number", message: `Invoice number ${input.invoiceNumber} already has e-way bill ${outcome.duplicateOf}. Each invoice needs its own number.` });
     if (outcome.unknown) return outcomeUnknown(res, claim.requestId.slice(0, 8));
     const failed = outcome.result as Extract<typeof result, { ok: false }>;
