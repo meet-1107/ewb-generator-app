@@ -53,6 +53,9 @@ export function invoiceHtml(invoice: Invoice, signature?: Signature) {
   const service = template.id === 'service';
   const accent = minimal ? '#3c4a43' : template.accent;
   const totals = invoiceTotals(invoice);
+  // The printed bill is rounded to the nearest rupee; the e-way bill keeps the exact value.
+  const billPaise = Math.round(totals.total / 100) * 100;
+  const roundOff = billPaise - totals.total;
   const lines = invoice.lines.filter((line) => line.description.trim() || line.taxablePaise);
   const discounted = lines.some((line) => line.discountPaise);
   const party = (title: string, name: string, gstin: string, address: string, state: string, pin: string) => `
@@ -105,13 +108,14 @@ export function invoiceHtml(invoice: Invoice, signature?: Signature) {
   ${lines.map((line, index) => `<tr><td>${index + 1}</td><td>${esc(line.description)}</td><td>${esc(line.hsn)}</td><td class="num">${esc(line.quantity)} ${esc(line.unit)}</td>${minimal ? '' : `<td class="num">${line.unitPricePaise ? formatInr(line.unitPricePaise) : '—'}</td>`}${discounted ? `<td class="num">${line.discountPaise ? formatInr(line.discountPaise) : '—'}</td>` : ''}<td class="num">${formatInr(line.taxablePaise)}</td><td class="num">${line.taxRate}%</td><td class="num">${formatInr(line.taxablePaise + lineTax(line))}</td></tr>`).join('')}
   </table>
   ${template.id === 'tax-summary' ? hsnSummary : ''}
-  <div class="row" style="margin-top:12px"><div class="col"><div class="label">Amount in words</div><div>${esc(amountInWords(totals.total))}</div>
+  <div class="row" style="margin-top:12px"><div class="col"><div class="label">Amount in words</div><div>${esc(amountInWords(billPaise))}</div>
     ${bank}
     ${invoice.notes ? `<div class="label" style="margin-top:10px">Notes</div><div class="muted">${esc(invoice.notes)}</div>` : ''}</div>
     <div class="col"><table class="totals">
       <tr><td class="muted">Taxable value</td><td class="num">${formatInr(totals.taxable)}</td></tr>
       ${invoice.supplyType === 'intra' ? `<tr><td class="muted">CGST</td><td class="num">${formatInr(totals.cgst)}</td></tr><tr><td class="muted">SGST</td><td class="num">${formatInr(totals.sgst)}</td></tr>` : `<tr><td class="muted">IGST</td><td class="num">${formatInr(totals.igst)}</td></tr>`}
-      <tr class="grand"><td>Total</td><td class="num">${formatInr(totals.total)}</td></tr></table></div></div>
+      ${roundOff ? `<tr><td class="muted">Round off</td><td class="num">${roundOff > 0 ? '+' : '−'}${formatInr(Math.abs(roundOff))}</td></tr>` : ''}
+      <tr class="grand"><td>Total</td><td class="num">${formatInr(billPaise)}</td></tr></table></div></div>
   ${template.id !== 'dispatch' && !minimal && (invoice.vehicleNumber || invoice.ewbNumber) ? transport : ''}
   <div class="foot"><div class="muted" style="font-size:9px">Computer-generated document. Layout: ${esc(template.name)}.</div>
     <div style="text-align:center;min-width:150px"><div style="height:52px;display:flex;align-items:flex-end;justify-content:center">${signatureHtml(signature)}</div><div style="border-top:1px solid #999;padding-top:4px;font-size:10px">For ${esc(invoice.sellerName)}<br/>Authorised signatory</div></div></div>
