@@ -6,7 +6,8 @@ import { useDialog } from '@/components/Dialog';
 import { useColors } from '@/hooks/useColors';
 import { useAppStore } from '@/state/app-store';
 
-export const EWB_PORTAL_URL = 'https://ewaybillgst.gov.in';
+/** The portal's sign-in page, not its home page, so the user can log in straight away. */
+export const EWB_PORTAL_URL = 'https://ewaybillgst.gov.in/Login.aspx';
 
 /** NIC portal steps to create the API login (the login the app uses to file bills). */
 const STEPS: { title: string; body: string }[] = [
