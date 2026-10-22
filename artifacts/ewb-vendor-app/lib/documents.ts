@@ -89,11 +89,12 @@ export function invoiceHtml(invoice: Invoice, signature?: Signature) {
     <div>IFSC: <strong>${esc(invoice.bank.ifsc)}</strong></div>
     ${invoice.bank.upiId ? `<div>UPI: <strong>${esc(invoice.bank.upiId)}</strong></div>` : ''}` : '';
 
-  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(invoice.invoiceNumber || 'Invoice')}</title><style>${baseCss(accent, compact)}</style></head><body>
+  // The same invoice twice, each copy starting on a new page and marked at the top.
+  const copy = (label: string) => `<div class="copy">
   <div class="head"><div><h1 class="${minimal ? '' : 'accent'}">${esc(invoice.sellerName)}</h1>
     <div class="muted">${esc(invoice.sellerAddress)}</div><div class="muted">${esc(invoice.sellerState)} ${esc(invoice.sellerPincode)} · GSTIN ${esc(invoice.sellerGstin)}</div>
     ${hasDispatch(invoice) ? `<div class="muted">Dispatch from: ${esc(invoice.dispatchFrom || invoice.sellerAddress)}, ${esc(invoice.dispatchState)} ${esc(invoice.dispatchPincode)}</div>` : ''}</div>
-    <div style="text-align:right"><span class="badge">${esc(invoice.documentType.toUpperCase())}</span>
+    <div style="text-align:right"><div class="copy-label">${label}</div><span class="badge">${esc(invoice.documentType.toUpperCase())}</span>
     <div style="margin-top:8px;font-size:14px"><strong>${esc(invoice.invoiceNumber || 'Draft')}</strong></div>
     <div class="muted">${formatDate(invoice.invoiceDate)}</div></div></div>
   ${template.id === 'dispatch' ? transport : ''}
@@ -119,6 +120,14 @@ export function invoiceHtml(invoice: Invoice, signature?: Signature) {
   ${template.id !== 'dispatch' && !minimal && (invoice.vehicleNumber || invoice.ewbNumber) ? transport : ''}
   <div class="foot"><div class="muted" style="font-size:9px">Computer-generated document. Layout: ${esc(template.name)}.</div>
     <div style="text-align:center;min-width:150px"><div style="height:52px;display:flex;align-items:flex-end;justify-content:center">${signatureHtml(signature)}</div><div style="border-top:1px solid #999;padding-top:4px;font-size:10px">For ${esc(invoice.sellerName)}<br/>Authorised signatory</div></div></div>
+  </div>`;
+
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${esc(invoice.invoiceNumber || 'Invoice')}</title><style>${baseCss(accent, compact)}
+  .copy + .copy { break-before: page; page-break-before: always; }
+  .copy-label { font-size: 10px; font-weight: 700; letter-spacing: 1px; color: #5f6a63; margin-bottom: 6px; }
+  </style></head><body>
+  ${copy('ORIGINAL COPY')}
+  ${copy('DUPLICATE COPY')}
   </body></html>`;
 }
 
