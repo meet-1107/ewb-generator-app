@@ -9,8 +9,31 @@ export type Strokes = { paths: string[]; width: number; height: number };
 
 const round = (value: number) => Math.round(value * 10) / 10;
 
+/** Room to draw comfortably with a finger. */
+export const PAD_HEIGHT = 300;
+
+const POINT = /(-?\d+(?:\.\d+)?) (-?\d+(?:\.\d+)?)/g;
+
+/**
+ * Trims the empty pad around the strokes, so the saved signature fills the
+ * signatory box on the invoice however small it was drawn on the big pad.
+ */
+export function cropStrokes({ paths, width, height }: Strokes, margin = 6): Strokes {
+  const xs: number[] = [];
+  const ys: number[] = [];
+  for (const d of paths) for (const [, x, y] of d.matchAll(POINT)) { xs.push(Number(x)); ys.push(Number(y)); }
+  if (!xs.length) return { paths, width, height };
+  const left = Math.max(0, Math.min(...xs) - margin);
+  const top = Math.max(0, Math.min(...ys) - margin);
+  return {
+    paths: paths.map((d) => d.replace(POINT, (_, x, y) => `${round(Number(x) - left)} ${round(Number(y) - top)}`)),
+    width: Math.ceil(Math.max(...xs) + margin - left),
+    height: Math.ceil(Math.max(...ys) + margin - top),
+  };
+}
+
 /** A white pad to sign on; `onChange` gets every stroke so far (empty when cleared). */
-export function SignaturePad({ strokes, onChange, height = 200 }: { strokes: string[]; onChange: (next: Strokes) => void; height?: number }) {
+export function SignaturePad({ strokes, onChange, height = PAD_HEIGHT }: { strokes: string[]; onChange: (next: Strokes) => void; height?: number }) {
   const colors = useColors();
   const [width, setWidth] = useState(0);
   const [current, setCurrent] = useState('');
