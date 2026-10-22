@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Card, Chip, ChipRow, Divider, Field, KeyValue, ScreenHeader, SectionTitle, Segmented, SelectSheet, TextBlock } from '@/components/AppUI';
 import { useColors } from '@/hooks/useColors';
 import { usePdfActions } from '@/hooks/usePdfActions';
-import { formatInr } from '@/lib/domain';
+import { DOCUMENT_TYPES, formatInr } from '@/lib/domain';
 import { partyOf, reportEwbs, reportHtml, reportInvoices, salesSummary, type ReportFilter } from '@/lib/reports';
 import { useAppStore, useScopedRecords } from '@/state/app-store';
 
@@ -42,6 +42,8 @@ export default function ReportsScreen() {
   const [to, setTo] = useState(today());
   const [party, setParty] = useState('');
   const [picker, setPicker] = useState(false);
+  /** One document type ('' = every type); tax invoices unless the user picks another. */
+  const [documentType, setDocumentType] = useState('Tax invoice');
   const [busy, setBusy] = useState<'download' | 'share' | null>(null);
   // The purchase report lists your purchase bills; the others, your sales invoices.
   const purchase = kind === 'purchase';
@@ -65,18 +67,18 @@ export default function ReportsScreen() {
   }, [invoices]);
 
   const rangeOk = mode === 'month' || (VALID_DATE.test(from) && VALID_DATE.test(to) && from <= to);
-  const filter: ReportFilter = mode === 'month' ? { from: `${month}-01`, to: monthEnd(month), party, kind } : { from, to, party, kind };
+  const filter: ReportFilter = mode === 'month' ? { from: `${month}-01`, to: monthEnd(month), party, documentType, kind } : { from, to, party, documentType, kind };
   const periodLabel = mode === 'month' ? monthLabel(month) : `${dateLabel(from)} – ${dateLabel(to)}`;
-  const chosenInvoices = useMemo(() => (rangeOk ? reportInvoices(invoices, filter) : []), [invoices, rangeOk, filter.from, filter.to, filter.party]);
+  const chosenInvoices = useMemo(() => (rangeOk ? reportInvoices(invoices, filter) : []), [invoices, rangeOk, filter.from, filter.to, filter.party, filter.documentType]);
   const showEwbs = kind === 'ewb' || kind === 'both';
-  const chosenEwbs = useMemo(() => (rangeOk && showEwbs ? reportEwbs(ewbs, filter) : []), [ewbs, rangeOk, showEwbs, filter.from, filter.to, filter.party]);
+  const chosenEwbs = useMemo(() => (rangeOk && showEwbs ? reportEwbs(ewbs, filter) : []), [ewbs, rangeOk, showEwbs, filter.from, filter.to, filter.party, filter.documentType]);
   const summary = salesSummary(chosenInvoices);
   const empty = (kind !== 'ewb' ? chosenInvoices.length : 0) + chosenEwbs.length === 0;
 
   const fileLabel = () => {
     const what = kind === 'sales' ? 'Sales report' : purchase ? 'Purchase report' : kind === 'ewb' ? 'EWB report' : 'Sales & EWB report';
     const when = mode === 'month' ? month : `${from} to ${to}`;
-    return `${what} ${when}${party ? ` ${party}` : ''}`;
+    return `${what} ${when}${party ? ` ${party}` : ''}${documentType ? ` ${documentType}` : ''}`;
   };
 
   const run = async (action: 'download' | 'share') => {
@@ -131,9 +133,14 @@ export default function ReportsScreen() {
           {party ? <Chip label="All parties" icon="x" selected={false} onPress={() => setParty('')} /> : null}
         </ChipRow>
 
+        <SectionTitle title="Document type" />
+        <ChipRow>
+          {['', ...DOCUMENT_TYPES].map((type) => <Chip key={type || 'all'} label={type || 'All types'} selected={documentType === type} onPress={() => setDocumentType(type)} />)}
+        </ChipRow>
+
         <SectionTitle title="Summary" />
         <Card style={{ gap: 8 }}>
-          <TextBlock size={13} weight="semibold">{periodLabel}{party ? ` · ${party}` : ''}</TextBlock>
+          <TextBlock size={13} weight="semibold">{periodLabel}{party ? ` · ${party}` : ''}{documentType ? ` · ${documentType}` : ''}</TextBlock>
           {kind !== 'ewb' ? (
             <>
               <KeyValue label={purchase ? 'Purchase bills' : 'Invoices'} value={String(summary.count)} />
@@ -151,7 +158,7 @@ export default function ReportsScreen() {
               <KeyValue label="E-way bills" value={`${chosenEwbs.length}${chosenEwbs.some((ewb) => ewb.status === 'cancelled') ? ` (${chosenEwbs.filter((ewb) => ewb.status === 'cancelled').length} cancelled)` : ''}`} />
             </>
           ) : null}
-          <TextBlock size={11} color={colors.mutedForeground}>{purchase ? 'The PDF lists every purchase bill with totals, a GST rate-wise summary and a party-wise summary.' : 'The PDF lists every invoice and e-way bill with totals, a GST rate-wise summary and a party-wise summary.'} Drafts are not included.</TextBlock>
+          <TextBlock size={11} color={colors.mutedForeground}>{purchase ? 'The PDF lists every purchase bill with totals, and document type-wise, GST rate-wise and party-wise summaries.' : 'The PDF lists every invoice and e-way bill with totals, and document type-wise, GST rate-wise and party-wise summaries.'} Drafts are not included.</TextBlock>
         </Card>
       </ScrollView>
 

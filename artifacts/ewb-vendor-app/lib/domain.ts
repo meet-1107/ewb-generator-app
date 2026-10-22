@@ -676,6 +676,8 @@ function seriesOf(invoiceNumber: string) {
   return match ? `${match[1]!.toLowerCase()}#${match[3]!.toLowerCase()}` : null;
 }
 
+export const DOCUMENT_TYPES = ['Tax invoice', 'Bill of supply', 'Delivery challan', 'Credit note'];
+
 /** Same document type (Tax invoice, Bill of supply, …), ignoring case; older invoices without one are tax invoices. */
 export function sameDocumentType(invoice: Pick<Invoice, 'documentType'>, documentType: string) {
   return (invoice.documentType || 'Tax invoice').trim().toLowerCase() === (documentType || 'Tax invoice').trim().toLowerCase();

@@ -1,7 +1,10 @@
-import { formatDate, formatInr, invoiceTotals, isPurchase, type Business, type EwbRecord, type Invoice } from '@/lib/domain';
+import { formatDate, formatInr, invoiceTotals, isPurchase, sameDocumentType, type Business, type EwbRecord, type Invoice } from '@/lib/domain';
 
-/** What a report covers: the dates (YYYY-MM-DD, inclusive), one party or all, and which sections. */
-export type ReportFilter = { from: string; to: string; party: string; kind: 'sales' | 'purchase' | 'ewb' | 'both' };
+/**
+ * What a report covers: the dates (YYYY-MM-DD, inclusive), one party or all, one
+ * document type or all (''), and which sections.
+ */
+export type ReportFilter = { from: string; to: string; party: string; documentType: string; kind: 'sales' | 'purchase' | 'ewb' | 'both' };
 
 const esc = (value: string) => value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const samePARTY = (name: string, party: string) => !party || name.trim().toLowerCase() === party.trim().toLowerCase();
@@ -11,7 +14,7 @@ export const partyOf = (invoice: Invoice) => (isPurchase(invoice) ? { name: invo
 /** Saved invoices (not drafts) dated in the period, oldest first. */
 export function reportInvoices(invoices: Invoice[], filter: ReportFilter) {
   return invoices
-    .filter((invoice) => !invoice.unsaved && invoice.status !== 'draft' && invoice.invoiceDate >= filter.from && invoice.invoiceDate <= filter.to && samePARTY(partyOf(invoice).name, filter.party))
+    .filter((invoice) => !invoice.unsaved && invoice.status !== 'draft' && invoice.invoiceDate >= filter.from && invoice.invoiceDate <= filter.to && samePARTY(partyOf(invoice).name, filter.party) && (!filter.documentType || sameDocumentType(invoice, filter.documentType)))
     .sort((a, b) => a.invoiceDate.localeCompare(b.invoiceDate) || a.invoiceNumber.localeCompare(b.invoiceNumber, undefined, { numeric: true }));
 }
 
@@ -19,7 +22,7 @@ export function reportInvoices(invoices: Invoice[], filter: ReportFilter) {
 export function reportEwbs(ewbs: EwbRecord[], filter: ReportFilter) {
   const day = (iso: string) => new Date(Date.parse(iso) + 330 * 60_000).toISOString().slice(0, 10);
   return ewbs
-    .filter((ewb) => day(ewb.generatedAt) >= filter.from && day(ewb.generatedAt) <= filter.to && samePARTY(ewb.buyerName, filter.party))
+    .filter((ewb) => day(ewb.generatedAt) >= filter.from && day(ewb.generatedAt) <= filter.to && samePARTY(ewb.buyerName, filter.party) && (!filter.documentType || sameDocumentType({ documentType: ewb.documentType ?? '' }, filter.documentType)))
     .sort((a, b) => a.generatedAt.localeCompare(b.generatedAt));
 }
 
@@ -65,6 +68,22 @@ function partySummary(invoices: Invoice[]) {
   return [...byParty.values()].sort((a, b) => b.total - a.total);
 }
 
+/** Count and totals per document type (Tax invoice, Bill of supply, …). */
+function typeSummary(invoices: Invoice[]) {
+  const byType = new Map<string, { type: string; count: number; taxable: number; tax: number; total: number }>();
+  for (const invoice of invoices) {
+    const type = invoice.documentType || 'Tax invoice';
+    const totals = invoiceTotals(invoice);
+    const entry = byType.get(type.toLowerCase()) ?? { type, count: 0, taxable: 0, tax: 0, total: 0 };
+    entry.count += 1;
+    entry.taxable += totals.taxable;
+    entry.tax += totals.tax;
+    entry.total += totals.total;
+    byType.set(type.toLowerCase(), entry);
+  }
+  return [...byType.values()].sort((a, b) => b.total - a.total);
+}
+
 const EWB_STATUS: Record<EwbRecord['status'], string> = { active: 'Active', expired: 'Expired', cancelled: 'Cancelled', part_b_pending: 'Part-B pending' };
 
 /** The report as a printable A4 (landscape) page for PDF. */
@@ -73,6 +92,7 @@ export function reportHtml(business: Business | null, invoices: Invoice[], ewbs:
   const sales = salesSummary(invoices);
   const rates = rateSummary(invoices);
   const parties = filter.party ? [] : partySummary(invoices);
+  const types = filter.documentType ? [] : typeSummary(invoices);
   const showSales = filter.kind !== 'ewb';
   const showEwb = filter.kind === 'ewb' || filter.kind === 'both';
   // A purchase report lists bills from your parties, with no e-way bill column.
@@ -103,7 +123,7 @@ export function reportHtml(business: Business | null, invoices: Invoice[], ewbs:
   </style></head><body>
   <div class="head">
     <div><div style="font-size:11px;font-weight:700;letter-spacing:.06em">E-WAY <span style="color:${gold}">EASY</span></div><h1>${esc(title)}</h1>
-      <div class="muted">${esc(periodLabel)}${filter.party ? ` · Party: ${esc(filter.party)}` : ' · All parties'}</div></div>
+      <div class="muted">${esc(periodLabel)}${filter.party ? ` · Party: ${esc(filter.party)}` : ' · All parties'}${filter.documentType ? ` · ${esc(filter.documentType)}` : ''}</div></div>
     <div style="text-align:right"><div style="font-size:13px;font-weight:700">${esc(business?.name ?? '')}</div>
       <div class="muted">GSTIN ${esc(business?.gstin ?? '—')}${business?.state ? ` · ${esc(business.state)}` : ''}</div></div>
   </div>
@@ -123,9 +143,12 @@ export function reportHtml(business: Business | null, invoices: Invoice[], ewbs:
   ${invoices.map((invoice, index) => {
     const totals = invoiceTotals(invoice);
     const party = partyOf(invoice);
-    return `<tr><td>${index + 1}</td><td>${formatDate(invoice.invoiceDate)}</td><td>${esc(invoice.invoiceNumber)}</td><td>${esc(party.name)}</td><td>${esc(party.gstin || 'Unregistered')}</td><td>${esc(invoice.placeOfSupply || invoice.buyerState)}</td><td class="num">${formatInr(totals.taxable)}</td><td class="num">${formatInr(totals.cgst)}</td><td class="num">${formatInr(totals.sgst)}</td><td class="num">${formatInr(totals.igst)}</td><td class="num">${formatInr(totals.total)}</td>${purchase ? '' : `<td>${esc(invoice.ewbNumber ?? '—')}</td>`}</tr>`;
+    return `<tr><td>${index + 1}</td><td>${formatDate(invoice.invoiceDate)}</td><td>${esc(invoice.invoiceNumber)}<div class="muted">${esc(invoice.documentType || 'Tax invoice')}</div></td><td>${esc(party.name)}</td><td>${esc(party.gstin || 'Unregistered')}</td><td>${esc(invoice.placeOfSupply || invoice.buyerState)}</td><td class="num">${formatInr(totals.taxable)}</td><td class="num">${formatInr(totals.cgst)}</td><td class="num">${formatInr(totals.sgst)}</td><td class="num">${formatInr(totals.igst)}</td><td class="num">${formatInr(totals.total)}</td>${purchase ? '' : `<td>${esc(invoice.ewbNumber ?? '—')}</td>`}</tr>`;
   }).join('')}</tbody>
   <tfoot><tr><td colspan="6">Total (${sales.count} ${purchase ? 'bills' : 'invoices'})</td><td class="num">${formatInr(sales.taxable)}</td><td class="num">${formatInr(sales.cgst)}</td><td class="num">${formatInr(sales.sgst)}</td><td class="num">${formatInr(sales.igst)}</td><td class="num">${formatInr(sales.total)}</td>${purchase ? '' : '<td></td>'}</tr></tfoot></table>` : `<p class="muted">No ${purchase ? 'purchases' : 'invoices'} in this period.</p>`}
+
+  ${types.length > 1 ? `<h2>Document type-wise summary</h2><table style="width:65%"><thead><tr>${th('Document type')}${th(purchase ? 'Bills' : 'Invoices', true)}${th('Taxable', true)}${th('Tax', true)}${th('Total', true)}</tr></thead><tbody>
+  ${types.map((entry) => `<tr><td>${esc(entry.type)}</td><td class="num">${entry.count}</td><td class="num">${formatInr(entry.taxable)}</td><td class="num">${formatInr(entry.tax)}</td><td class="num">${formatInr(entry.total)}</td></tr>`).join('')}</tbody></table>` : ''}
 
   ${rates.length ? `<h2>GST rate-wise summary</h2><table style="width:55%"><thead><tr>${th('GST rate')}${th('Taxable value', true)}${th('Tax', true)}${th('Total', true)}</tr></thead><tbody>
   ${rates.map(([rate, entry]) => `<tr><td>${rate}%</td><td class="num">${formatInr(entry.taxable)}</td><td class="num">${formatInr(entry.tax)}</td><td class="num">${formatInr(entry.taxable + entry.tax)}</td></tr>`).join('')}</tbody></table>` : ''}

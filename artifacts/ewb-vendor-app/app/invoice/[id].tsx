@@ -51,6 +51,7 @@ import {
   invoiceSeriesProblem,
   isPurchase,
   sameDocumentType,
+  DOCUMENT_TYPES,
   nextNumberForSeller,
   releasedInvoiceIds,
   type Invoice,
@@ -848,7 +849,6 @@ function EditorSection({ title, icon, open, onToggle, errors, summary, children 
 
 
 const NO_BANK = 'none';
-const DOCUMENT_TYPES = ['Tax invoice', 'Bill of supply', 'Delivery challan', 'Credit note'];
 
 const styles = StyleSheet.create({
   bankEmpty: { flexDirection: 'row', alignItems: 'center', gap: 12 },
