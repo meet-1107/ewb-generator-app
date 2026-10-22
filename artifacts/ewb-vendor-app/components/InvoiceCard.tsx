@@ -6,7 +6,7 @@ import { useColors } from '@/hooks/useColors';
 import { formatDate, formatInr, invoiceEwbMeta, invoiceTotals, isPurchase, type Invoice } from '@/lib/domain';
 import { Card, StatusPill, TextBlock } from '@/components/AppUI';
 
-/** Buyer (or a purchase's party) · invoice no. and value · date · e-way bill status, one per line. */
+/** Buyer (or a purchase's party) · invoice no. and value · date and document type · e-way bill status, one per line. */
 /** `selected` is set while choosing invoices (bulk e-way bills): a check mark replaces ⋮. */
 export default function InvoiceCard({ invoice, onPress, onLongPress, onMore, selected }: { invoice: Invoice; onPress: () => void; onLongPress?: () => void; onMore?: () => void; selected?: boolean }) {
   const colors = useColors();
@@ -25,7 +25,7 @@ export default function InvoiceCard({ invoice, onPress, onLongPress, onMore, sel
           </View>
           <View style={styles.dateRow}>
             <Feather name="calendar" size={12} color={colors.mutedForeground} />
-            <TextBlock size={12} color={colors.mutedForeground} numberOfLines={1}>{formatDate(invoice.invoiceDate)}</TextBlock>
+            <TextBlock size={12} color={colors.mutedForeground} numberOfLines={1}>{formatDate(invoice.invoiceDate)} · {invoice.documentType || 'Tax invoice'}</TextBlock>
           </View>
           <View style={[styles.row, styles.bottom, { borderTopColor: colors.border }]}>
             <View style={styles.status}>

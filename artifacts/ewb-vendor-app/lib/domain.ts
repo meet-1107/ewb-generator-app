@@ -487,9 +487,9 @@ function sameBuyerAndNumber(invoice: Invoice, others: Invoice[]) {
 export function invoiceIssues(invoice: Invoice, all: Invoice[] = [], released: Set<string> = new Set()): Issue[] {
   const issues: Issue[] = [];
   const add = (section: Section, field: string, message: string) => issues.push({ section, field, message });
-  // Sales are numbered in your series; a purchase keeps the number on the party's bill.
+  // Sales are numbered in your series, one per document type; a purchase keeps the number on the party's bill.
   const purchase = isPurchase(invoice);
-  const others = all.filter((other) => isPurchase(other) === purchase);
+  const others = all.filter((other) => isPurchase(other) === purchase && (purchase || sameDocumentType(other, invoice.documentType)));
   if (!invoice.sellerName.trim()) add('seller', 'sellerName', 'Seller name is required.');
   // An unregistered seller (a party on a purchase, or your own unregistered business)
   // has no GSTIN; the e-way bill needs one (transportIssues).
@@ -523,7 +523,7 @@ export function invoiceIssues(invoice: Invoice, all: Invoice[] = [], released: S
   else if (!purchase && invoiceSeriesProblem(invoice, others, released)) add('invoice', 'invoiceNumber', invoiceSeriesProblem(invoice, others, released)!.message);
   else if (sameBuyerAndNumber(invoice, others)) add('invoice', 'invoiceNumber', `Invoice ${invoice.invoiceNumber.trim()} for ${invoice.buyerName.trim()} already exists. Open it from the invoice list instead.`);
   else if (others.some((other) => other.id !== invoice.id && !other.unsaved && !released.has(other.id) && other.invoiceNumber.trim().toLowerCase() === invoice.invoiceNumber.trim().toLowerCase() && other.sellerGstin.toUpperCase() === invoice.sellerGstin.toUpperCase())) {
-    add('invoice', 'invoiceNumber', purchase ? 'A purchase with this bill number from this party is already saved.' : 'This number is already used for this GSTIN.');
+    add('invoice', 'invoiceNumber', purchase ? 'A purchase with this bill number from this party is already saved.' : `This number is already used for a ${invoice.documentType.toLowerCase()} of this GSTIN.`);
   }
   const validDate = /^\d{4}-\d{2}-\d{2}$/.test(invoice.invoiceDate) && !Number.isNaN(Date.parse(invoice.invoiceDate)) && new Date(`${invoice.invoiceDate}T00:00:00Z`).toISOString().slice(0, 10) === invoice.invoiceDate;
   if (!validDate) add('invoice', 'invoiceDate', 'Use the format YYYY-MM-DD.');
@@ -676,20 +676,27 @@ function seriesOf(invoiceNumber: string) {
   return match ? `${match[1]!.toLowerCase()}#${match[3]!.toLowerCase()}` : null;
 }
 
+/** Same document type (Tax invoice, Bill of supply, …), ignoring case; older invoices without one are tax invoices. */
+export function sameDocumentType(invoice: Pick<Invoice, 'documentType'>, documentType: string) {
+  return (invoice.documentType || 'Tax invoice').trim().toLowerCase() === (documentType || 'Tax invoice').trim().toLowerCase();
+}
+
 /**
- * When the number does not follow the series of the GSTIN's latest invoice
- * (e.g. GR-01 after INV-05): the message and the number that would follow.
+ * When the number does not follow the series of the GSTIN's latest invoice of the
+ * same document type (e.g. GR-01 after INV-05): the message and the number that would follow.
+ * Each document type has its own series.
  */
 export function invoiceSeriesProblem(invoice: Invoice, others: Invoice[], released: Set<string> = new Set()) {
   // An invoice imported from a PDF keeps the number printed on it, as does a purchase.
   if (invoice.sourceFileName || isPurchase(invoice)) return null;
-  const counted = others.filter((other) => other.id !== invoice.id && !isPurchase(other) && !other.unsaved && !released.has(other.id) && other.invoiceNumber.trim() && sameSeller(other, invoice.sellerGstin));
+  const counted = others.filter((other) => other.id !== invoice.id && !isPurchase(other) && sameDocumentType(other, invoice.documentType) && !other.unsaved && !released.has(other.id) && other.invoiceNumber.trim() && sameSeller(other, invoice.sellerGstin));
   const latest = latestOfSeries(counted);
   if (!latest || !invoice.invoiceNumber.trim()) return null;
   const expected = seriesOf(latest.invoiceNumber);
   if (!expected || seriesOf(invoice.invoiceNumber) === expected) return null;
   const next = nextInvoiceNumber(counted);
-  return { next, latest: latest.invoiceNumber, message: `Invoice number does not follow your last invoice ${latest.invoiceNumber}. The next number is ${next}.` };
+  const type = invoice.documentType.toLowerCase();
+  return { next, latest: latest.invoiceNumber, message: `Number does not follow your last ${type} ${latest.invoiceNumber}. The next number is ${next}.` };
 }
 
 /** What the invoice list shows about the e-way bill. */
@@ -720,9 +727,9 @@ function sameSeller(invoice: Invoice, gstin: string) {
   return !invoice.sellerGstin.trim() || !gstin.trim() || invoice.sellerGstin.trim().toUpperCase() === gstin.trim().toUpperCase();
 }
 
-/** Number for the next invoice of one GSTIN, continuing that GSTIN's series. */
-export function nextNumberForSeller(invoices: Invoice[], gstin: string, ewbs: EwbRecord[] = []) {
-  const sellerInvoices = invoices.filter((invoice) => !isPurchase(invoice) && sameSeller(invoice, gstin));
+/** Number for the next invoice of one GSTIN and document type, continuing that series. */
+export function nextNumberForSeller(invoices: Invoice[], gstin: string, ewbs: EwbRecord[] = [], documentType = 'Tax invoice') {
+  const sellerInvoices = invoices.filter((invoice) => !isPurchase(invoice) && sameDocumentType(invoice, documentType) && sameSeller(invoice, gstin));
   return nextInvoiceNumber(sellerInvoices, releasedInvoiceIds(sellerInvoices, ewbs));
 }
 

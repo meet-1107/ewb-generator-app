@@ -50,6 +50,7 @@ import {
   routePins,
   invoiceSeriesProblem,
   isPurchase,
+  sameDocumentType,
   nextNumberForSeller,
   releasedInvoiceIds,
   type Invoice,
@@ -184,8 +185,15 @@ export default function InvoiceEditorScreen() {
   // Transport is not needed to save an invoice (it is often unknown then): its
   // problems show only after Generate EWB was tapped.
   const issues = useMemo(() => (invoice ? [...invoiceIssues(invoice, store.invoices, released), ...(ewbAttempted ? transportIssues(invoice) : [])] : []), [invoice, store.invoices, released, ewbAttempted]);
-  // The first invoice of a GSTIN is numbered by the user; later ones continue from it.
-  const firstInvoice = useMemo(() => Boolean(invoice) && !purchase && !store.invoices.some((other) => other.id !== invoice!.id && other.sellerGstin.toUpperCase() === invoice!.sellerGstin.toUpperCase() && !other.unsaved && other.invoiceNumber.trim()), [invoice, purchase, store.invoices]);
+  // The first invoice of a GSTIN and document type is numbered by the user; later ones continue from it.
+  const firstInvoice = useMemo(() => Boolean(invoice) && !purchase && !store.invoices.some((other) => other.id !== invoice!.id && !isPurchase(other) && sameDocumentType(other, invoice!.documentType) && other.sellerGstin.toUpperCase() === invoice!.sellerGstin.toUpperCase() && !other.unsaved && other.invoiceNumber.trim()), [invoice, purchase, store.invoices]);
+
+  /** A new document type starts its own series: a new invoice takes that series' next number unless one was typed. */
+  const changeDocumentType = (documentType: string) => {
+    if (!invoice) return;
+    if (purchase || !invoice.unsaved || numberTyped.current) return patch({ documentType });
+    patch({ documentType, invoiceNumber: nextNumberForSeller(store.invoices.filter((other) => other.id !== invoice.id), invoice.sellerGstin, store.ewbs, documentType) });
+  };
 
   // A new invoice opened before the invoice list finished syncing has no number yet:
   // fill it once the earlier invoices arrive, unless the user has typed one.
@@ -193,7 +201,7 @@ export default function InvoiceEditorScreen() {
   const numberTyped = useRef(false);
   useEffect(() => {
     if (!invoice?.unsaved || purchase || invoice.invoiceNumber.trim() || numberTyped.current) return;
-    const next = nextNumberForSeller(store.invoices.filter((other) => other.id !== invoice.id), invoice.sellerGstin, store.ewbs);
+    const next = nextNumberForSeller(store.invoices.filter((other) => other.id !== invoice.id), invoice.sellerGstin, store.ewbs, invoice.documentType);
     if (next) setInvoice((current) => (current && current.id === invoice.id && !current.invoiceNumber.trim() ? { ...current, invoiceNumber: next } : current));
   }, [invoice, store.invoices, store.ewbs]);
   // Road distance from Google once both PIN codes are known (dispatch / delivery places when given).
@@ -619,10 +627,10 @@ export default function InvoiceEditorScreen() {
     invoice: (
       <EditorSection key="invoice" title="Invoice details" icon="hash" open={open.invoice} onToggle={() => setOpen((c) => ({ ...c, invoice: !c.invoice }))} errors={sectionErrors('invoice')} summary={`${invoice.invoiceNumber || 'No number'} · ${formatDate(invoice.invoiceDate)}`}>
         <View style={styles.row}>
-          <View style={{ flex: 1.2 }}><Field label={purchase ? 'Bill number' : 'Invoice number'} required value={invoice.invoiceNumber} onChangeText={(value) => { numberTyped.current = true; patch({ invoiceNumber: value.replace(/\s/g, '') }); }} placeholder={purchase ? "As on the party's bill" : 'e.g. INV-001 or GR-1'} autoCapitalize="none" maxLength={16} onBlur={() => void checkNumberNow()} error={errorFor('invoiceNumber')} confidence={fromPdf('invoiceNumber')} hint={firstInvoice ? 'Your first invoice: enter its number. Next invoices continue from it.' : undefined} /></View>
+          <View style={{ flex: 1.2 }}><Field label={purchase ? 'Bill number' : 'Invoice number'} required value={invoice.invoiceNumber} onChangeText={(value) => { numberTyped.current = true; patch({ invoiceNumber: value.replace(/\s/g, '') }); }} placeholder={purchase ? "As on the party's bill" : 'e.g. INV-001 or GR-1'} autoCapitalize="none" maxLength={16} onBlur={() => void checkNumberNow()} error={errorFor('invoiceNumber')} confidence={fromPdf('invoiceNumber')} hint={firstInvoice ? `Your first ${invoice.documentType.toLowerCase()}: enter its number. Next ones continue from it. Each document type has its own series.` : undefined} /></View>
           <View style={{ flex: 1 }}><DateField label="Date" required value={invoice.invoiceDate} onChange={set('invoiceDate')} error={errorFor('invoiceDate')} testID="invoice-date" /></View>
         </View>
-        <SelectField label="Document type" value={invoice.documentType} placeholder="Tax invoice" title="Document type" options={DOCUMENT_TYPES.map((item) => ({ value: item, label: item }))} onSelect={set('documentType')} testID="document-type" />
+        <SelectField label="Document type" value={invoice.documentType} placeholder="Tax invoice" title="Document type" options={DOCUMENT_TYPES.map((item) => ({ value: item, label: item }))} onSelect={changeDocumentType} testID="document-type" />
         <SelectField label="Place of supply" value={invoice.placeOfSupply} placeholder="Usually the buyer's state" options={stateOptions} onSelect={set('placeOfSupply')} />
         <View style={{ gap: 7 }}>
           <TextBlock size={13} weight="semibold">Supply type</TextBlock>
