@@ -154,6 +154,15 @@ export default function DashboardScreen() {
       {sandbox ? <Notice title="Sandbox mode" body="E-way bills come from a test provider. Nothing is sent to the government portal — use test data only." tone="warning" /> : null}
       {store.online === false ? <Notice title="You're offline" body="Drafts keep saving on this device. E-way bill generation needs a connection and is never queued." tone="info" /> : null}
       {store.storageError ? <Notice title="Storage problem" body={store.storageError} tone="danger" /> : null}
+      {wallet?.welcomeCredits ? (
+        <Notice
+          tone="success"
+          title={`Get ${wallet.welcomeCredits} free credits`}
+          body="Save your e-way bill portal API login for your GSTIN. Once the portal accepts it, the free credits are added to your wallet. Once per GSTIN."
+          action="Add portal login"
+          onAction={() => router.push('/ewb-login')}
+        />
+      ) : null}
       {stats.expiringSoon.length ? (
         <Notice
           tone="danger"
