@@ -4,7 +4,7 @@ import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import Constants from 'expo-constants';
 import { useColors } from '@/hooks/useColors';
-import { useAppStore } from '@/state/app-store';
+import { useAppStore, useScopedRecords } from '@/state/app-store';
 import { useAuth } from '@/state/auth';
 import { setThemePreference, useThemePreference, type ThemePreference } from '@/state/theme';
 import { defaultBank, gstinProblem, relativeTime, STATES, stateForGstin, templates, type Business } from '@/lib/domain';
@@ -19,6 +19,7 @@ export default function AccountScreen() {
   const colors = useColors();
   const auth = useAuth();
   const store = useAppStore();
+  const records = useScopedRecords();
   const dialog = useDialog();
   const theme = useThemePreference();
   const [editing, setEditing] = useState(false);
@@ -226,9 +227,16 @@ export default function AccountScreen() {
         ))}
       </Card>
 
+      <SectionTitle title="My business" />
+      <Card style={{ padding: 0, gap: 0 }}>
+        <ListRow icon="trending-up" title="Sales" detail={`${records.invoices.length} sales invoice${records.invoices.length === 1 ? '' : 's'}`} onPress={() => router.push('/(tabs)/invoices')} testID="my-business-sales" />
+        <Divider inset={64} />
+        <ListRow icon="shopping-cart" title="Purchase" detail={`${records.purchases.length} purchase bill${records.purchases.length === 1 ? '' : 's'}`} onPress={() => router.push('/purchases')} testID="my-business-purchases" />
+      </Card>
+
       <SectionTitle title="Saved details" />
       <Card style={{ padding: 0, gap: 0 }}>
-        <ListRow icon="users" title="Buyers" detail={`${store.parties.length} saved`} onPress={() => router.push('/saved/parties')} testID="saved-parties" />
+        <ListRow icon="users" title="Parties" detail={`${store.parties.length} saved`} onPress={() => router.push('/saved/parties')} testID="saved-parties" />
         <Divider inset={64} />
         <ListRow icon="package" title="Products" detail={`${store.products.length} saved`} onPress={() => router.push('/saved/products')} testID="saved-products" />
         <Divider inset={64} />

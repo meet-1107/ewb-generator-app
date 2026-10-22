@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, ScrollView, StyleSheet, View } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import * as DocumentPicker from 'expo-document-picker';
 import { File } from 'expo-file-system';
 import { Feather } from '@expo/vector-icons';
@@ -10,7 +10,7 @@ import { Button, Card, ConfidenceTag, KeyValue, Notice, ProgressSteps, ScreenHea
 import { useDialog } from '@/components/Dialog';
 import { useAppStore } from '@/state/app-store';
 import { api, ApiError, type ExtractedInvoice } from '@/lib/api';
-import { draftForBusiness, expectedSupplyType, formatDate, formatInr, invoiceTotals, newLine, UNITS, type Confidence, type Invoice } from '@/lib/domain';
+import { draftForBusiness, expectedSupplyType, formatDate, formatInr, invoiceTotals, newLine, purchaseDraft, UNITS, type Confidence, type Invoice } from '@/lib/domain';
 
 const MAX_BYTES = 8 * 1024 * 1024;
 type Stage = 'choose' | 'reading' | 'extracting' | 'review' | 'failed';
@@ -38,6 +38,8 @@ export default function PdfImportScreen() {
   const insets = useSafeAreaInsets();
   const dialog = useDialog();
   const store = useAppStore();
+  // kind=purchase: a party's bill to you. The party is the seller and you are the buyer.
+  const purchase = useLocalSearchParams<{ kind?: string }>().kind === 'purchase';
   const [file, setFile] = useState<DocumentPicker.DocumentPickerAsset | null>(null);
   const [stage, setStage] = useState<Stage>('choose');
   const [fields, setFields] = useState<ExtractedInvoice | null>(null);
@@ -73,7 +75,8 @@ export default function PdfImportScreen() {
       setStage('reading');
       const base64 = await toBase64(file);
       setStage('extracting');
-      const result = await api.parsePdf(file.name, base64, ownGstins());
+      // On a purchase your GSTIN is the buyer's: the reader should not take it as the seller.
+      const result = await api.parsePdf(file.name, base64, purchase ? [] : ownGstins());
       setFields(result.fields);
       setRetention(result.retention);
       setStage('review');
@@ -85,7 +88,7 @@ export default function PdfImportScreen() {
 
   const createDraft = async (manual = false) => {
     if (!store.business) return;
-    const base = draftForBusiness(store.business, store.activeGstin, store.invoices, undefined, store.ewbs);
+    const base = purchase ? purchaseDraft(store.business, store.activeGstin) : draftForBusiness(store.business, store.activeGstin, store.invoices, undefined, store.ewbs);
     const confidence: Record<string, Confidence> = {};
     const original: Record<string, string> = {};
     const invoice: Invoice = { ...base, sourceFileName: file?.name };
@@ -98,16 +101,24 @@ export default function PdfImportScreen() {
       };
       take('invoiceNumber', fields.invoiceNumber);
       take('invoiceDate', fields.invoiceDate);
-      // The seller on a sales invoice is you: keep the profile unless the PDF names one of your registrations.
-      const ownGstin = store.business.gstRegistrations?.some((item) => item.gstin === fields.sellerGstin?.value);
-      if (fields.sellerGstin && ownGstin) take('sellerGstin', fields.sellerGstin);
-      take('buyerName', fields.buyerName);
-      // Your own GSTIN is never the buyer's (an older server may still send it).
-      if (fields.buyerGstin && !ownGstins().includes(fields.buyerGstin.value.toUpperCase())) take('buyerGstin', fields.buyerGstin);
-      take('buyerState', fields.buyerState);
-      take('buyerPincode', fields.buyerPincode);
-      // Transport details are not taken from the PDF: they are filled in for each e-way bill.
-      if (fields.buyerState) invoice.placeOfSupply = fields.buyerState.value;
+      if (purchase) {
+        // The seller on a purchase is the party; you stay the buyer from your profile.
+        if (fields.sellerGstin && !ownGstins().includes(fields.sellerGstin.value.toUpperCase())) take('sellerGstin', fields.sellerGstin);
+        take('sellerName', fields.sellerName);
+        take('sellerState', fields.sellerState);
+        take('sellerPincode', fields.sellerPincode);
+      } else {
+        // The seller on a sales invoice is you: keep the profile unless the PDF names one of your registrations.
+        const ownGstin = store.business.gstRegistrations?.some((item) => item.gstin === fields.sellerGstin?.value);
+        if (fields.sellerGstin && ownGstin) take('sellerGstin', fields.sellerGstin);
+        take('buyerName', fields.buyerName);
+        // Your own GSTIN is never the buyer's (an older server may still send it).
+        if (fields.buyerGstin && !ownGstins().includes(fields.buyerGstin.value.toUpperCase())) take('buyerGstin', fields.buyerGstin);
+        take('buyerState', fields.buyerState);
+        take('buyerPincode', fields.buyerPincode);
+        // Transport details are not taken from the PDF: they are filled in for each e-way bill.
+        if (fields.buyerState) invoice.placeOfSupply = fields.buyerState.value;
+      }
       invoice.supplyType = expectedSupplyType(invoice) ?? invoice.supplyType;
       if (fields.lines.length) {
         invoice.lines = fields.lines.map((line) => ({
@@ -129,13 +140,13 @@ export default function PdfImportScreen() {
   };
 
   const found = fields ? LABELS.filter(([key]) => fields[key] && typeof fields[key] === 'object' && 'value' in (fields[key] as object)) : [];
-  const ownGstinMismatch = fields?.sellerGstin && !store.business?.gstRegistrations?.some((item) => item.gstin === fields.sellerGstin?.value);
+  const ownGstinMismatch = !purchase && fields?.sellerGstin && !store.business?.gstRegistrations?.some((item) => item.gstin === fields.sellerGstin?.value);
   const busy = stage === 'reading' || stage === 'extracting';
   const lineTotal = fields?.lines.length ? invoiceTotals({ lines: fields.lines.map((line) => ({ ...newLine(), ...line })), supplyType: 'inter' }).total : 0;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <ScreenHeader title="Import invoice PDF" subtitle="Turn a PDF into a draft in seconds" />
+      <ScreenHeader title={purchase ? 'Import purchase bill' : 'Import invoice PDF'} subtitle={purchase ? "Turn a party's PDF bill into a purchase entry" : 'Turn a PDF into a draft in seconds'} />
       <ScrollView contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 30 }]}>
         <ProgressSteps steps={['Choose', 'Read', 'Review']} current={stage === 'review' ? 2 : busy ? 1 : 0} />
         <Card>
@@ -170,7 +181,7 @@ export default function PdfImportScreen() {
         </Card>
 
         {stage === 'failed' ? (
-          <Notice tone="warning" title="We couldn't read this PDF" body={`${failure} You can still create the invoice by typing the details.`} action="Enter details manually" onAction={() => void createDraft(true)} />
+          <Notice tone="warning" title="We couldn't read this PDF" body={`${failure} You can still add it by typing the details.`} action="Enter details manually" onAction={() => void createDraft(true)} />
         ) : null}
 
         {stage === 'review' && fields ? (
@@ -197,14 +208,14 @@ export default function PdfImportScreen() {
               {!found.length && !fields.lines.length ? <TextBlock size={13} color={colors.mutedForeground}>No invoice fields were recognised. The layout may be unusual — continue and type the details.</TextBlock> : null}
             </Card>
             {ownGstinMismatch ? <Notice tone="warning" title="Seller GSTIN differs from your profile" body={`The PDF shows ${fields.sellerGstin?.value}. Your draft keeps your registered GSTIN ${store.activeGstin} — sales invoices must be issued by you.`} /> : null}
-            <Notice tone="info" title="Nothing is final yet" body="The next screen opens the draft with these values tagged. Check every field, then continue to e-way bill review." />
-            <Button title="Add to invoice" icon="arrow-right" onPress={() => void createDraft()} testID="import-continue" />
+            <Notice tone="info" title="Nothing is final yet" body={purchase ? 'The next screen opens the purchase entry with these values tagged. Check every field, then save it.' : 'The next screen opens the draft with these values tagged. Check every field, then continue to e-way bill review.'} />
+            <Button title={purchase ? 'Add to purchase' : 'Add to invoice'} icon="arrow-right" onPress={() => void createDraft()} testID="import-continue" />
             <Button title="Ignore and type manually" variant="ghost" onPress={() => void createDraft(true)} />
             {retention ? <TextBlock size={11} color={colors.mutedForeground} style={{ textAlign: 'center' }}>{retention}</TextBlock> : null}
           </>
         ) : null}
 
-        {stage === 'choose' && !file ? <Button title="Skip — create invoice manually" variant="ghost" onPress={() => router.replace('/invoice/new')} /> : null}
+        {stage === 'choose' && !file ? <Button title={purchase ? 'Skip — add purchase manually' : 'Skip — create invoice manually'} variant="ghost" onPress={() => router.replace(purchase ? '/purchase/new' : '/invoice/new')} /> : null}
       </ScrollView>
     </View>
   );

@@ -3,20 +3,22 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
 import { useColors } from '@/hooks/useColors';
-import { formatDate, formatInr, invoiceEwbMeta, invoiceTotals, type Invoice } from '@/lib/domain';
+import { formatDate, formatInr, invoiceEwbMeta, invoiceTotals, isPurchase, type Invoice } from '@/lib/domain';
 import { Card, StatusPill, TextBlock } from '@/components/AppUI';
 
-/** Buyer · invoice no. and value · date · e-way bill status, one per line. */
+/** Buyer (or a purchase's party) · invoice no. and value · date · e-way bill status, one per line. */
 /** `selected` is set while choosing invoices (bulk e-way bills): a check mark replaces ⋮. */
 export default function InvoiceCard({ invoice, onPress, onLongPress, onMore, selected }: { invoice: Invoice; onPress: () => void; onLongPress?: () => void; onMore?: () => void; selected?: boolean }) {
   const colors = useColors();
   const total = invoiceTotals(invoice).total;
   const meta = invoiceEwbMeta(invoice);
+  // A purchase is shown by the party it came from (the seller).
+  const party = isPurchase(invoice) ? invoice.sellerName || 'Party not added' : invoice.buyerName || 'Buyer not added';
   return (
-    <Pressable onPress={onPress} onLongPress={onLongPress} accessibilityRole="button" accessibilityLabel={`${invoice.buyerName || 'No buyer'}, invoice ${invoice.invoiceNumber || 'without number'}, ${formatInr(total)}, ${meta.label}`} accessibilityHint={onLongPress ? 'Long press for more actions' : undefined}>
+    <Pressable onPress={onPress} onLongPress={onLongPress} accessibilityRole="button" accessibilityLabel={`${party}, invoice ${invoice.invoiceNumber || 'without number'}, ${formatInr(total)}, ${meta.label}`} accessibilityHint={onLongPress ? 'Long press for more actions' : undefined}>
       {({ pressed }) => (
         <Card style={[styles.card, pressed ? { opacity: 0.88, transform: [{ scale: 0.995 }] } : undefined, selected ? { borderColor: colors.primary, borderWidth: 2 } : undefined] as never}>
-          <TextBlock size={16} weight="bold" numberOfLines={1}>{invoice.buyerName || 'Buyer not added'}</TextBlock>
+          <TextBlock size={16} weight="bold" numberOfLines={1}>{party}</TextBlock>
           <View style={styles.row}>
             <TextBlock size={13} weight="semibold" color={colors.primary} numberOfLines={1} style={{ flexShrink: 1 }}>{invoice.invoiceNumber || 'No number'}</TextBlock>
             <TextBlock size={16} weight="bold" style={{ flexShrink: 0 }}>{formatInr(total)}</TextBlock>

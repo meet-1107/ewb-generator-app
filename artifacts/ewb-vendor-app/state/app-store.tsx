@@ -11,6 +11,7 @@ import React, {
 import { AppState } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
+  isPurchase,
   migrateInvoice,
   uid,
   type Business,
@@ -506,15 +507,18 @@ export function useAppStore() {
   return value;
 }
 
-/** Invoices and bills scoped to the selected GST registration. */
+/** Sales invoices, purchases and bills scoped to the selected GST registration. */
 export function useScopedRecords() {
   const store = useAppStore();
   return useMemo(() => {
     const gstin = store.activeGstin.toUpperCase();
     // New invoices appear only once saved from the preview.
     const saved = store.invoices.filter((invoice) => !invoice.unsaved);
-    const invoices = gstin ? saved.filter((invoice) => !invoice.sellerGstin || invoice.sellerGstin.toUpperCase() === gstin) : saved;
+    const mine = (own: string) => !gstin || !own || own.toUpperCase() === gstin;
+    // You are the seller on a sale and the buyer on a purchase.
+    const invoices = saved.filter((invoice) => !isPurchase(invoice) && mine(invoice.sellerGstin));
+    const purchases = saved.filter((invoice) => isPurchase(invoice) && mine(invoice.buyerGstin));
     const ewbs = gstin ? store.ewbs.filter((ewb) => ewb.sellerGstin.toUpperCase() === gstin) : store.ewbs;
-    return { invoices, ewbs };
+    return { invoices, purchases, ewbs };
   }, [store.activeGstin, store.invoices, store.ewbs]);
 }

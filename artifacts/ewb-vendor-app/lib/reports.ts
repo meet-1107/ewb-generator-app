@@ -1,15 +1,17 @@
-import { formatDate, formatInr, invoiceTotals, type Business, type EwbRecord, type Invoice } from '@/lib/domain';
+import { formatDate, formatInr, invoiceTotals, isPurchase, type Business, type EwbRecord, type Invoice } from '@/lib/domain';
 
-/** What a report covers: the dates (YYYY-MM-DD, inclusive), one buyer or all, and which sections. */
-export type ReportFilter = { from: string; to: string; party: string; kind: 'sales' | 'ewb' | 'both' };
+/** What a report covers: the dates (YYYY-MM-DD, inclusive), one party or all, and which sections. */
+export type ReportFilter = { from: string; to: string; party: string; kind: 'sales' | 'purchase' | 'ewb' | 'both' };
 
 const esc = (value: string) => value.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const samePARTY = (name: string, party: string) => !party || name.trim().toLowerCase() === party.trim().toLowerCase();
+/** The other side of an invoice: the buyer on a sale, the seller (party) on a purchase. */
+export const partyOf = (invoice: Invoice) => (isPurchase(invoice) ? { name: invoice.sellerName, gstin: invoice.sellerGstin } : { name: invoice.buyerName, gstin: invoice.buyerGstin });
 
 /** Saved invoices (not drafts) dated in the period, oldest first. */
 export function reportInvoices(invoices: Invoice[], filter: ReportFilter) {
   return invoices
-    .filter((invoice) => !invoice.unsaved && invoice.status !== 'draft' && invoice.invoiceDate >= filter.from && invoice.invoiceDate <= filter.to && samePARTY(invoice.buyerName, filter.party))
+    .filter((invoice) => !invoice.unsaved && invoice.status !== 'draft' && invoice.invoiceDate >= filter.from && invoice.invoiceDate <= filter.to && samePARTY(partyOf(invoice).name, filter.party))
     .sort((a, b) => a.invoiceDate.localeCompare(b.invoiceDate) || a.invoiceNumber.localeCompare(b.invoiceNumber, undefined, { numeric: true }));
 }
 
@@ -51,9 +53,10 @@ function rateSummary(invoices: Invoice[]) {
 function partySummary(invoices: Invoice[]) {
   const byParty = new Map<string, { name: string; gstin: string; count: number; taxable: number; total: number }>();
   for (const invoice of invoices) {
-    const key = invoice.buyerName.trim().toLowerCase() || '—';
+    const party = partyOf(invoice);
+    const key = party.name.trim().toLowerCase() || '—';
     const totals = invoiceTotals(invoice);
-    const entry = byParty.get(key) ?? { name: invoice.buyerName.trim() || '—', gstin: invoice.buyerGstin, count: 0, taxable: 0, total: 0 };
+    const entry = byParty.get(key) ?? { name: party.name.trim() || '—', gstin: party.gstin, count: 0, taxable: 0, total: 0 };
     entry.count += 1;
     entry.taxable += totals.taxable;
     entry.total += totals.total;
@@ -71,8 +74,10 @@ export function reportHtml(business: Business | null, invoices: Invoice[], ewbs:
   const rates = rateSummary(invoices);
   const parties = filter.party ? [] : partySummary(invoices);
   const showSales = filter.kind !== 'ewb';
-  const showEwb = filter.kind !== 'sales';
-  const title = filter.kind === 'sales' ? 'Sales report' : filter.kind === 'ewb' ? 'E-way bill report' : 'Sales & e-way bill report';
+  const showEwb = filter.kind === 'ewb' || filter.kind === 'both';
+  // A purchase report lists bills from your parties, with no e-way bill column.
+  const purchase = filter.kind === 'purchase';
+  const title = filter.kind === 'sales' ? 'Sales report' : purchase ? 'Purchase report' : filter.kind === 'ewb' ? 'E-way bill report' : 'Sales & e-way bill report';
   const th = (text: string, num = false) => `<th class="${num ? 'num' : ''}">${text}</th>`;
   const activeEwbs = ewbs.filter((ewb) => ewb.status !== 'cancelled');
 
@@ -105,26 +110,27 @@ export function reportHtml(business: Business | null, invoices: Invoice[], ewbs:
   <div class="bar"></div>
 
   <div class="cards">
-    ${showSales ? `<div class="card">Invoices<b>${sales.count}</b></div>
+    ${showSales ? `<div class="card">${purchase ? 'Purchase bills' : 'Invoices'}<b>${sales.count}</b></div>
     <div class="card">Taxable value<b>${formatInr(sales.taxable)}</b></div>
     <div class="card">CGST + SGST<b>${formatInr(sales.cgst + sales.sgst)}</b></div>
     <div class="card">IGST<b>${formatInr(sales.igst)}</b></div>
-    <div class="card">Total sales<b>${formatInr(sales.total)}</b></div>` : ''}
+    <div class="card">${purchase ? 'Total purchases' : 'Total sales'}<b>${formatInr(sales.total)}</b></div>` : ''}
     ${showEwb ? `<div class="card">E-way bills<b>${ewbs.length}</b><span class="muted">${ewbs.length - activeEwbs.length} cancelled</span></div>` : ''}
   </div>
 
-  ${showSales ? `<h2>Sales invoices</h2>
-  ${invoices.length ? `<table><thead><tr>${th('#')}${th('Date')}${th('Invoice no.')}${th('Party')}${th('Party GSTIN')}${th('Place of supply')}${th('Taxable', true)}${th('CGST', true)}${th('SGST', true)}${th('IGST', true)}${th('Total', true)}${th('E-way bill')}</tr></thead><tbody>
+  ${showSales ? `<h2>${purchase ? 'Purchase bills' : 'Sales invoices'}</h2>
+  ${invoices.length ? `<table><thead><tr>${th('#')}${th('Date')}${th(purchase ? 'Bill no.' : 'Invoice no.')}${th('Party')}${th('Party GSTIN')}${th('Place of supply')}${th('Taxable', true)}${th('CGST', true)}${th('SGST', true)}${th('IGST', true)}${th('Total', true)}${purchase ? '' : th('E-way bill')}</tr></thead><tbody>
   ${invoices.map((invoice, index) => {
     const totals = invoiceTotals(invoice);
-    return `<tr><td>${index + 1}</td><td>${formatDate(invoice.invoiceDate)}</td><td>${esc(invoice.invoiceNumber)}</td><td>${esc(invoice.buyerName)}</td><td>${esc(invoice.buyerGstin || 'Unregistered')}</td><td>${esc(invoice.placeOfSupply || invoice.buyerState)}</td><td class="num">${formatInr(totals.taxable)}</td><td class="num">${formatInr(totals.cgst)}</td><td class="num">${formatInr(totals.sgst)}</td><td class="num">${formatInr(totals.igst)}</td><td class="num">${formatInr(totals.total)}</td><td>${esc(invoice.ewbNumber ?? '—')}</td></tr>`;
+    const party = partyOf(invoice);
+    return `<tr><td>${index + 1}</td><td>${formatDate(invoice.invoiceDate)}</td><td>${esc(invoice.invoiceNumber)}</td><td>${esc(party.name)}</td><td>${esc(party.gstin || 'Unregistered')}</td><td>${esc(invoice.placeOfSupply || invoice.buyerState)}</td><td class="num">${formatInr(totals.taxable)}</td><td class="num">${formatInr(totals.cgst)}</td><td class="num">${formatInr(totals.sgst)}</td><td class="num">${formatInr(totals.igst)}</td><td class="num">${formatInr(totals.total)}</td>${purchase ? '' : `<td>${esc(invoice.ewbNumber ?? '—')}</td>`}</tr>`;
   }).join('')}</tbody>
-  <tfoot><tr><td colspan="6">Total (${sales.count} invoices)</td><td class="num">${formatInr(sales.taxable)}</td><td class="num">${formatInr(sales.cgst)}</td><td class="num">${formatInr(sales.sgst)}</td><td class="num">${formatInr(sales.igst)}</td><td class="num">${formatInr(sales.total)}</td><td></td></tr></tfoot></table>` : '<p class="muted">No invoices in this period.</p>'}
+  <tfoot><tr><td colspan="6">Total (${sales.count} ${purchase ? 'bills' : 'invoices'})</td><td class="num">${formatInr(sales.taxable)}</td><td class="num">${formatInr(sales.cgst)}</td><td class="num">${formatInr(sales.sgst)}</td><td class="num">${formatInr(sales.igst)}</td><td class="num">${formatInr(sales.total)}</td>${purchase ? '' : '<td></td>'}</tr></tfoot></table>` : `<p class="muted">No ${purchase ? 'purchases' : 'invoices'} in this period.</p>`}
 
   ${rates.length ? `<h2>GST rate-wise summary</h2><table style="width:55%"><thead><tr>${th('GST rate')}${th('Taxable value', true)}${th('Tax', true)}${th('Total', true)}</tr></thead><tbody>
   ${rates.map(([rate, entry]) => `<tr><td>${rate}%</td><td class="num">${formatInr(entry.taxable)}</td><td class="num">${formatInr(entry.tax)}</td><td class="num">${formatInr(entry.taxable + entry.tax)}</td></tr>`).join('')}</tbody></table>` : ''}
 
-  ${parties.length > 1 ? `<h2>Party-wise summary</h2><table style="width:75%"><thead><tr>${th('Party')}${th('GSTIN')}${th('Invoices', true)}${th('Taxable', true)}${th('Total', true)}</tr></thead><tbody>
+  ${parties.length > 1 ? `<h2>Party-wise summary</h2><table style="width:75%"><thead><tr>${th('Party')}${th('GSTIN')}${th(purchase ? 'Bills' : 'Invoices', true)}${th('Taxable', true)}${th('Total', true)}</tr></thead><tbody>
   ${parties.map((party) => `<tr><td>${esc(party.name)}</td><td>${esc(party.gstin || 'Unregistered')}</td><td class="num">${party.count}</td><td class="num">${formatInr(party.taxable)}</td><td class="num">${formatInr(party.total)}</td></tr>`).join('')}</tbody></table>` : ''}` : ''}
 
   ${showEwb ? `<h2>E-way bills</h2>

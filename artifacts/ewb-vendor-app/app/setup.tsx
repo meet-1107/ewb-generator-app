@@ -3,7 +3,7 @@ import { Platform, StyleSheet, View } from 'react-native';
 import { router } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
-import { Button, Card, Field, Heading, Notice, ProgressSteps, SelectField, StatusPill, TextBlock } from '@/components/AppUI';
+import { Button, Card, Checkbox, Field, Heading, Notice, ProgressSteps, SelectField, StatusPill, TextBlock } from '@/components/AppUI';
 import { useAppStore } from '@/state/app-store';
 import { useAuth } from '@/state/auth';
 import { useColors } from '@/hooks/useColors';
@@ -29,6 +29,8 @@ export default function BusinessSetupScreen() {
   });
   const [errors, setErrors] = useState<Partial<Record<keyof Business, string>>>({});
   const [saving, setSaving] = useState(false);
+  /** The business has no GST registration: it is set up without a GSTIN. */
+  const [unregistered, setUnregistered] = useState(false);
   const { verify, verifying } = useGstinVerify();
   const canVerify = store.config?.gstinVerification !== false;
 
@@ -75,9 +77,9 @@ export default function BusinessSetupScreen() {
   const save = async () => {
     const next: typeof errors = {};
     if (!form.name.trim()) next.name = 'Enter your business name.';
-    const gstin = form.gstin.trim().toUpperCase();
-    if (!gstin) next.gstin = 'GSTIN is needed to prepare e-way bills.';
-    else if (gstinProblem(gstin)) next.gstin = gstinProblem(gstin)!;
+    const gstin = unregistered ? '' : form.gstin.trim().toUpperCase();
+    if (!gstin && !unregistered) next.gstin = 'Enter your GSTIN, or tick "My business is not GST registered".';
+    else if (gstin && gstinProblem(gstin)) next.gstin = gstinProblem(gstin)!;
     if (!form.state) next.state = 'Choose your state.';
     else if (gstin && !next.gstin && stateForGstin(gstin)?.name !== form.state) next.state = `This GSTIN is registered in ${stateForGstin(gstin)?.name}.`;
     if (form.pincode && !/^[1-9]\d{5}$/.test(form.pincode)) next.pincode = 'PIN code must be 6 digits.';
@@ -92,7 +94,8 @@ export default function BusinessSetupScreen() {
         name: form.name.trim(),
         gstin,
         defaultGstin: gstin,
-        gstRegistrations: [{ gstin, displayName: form.name.trim(), state: form.state, isDefault: true }],
+        verified: unregistered ? undefined : form.verified,
+        gstRegistrations: gstin ? [{ gstin, displayName: form.name.trim(), state: form.state, isDefault: true }] : [],
       });
       await store.setActiveGstin(gstin);
       router.replace('/(tabs)');
@@ -116,7 +119,10 @@ export default function BusinessSetupScreen() {
       {auth.previewMode ? <Notice title="Preview workspace" body="Use test details. Drafts sync to the sandbox service only and nothing is sent to the government portal." tone="warning" /> : null}
       <Card>
         <TextBlock size={15} weight="semibold">Registration</TextBlock>
-        <Field
+        <Checkbox checked={unregistered} onToggle={() => { setUnregistered(!unregistered); setErrors({}); }} label="My business is not GST registered" testID="setup-unregistered" />
+        {unregistered ? (
+          <Notice title="Continue without GSTIN" body="You can make invoices and purchase entries. E-way bills need a GSTIN: add it later from Account → GST registrations." />
+        ) : <Field
           label="GSTIN"
           required
           value={form.gstin}
@@ -128,8 +134,8 @@ export default function BusinessSetupScreen() {
           hint={form.verified ? undefined : canVerify ? (verifying ? 'Getting details from the GST network…' : 'Name, address, state and PIN fill in automatically.') : 'We check the format and check digit.'}
           right={canVerify && form.gstin.length === 15 && !form.verified && !verifying ? <Button title="Retry" size="sm" variant="outline" onPress={() => void verifyGstin()} testID="setup-verify" /> : undefined}
           testID="setup-gstin"
-        />
-        {form.verified ? (
+        />}
+        {form.verified && !unregistered ? (
           <View style={styles.verified}>
             <StatusPill label={`Verified · ${form.verified.status}`} tone={form.verified.status.toLowerCase() === 'active' ? 'green' : 'red'} icon="check" />
             {form.verified.legalName && form.verified.legalName !== form.name.trim() ? <TextBlock size={12} color={colors.mutedForeground}>Owner / legal name: {form.verified.legalName}</TextBlock> : null}

@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 import { useDialog } from '@/components/Dialog';
-import { formatInr, invoiceTotals, type Invoice } from '@/lib/domain';
+import { formatInr, invoiceTotals, isPurchase, type Invoice } from '@/lib/domain';
 import { useAppStore } from '@/state/app-store';
 
 /**
@@ -23,7 +23,7 @@ export function useDeleteInvoice() {
     }
     const ok = await dialog.confirm({
       title: `Delete invoice ${number}?`,
-      message: `${invoice.buyerName || 'No buyer'} · ${formatInr(invoiceTotals(invoice).total)}\nIt will be removed from all your devices. This cannot be undone.`,
+      message: `${(isPurchase(invoice) ? invoice.sellerName : invoice.buyerName) || 'No party'} · ${formatInr(invoiceTotals(invoice).total)}\nIt will be removed from all your devices. This cannot be undone.`,
       confirmLabel: 'Delete',
       cancelLabel: 'Keep',
       tone: 'danger',

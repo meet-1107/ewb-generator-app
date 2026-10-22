@@ -5,7 +5,7 @@ import { Button, Card, Chip, ChipRow, Divider, Field, KeyValue, ScreenHeader, Se
 import { useColors } from '@/hooks/useColors';
 import { usePdfActions } from '@/hooks/usePdfActions';
 import { formatInr } from '@/lib/domain';
-import { reportEwbs, reportHtml, reportInvoices, salesSummary, type ReportFilter } from '@/lib/reports';
+import { partyOf, reportEwbs, reportHtml, reportInvoices, salesSummary, type ReportFilter } from '@/lib/reports';
 import { useAppStore, useScopedRecords } from '@/state/app-store';
 
 /** India-time calendar date, YYYY-MM-DD. */
@@ -33,7 +33,7 @@ export default function ReportsScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const store = useAppStore();
-  const { invoices, ewbs } = useScopedRecords();
+  const { invoices: sales, purchases, ewbs } = useScopedRecords();
   const pdf = usePdfActions();
   const [kind, setKind] = useState<ReportFilter['kind']>('both');
   const [mode, setMode] = useState<'month' | 'range'>('month');
@@ -43,6 +43,9 @@ export default function ReportsScreen() {
   const [party, setParty] = useState('');
   const [picker, setPicker] = useState(false);
   const [busy, setBusy] = useState<'download' | 'share' | null>(null);
+  // The purchase report lists your purchase bills; the others, your sales invoices.
+  const purchase = kind === 'purchase';
+  const invoices = purchase ? purchases : sales;
 
   // Months that have invoices or e-way bills (newest first), plus the current month.
   const months = useMemo(() => {
@@ -54,7 +57,10 @@ export default function ReportsScreen() {
 
   const parties = useMemo(() => {
     const names = new Map<string, string>();
-    for (const invoice of invoices) if (invoice.buyerName.trim()) names.set(invoice.buyerName.trim().toLowerCase(), invoice.buyerName.trim());
+    for (const invoice of invoices) {
+      const name = partyOf(invoice).name.trim();
+      if (name) names.set(name.toLowerCase(), name);
+    }
     return [...names.values()].sort((a, b) => a.localeCompare(b));
   }, [invoices]);
 
@@ -62,12 +68,13 @@ export default function ReportsScreen() {
   const filter: ReportFilter = mode === 'month' ? { from: `${month}-01`, to: monthEnd(month), party, kind } : { from, to, party, kind };
   const periodLabel = mode === 'month' ? monthLabel(month) : `${dateLabel(from)} – ${dateLabel(to)}`;
   const chosenInvoices = useMemo(() => (rangeOk ? reportInvoices(invoices, filter) : []), [invoices, rangeOk, filter.from, filter.to, filter.party]);
-  const chosenEwbs = useMemo(() => (rangeOk ? reportEwbs(ewbs, filter) : []), [ewbs, rangeOk, filter.from, filter.to, filter.party]);
-  const sales = salesSummary(chosenInvoices);
-  const empty = (kind !== 'ewb' ? chosenInvoices.length : 0) + (kind !== 'sales' ? chosenEwbs.length : 0) === 0;
+  const showEwbs = kind === 'ewb' || kind === 'both';
+  const chosenEwbs = useMemo(() => (rangeOk && showEwbs ? reportEwbs(ewbs, filter) : []), [ewbs, rangeOk, showEwbs, filter.from, filter.to, filter.party]);
+  const summary = salesSummary(chosenInvoices);
+  const empty = (kind !== 'ewb' ? chosenInvoices.length : 0) + chosenEwbs.length === 0;
 
   const fileLabel = () => {
-    const what = kind === 'sales' ? 'Sales report' : kind === 'ewb' ? 'EWB report' : 'Sales & EWB report';
+    const what = kind === 'sales' ? 'Sales report' : purchase ? 'Purchase report' : kind === 'ewb' ? 'EWB report' : 'Sales & EWB report';
     const when = mode === 'month' ? month : `${from} to ${to}`;
     return `${what} ${when}${party ? ` ${party}` : ''}`;
   };
@@ -88,10 +95,10 @@ export default function ReportsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <ScreenHeader title="Reports" subtitle="Sales & e-way bills as PDF for your CA" />
+      <ScreenHeader title="Reports" subtitle="Sales, purchases & e-way bills as PDF for your CA" />
       <ScrollView contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 120 }]} keyboardShouldPersistTaps="handled">
         <SectionTitle title="Report" />
-        <Segmented value={kind} onChange={setKind} options={[{ value: 'both', label: 'Both' }, { value: 'sales', label: 'Sales invoices' }, { value: 'ewb', label: 'E-way bills' }]} />
+        <Segmented value={kind} onChange={(value) => { setKind(value); setParty(''); }} options={[{ value: 'both', label: 'Both' }, { value: 'sales', label: 'Sales' }, { value: 'purchase', label: 'Purchase' }, { value: 'ewb', label: 'E-way bills' }]} />
 
         <SectionTitle title="Period" />
         <Segmented value={mode} onChange={setMode} options={[{ value: 'month', label: 'Month' }, { value: 'range', label: 'Date range' }]} />
@@ -129,22 +136,22 @@ export default function ReportsScreen() {
           <TextBlock size={13} weight="semibold">{periodLabel}{party ? ` · ${party}` : ''}</TextBlock>
           {kind !== 'ewb' ? (
             <>
-              <KeyValue label="Invoices" value={String(sales.count)} />
+              <KeyValue label={purchase ? 'Purchase bills' : 'Invoices'} value={String(summary.count)} />
               <Divider />
-              <KeyValue label="Taxable value" value={formatInr(sales.taxable)} />
+              <KeyValue label="Taxable value" value={formatInr(summary.taxable)} />
               <Divider />
-              <KeyValue label="GST (CGST + SGST + IGST)" value={formatInr(sales.cgst + sales.sgst + sales.igst)} />
+              <KeyValue label="GST (CGST + SGST + IGST)" value={formatInr(summary.cgst + summary.sgst + summary.igst)} />
               <Divider />
-              <KeyValue label="Total sales" value={formatInr(sales.total)} strong />
+              <KeyValue label={purchase ? 'Total purchases' : 'Total sales'} value={formatInr(summary.total)} strong />
             </>
           ) : null}
-          {kind !== 'sales' ? (
+          {showEwbs ? (
             <>
               {kind === 'both' ? <Divider /> : null}
               <KeyValue label="E-way bills" value={`${chosenEwbs.length}${chosenEwbs.some((ewb) => ewb.status === 'cancelled') ? ` (${chosenEwbs.filter((ewb) => ewb.status === 'cancelled').length} cancelled)` : ''}`} />
             </>
           ) : null}
-          <TextBlock size={11} color={colors.mutedForeground}>The PDF lists every invoice and e-way bill with totals, a GST rate-wise summary and a party-wise summary. Drafts are not included.</TextBlock>
+          <TextBlock size={11} color={colors.mutedForeground}>{purchase ? 'The PDF lists every purchase bill with totals, a GST rate-wise summary and a party-wise summary.' : 'The PDF lists every invoice and e-way bill with totals, a GST rate-wise summary and a party-wise summary.'} Drafts are not included.</TextBlock>
         </Card>
       </ScrollView>
 
@@ -158,7 +165,7 @@ export default function ReportsScreen() {
         onClose={() => setPicker(false)}
         title="Report for which party?"
         value={party}
-        emptyText="No invoices with a buyer yet."
+        emptyText={purchase ? 'No purchases with a party yet.' : 'No invoices with a buyer yet.'}
         options={[{ value: '', label: 'All parties' }, ...parties.map((name) => ({ value: name, label: name }))]}
         onSelect={(value) => { setParty(value); setPicker(false); }}
       />

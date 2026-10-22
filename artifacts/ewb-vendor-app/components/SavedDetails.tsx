@@ -15,7 +15,7 @@ import { AccountButton } from '@/components/Brand';
 export type SavedKind = 'parties' | 'products' | 'transporters';
 type Kind = SavedKind;
 const META: Record<Kind, { title: string; singular: string; icon: 'users' | 'package' | 'truck'; empty: string }> = {
-  parties: { title: 'Buyers', singular: 'buyer', icon: 'users', empty: 'Buyers are saved automatically when you review an invoice, or add one here.' },
+  parties: { title: 'Parties', singular: 'party', icon: 'users', empty: 'Parties are saved automatically when you save a sales invoice or a purchase, or add one here.' },
   products: { title: 'Products', singular: 'product', icon: 'package', empty: 'Save products with HSN, unit and GST rate to fill invoice lines in one tap.' },
   transporters: { title: 'Transporters', singular: 'transporter', icon: 'truck', empty: 'Save transporters and their usual vehicle to speed up e-way bills.' },
 };
@@ -23,7 +23,7 @@ const stateOptions = STATES.map((state) => ({ value: state.name, label: state.na
 
 type Draft = Record<string, unknown>;
 
-/** Saved buyers, products or transporters. `tab`: shown as a bottom tab (no back button, room for the tab bar). */
+/** Saved parties, products or transporters. `tab`: shown as a bottom tab (no back button, room for the tab bar). */
 export default function SavedDetails({ kind, tab = false }: { kind: Kind; tab?: boolean }) {
   const meta = META[kind];
   const colors = useColors();
@@ -125,7 +125,7 @@ export default function SavedDetails({ kind, tab = false }: { kind: Kind; tab?: 
                 <ListRow
                   icon={meta.icon}
                   title={item.name}
-                  detail={'gstin' in item ? `${item.gstin || 'Unregistered'} · ${item.state || 'State not set'}` : 'hsn' in item ? `HSN ${item.hsn} · ${item.taxRate}% · ${item.unitPricePaise ? `${formatInr(item.unitPricePaise)}/${item.unit}` : item.unit}` : [item.transporterId, (item as Transporter).phone, item.vehicleNumber].filter(Boolean).join(' · ') || 'No ID saved'}
+                  detail={'gstin' in item ? [(item as Party).verified?.legalName ? `Owner: ${(item as Party).verified!.legalName}` : '', item.gstin || 'Unregistered', item.state || 'State not set'].filter(Boolean).join(' · ') : 'hsn' in item ? `HSN ${item.hsn} · ${item.taxRate}% · ${item.unitPricePaise ? `${formatInr(item.unitPricePaise)}/${item.unit}` : item.unit}` : [item.transporterId, (item as Transporter).phone, item.vehicleNumber].filter(Boolean).join(' · ') || 'No ID saved'}
                   onPress={() => { setErrors({}); setDraft({ ...(item as unknown as Draft) }); }}
                 />
               </React.Fragment>
@@ -167,8 +167,16 @@ export default function SavedDetails({ kind, tab = false }: { kind: Kind; tab?: 
                 <StatusPill label={`Verified · ${(draft.verified as { status: string }).status}`} tone={(draft.verified as { status: string }).status.toLowerCase() === 'active' ? 'green' : 'red'} icon="check" />
               ) : null}
               <Field label="Business name" required {...field('name')} autoCapitalize="words" testID="saved-name" />
-              {draft.verified && (draft.verified as { legalName: string }).legalName && (draft.verified as { legalName: string }).legalName !== draft.name
-                ? <TextBlock size={11} color={colors.mutedForeground}>Owner / legal name: {(draft.verified as { legalName: string }).legalName}</TextBlock> : null}
+              {/* The owner's legal name from the GST network, shown with the verification. */}
+              {draft.verified && (draft.verified as { legalName: string }).legalName ? (
+                <View style={[styles.owner, { backgroundColor: colors.accent }]} testID="party-owner">
+                  <Feather name="user" size={15} color={colors.primary} />
+                  <View style={{ flex: 1, gap: 1 }}>
+                    <TextBlock size={11} weight="semibold" color={colors.mutedForeground}>OWNER / LEGAL NAME</TextBlock>
+                    <TextBlock size={14} weight="semibold">{(draft.verified as { legalName: string }).legalName}</TextBlock>
+                  </View>
+                </View>
+              ) : null}
               <Field label="Address" {...field('address')} multiline />
               <View style={{ flexDirection: 'row', gap: 10 }}>
                 <View style={{ flex: 1.3 }}><SelectField label="State" value={String(draft.state ?? '')} placeholder="Choose" options={stateOptions} onSelect={(value) => setDraft({ ...draft, state: value })} /></View>
@@ -200,4 +208,5 @@ export default function SavedDetails({ kind, tab = false }: { kind: Kind; tab?: 
 const styles = StyleSheet.create({
   fab: { position: 'absolute', right: 18, height: 52, borderRadius: 26, paddingHorizontal: 20, flexDirection: 'row', alignItems: 'center', gap: 8, shadowColor: '#000', shadowOpacity: 0.2, shadowRadius: 10, shadowOffset: { width: 0, height: 4 }, elevation: 6 },
   body: { padding: 16, gap: 14, maxWidth: 720, width: '100%', alignSelf: 'center' },
+  owner: { flexDirection: 'row', alignItems: 'center', gap: 10, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 9 },
 });

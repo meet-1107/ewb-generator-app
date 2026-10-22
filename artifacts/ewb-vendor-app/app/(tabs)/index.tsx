@@ -16,14 +16,14 @@ import {
   relativeTime,
   today,
 } from '@/lib/domain';
-import { Card, Notice, Page, SectionTitle, StatCard, StatusPill, TextBlock, SelectSheet } from '@/components/AppUI';
+import { Card, Notice, Page, SectionTitle, StatusPill, TextBlock, SelectSheet } from '@/components/AppUI';
 import InvoiceCard from '@/components/InvoiceCard';
 import { AccountButton, BrandBar } from '@/components/Brand';
 
 export default function DashboardScreen() {
   const colors = useColors();
   const store = useAppStore();
-  const { invoices, ewbs } = useScopedRecords();
+  const { invoices, purchases, ewbs } = useScopedRecords();
   const [refreshing, setRefreshing] = useState(false);
   const [gstinPicker, setGstinPicker] = useState(false);
   const fy = financialYear();
@@ -36,8 +36,12 @@ export default function DashboardScreen() {
     const issued = fyInvoices.filter((invoice) => invoice.status !== 'draft');
     const fyEwbs = ewbs.filter((ewb) => inYear(istDate(ewb.generatedAt)));
     const live = ewbs.map((ewb) => ({ ewb, status: liveEwbStatus(ewb) }));
+    // Saved purchase bills of the same year; drafts are not counted, as with sales.
+    const bills = purchases.filter((purchase) => inYear(purchase.invoiceDate) && purchase.status !== 'draft');
     return {
       sales: issued.reduce((sum, invoice) => sum + invoiceTotals(invoice).total, 0),
+      purchases: bills.reduce((sum, purchase) => sum + invoiceTotals(purchase).total, 0),
+      purchaseCount: bills.length,
       invoiceCount: fyInvoices.length,
       issuedCount: issued.length,
       drafts: fyInvoices.length - issued.length,
@@ -45,7 +49,8 @@ export default function DashboardScreen() {
       cancelled: fyEwbs.filter((ewb) => liveEwbStatus(ewb) === 'cancelled').length,
       expiringSoon: live.filter(({ status, ewb }) => (status === 'active' || status === 'part_b_pending') && Date.parse(ewb.validUntil) - Date.now() < 8 * 3_600_000),
     };
-  }, [invoices, ewbs, fy.from, fy.to]);
+  }, [invoices, purchases, ewbs, fy.from, fy.to]);
+  const difference = stats.sales - stats.purchases;
 
   useEffect(() => {
     void store.refreshWallet();
@@ -147,8 +152,19 @@ export default function DashboardScreen() {
       </LinearGradient>
 
       <View style={styles.stats}>
-        <StatCard label="Total invoices" value={String(stats.invoiceCount)} hint={fy.label} icon="file-text" tone="blue" onPress={() => router.push({ pathname: '/(tabs)/invoices', params: { from: fy.from, to: fy.to } })} testID="stat-invoices" />
-        <StatCard label="Total e-way bills" value={String(stats.ewbCount)} hint={stats.cancelled ? `${fy.label} · ${stats.cancelled} cancelled` : fy.label} icon="truck" tone="green" onPress={() => router.push({ pathname: '/(tabs)/ewbs', params: { status: 'all' } })} testID="stat-ewbs" />
+        <MoneyCard label="Total purchase" value={formatInr(stats.purchases)} hint={`${stats.purchaseCount} bill${stats.purchaseCount === 1 ? '' : 's'} · ${fy.label}`} onPress={() => router.push('/purchases')} testID="stat-purchases" />
+        <MoneyCard
+          label="Difference"
+          value={`${difference > 0 ? '+ ' : difference < 0 ? '− ' : ''}${formatInr(Math.abs(difference))}`}
+          hint="Sales − Purchase"
+          color={difference > 0 ? colors.successForeground : difference < 0 ? colors.dangerForeground : undefined}
+          testID="stat-difference"
+        />
+      </View>
+
+      <View style={styles.stats}>
+        <MoneyCard label="Total invoices" value={String(stats.invoiceCount)} hint={fy.label} onPress={() => router.push({ pathname: '/(tabs)/invoices', params: { from: fy.from, to: fy.to } })} testID="stat-invoices" />
+        <MoneyCard label="Total e-way bills" value={String(stats.ewbCount)} hint={stats.cancelled ? `${fy.label} · ${stats.cancelled} cancelled` : fy.label} onPress={() => router.push({ pathname: '/(tabs)/ewbs', params: { status: 'all' } })} testID="stat-ewbs" />
       </View>
 
       {sandbox ? <Notice title="Sandbox mode" body="E-way bills come from a test provider. Nothing is sent to the government portal — use test data only." tone="warning" /> : null}
@@ -220,7 +236,21 @@ function EwbActivity({ ewb }: { ewb: Parameters<typeof liveEwbStatus>[0] }) {
   );
 }
 
+/** A compact total in half the row: label, amount or count, and a short note. */
+function MoneyCard({ label, value, hint, color, onPress, testID }: { label: string; value: string; hint: string; color?: string; onPress?: () => void; testID?: string }) {
+  const colors = useColors();
+  return (
+    <Pressable onPress={onPress} disabled={!onPress} testID={testID} accessibilityRole={onPress ? 'button' : undefined} accessibilityLabel={`${label}: ${value}`}
+      style={({ pressed }) => [styles.money, { backgroundColor: colors.card, borderColor: colors.border }, pressed && { opacity: 0.85 }]}>
+      <TextBlock size={12} weight="medium" color={colors.mutedForeground}>{label}</TextBlock>
+      <TextBlock size={17} weight="bold" color={color} numberOfLines={1}>{value}</TextBlock>
+      <TextBlock size={11} color={colors.mutedForeground} numberOfLines={1}>{hint}</TextBlock>
+    </Pressable>
+  );
+}
+
 const styles = StyleSheet.create({
+  money: { flex: 1, minWidth: 140, borderWidth: 1, borderRadius: 18, padding: 14, gap: 3 },
   help: { height: 40, paddingHorizontal: 12, borderRadius: 20, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },
   page: { gap: 16 },
   topline: { flexDirection: 'row', alignItems: 'center', gap: 8 },

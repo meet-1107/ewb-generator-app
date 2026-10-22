@@ -15,7 +15,7 @@ const tabs = [
   { name: 'index', title: 'Dashboard', icon: 'home' as const, symbol: 'house', md: 'home' },
   { name: 'invoices', title: 'Invoices', icon: 'file-text' as const, symbol: 'doc.text', md: 'description' },
   { name: 'ewbs', title: 'E-way bills', icon: 'truck' as const, symbol: 'shippingbox', md: 'local_shipping' },
-  { name: 'buyers', title: 'Buyers', icon: 'users' as const, symbol: 'person.2', md: 'group' },
+  { name: 'buyers', title: 'Parties', icon: 'users' as const, symbol: 'person.2', md: 'group' },
   { name: 'products', title: 'Products', icon: 'package' as const, symbol: 'cube.box', md: 'inventory_2' },
 ] as const;
 

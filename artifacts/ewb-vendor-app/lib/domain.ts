@@ -23,6 +23,8 @@ export type InvoiceLine = {
 
 export type Invoice = {
   id: string;
+  /** 'purchase': a bill from a party (the seller) to you (the buyer). Absent on older invoices: a sale. */
+  kind?: 'sale' | 'purchase';
   invoiceNumber: string;
   invoiceDate: string;
   documentType: string;
@@ -81,6 +83,8 @@ export type Invoice = {
 };
 
 export type InvoiceRevision = Omit<Invoice, 'revisionHistory'>;
+
+export const isPurchase = (invoice: Pick<Invoice, 'kind'>) => invoice.kind === 'purchase';
 
 export type GstRegistration = {
   gstin: string;
@@ -480,12 +484,16 @@ function sameBuyerAndNumber(invoice: Invoice, others: Invoice[]) {
 }
 
 /** `released`: invoices whose number may be used again (their e-way bill was cancelled). */
-export function invoiceIssues(invoice: Invoice, others: Invoice[] = [], released: Set<string> = new Set()): Issue[] {
+export function invoiceIssues(invoice: Invoice, all: Invoice[] = [], released: Set<string> = new Set()): Issue[] {
   const issues: Issue[] = [];
   const add = (section: Section, field: string, message: string) => issues.push({ section, field, message });
+  // Sales are numbered in your series; a purchase keeps the number on the party's bill.
+  const purchase = isPurchase(invoice);
+  const others = all.filter((other) => isPurchase(other) === purchase);
   if (!invoice.sellerName.trim()) add('seller', 'sellerName', 'Seller name is required.');
-  if (!invoice.sellerGstin.trim()) add('seller', 'sellerGstin', 'Seller GSTIN is required.');
-  else {
+  // An unregistered seller (a party on a purchase, or your own unregistered business)
+  // has no GSTIN; the e-way bill needs one (transportIssues).
+  if (invoice.sellerGstin.trim()) {
     const problem = gstinProblem(invoice.sellerGstin);
     if (problem) add('seller', 'sellerGstin', problem);
   }
@@ -494,7 +502,7 @@ export function invoiceIssues(invoice: Invoice, others: Invoice[] = [], released
   else if (invoice.sellerGstin.length === 15 && !gstinProblem(invoice.sellerGstin) && invoice.sellerGstin.slice(0, 2) !== sellerState.code) {
     add('seller', 'sellerState', `GSTIN belongs to ${stateForGstin(invoice.sellerGstin)?.name}.`);
   }
-  if (!/^[1-9]\d{5}$/.test(invoice.sellerPincode.trim())) add('seller', 'sellerPincode', 'Enter the 6-digit PIN code.');
+  if ((!purchase || invoice.sellerPincode.trim()) && !/^[1-9]\d{5}$/.test(invoice.sellerPincode.trim())) add('seller', 'sellerPincode', 'Enter the 6-digit PIN code.');
 
   if (!invoice.buyerName.trim()) add('buyer', 'buyerName', 'Receiver name is required.');
   const buyerProblem = invoice.buyerGstin.trim().toUpperCase() === 'URP' ? null : gstinProblem(invoice.buyerGstin);
@@ -512,10 +520,10 @@ export function invoiceIssues(invoice: Invoice, others: Invoice[] = [], released
 
   if (!invoice.invoiceNumber.trim()) add('invoice', 'invoiceNumber', 'Invoice number is required.');
   else if (!/^[A-Za-z0-9/-]{1,16}$/.test(invoice.invoiceNumber.trim())) add('invoice', 'invoiceNumber', 'Use up to 16 letters, digits, / or -.');
-  else if (invoiceSeriesProblem(invoice, others, released)) add('invoice', 'invoiceNumber', invoiceSeriesProblem(invoice, others, released)!.message);
+  else if (!purchase && invoiceSeriesProblem(invoice, others, released)) add('invoice', 'invoiceNumber', invoiceSeriesProblem(invoice, others, released)!.message);
   else if (sameBuyerAndNumber(invoice, others)) add('invoice', 'invoiceNumber', `Invoice ${invoice.invoiceNumber.trim()} for ${invoice.buyerName.trim()} already exists. Open it from the invoice list instead.`);
   else if (others.some((other) => other.id !== invoice.id && !other.unsaved && !released.has(other.id) && other.invoiceNumber.trim().toLowerCase() === invoice.invoiceNumber.trim().toLowerCase() && other.sellerGstin.toUpperCase() === invoice.sellerGstin.toUpperCase())) {
-    add('invoice', 'invoiceNumber', 'This number is already used for this GSTIN.');
+    add('invoice', 'invoiceNumber', purchase ? 'A purchase with this bill number from this party is already saved.' : 'This number is already used for this GSTIN.');
   }
   const validDate = /^\d{4}-\d{2}-\d{2}$/.test(invoice.invoiceDate) && !Number.isNaN(Date.parse(invoice.invoiceDate)) && new Date(`${invoice.invoiceDate}T00:00:00Z`).toISOString().slice(0, 10) === invoice.invoiceDate;
   if (!validDate) add('invoice', 'invoiceDate', 'Use the format YYYY-MM-DD.');
@@ -539,6 +547,7 @@ export function invoiceIssues(invoice: Invoice, others: Invoice[] = [], released
 export function transportIssues(invoice: Invoice): Issue[] {
   const issues: Issue[] = [];
   const add = (field: string, message: string) => issues.push({ section: 'transport', field, message });
+  if (!invoice.sellerGstin.trim()) issues.push({ section: 'seller', field: 'sellerGstin', message: 'Seller GSTIN is required for an e-way bill.' });
   const distance = Number(invoice.distanceKm);
   if (!Number.isInteger(distance) || distance < 1 || distance > 4000) add('distanceKm', 'Distance must be 1–4000 km.');
   const vehicle = invoice.vehicleNumber.replace(/[\s-]/g, '').toUpperCase();
@@ -672,9 +681,9 @@ function seriesOf(invoiceNumber: string) {
  * (e.g. GR-01 after INV-05): the message and the number that would follow.
  */
 export function invoiceSeriesProblem(invoice: Invoice, others: Invoice[], released: Set<string> = new Set()) {
-  // An invoice imported from a PDF keeps the number printed on it.
-  if (invoice.sourceFileName) return null;
-  const counted = others.filter((other) => other.id !== invoice.id && !other.unsaved && !released.has(other.id) && other.invoiceNumber.trim() && sameSeller(other, invoice.sellerGstin));
+  // An invoice imported from a PDF keeps the number printed on it, as does a purchase.
+  if (invoice.sourceFileName || isPurchase(invoice)) return null;
+  const counted = others.filter((other) => other.id !== invoice.id && !isPurchase(other) && !other.unsaved && !released.has(other.id) && other.invoiceNumber.trim() && sameSeller(other, invoice.sellerGstin));
   const latest = latestOfSeries(counted);
   if (!latest || !invoice.invoiceNumber.trim()) return null;
   const expected = seriesOf(latest.invoiceNumber);
@@ -685,6 +694,7 @@ export function invoiceSeriesProblem(invoice: Invoice, others: Invoice[], releas
 
 /** What the invoice list shows about the e-way bill. */
 export function invoiceEwbMeta(invoice: Invoice): { label: string; tone: 'green' | 'amber' | 'neutral'; icon: 'check' | 'file-text' | 'edit-3' } {
+  if (isPurchase(invoice)) return invoice.status === 'draft' ? { label: 'Draft · not saved yet', tone: 'neutral', icon: 'edit-3' } : { label: 'Purchase saved', tone: 'green', icon: 'check' };
   if (invoice.status === 'ewb_generated') return { label: 'EWB generated', tone: 'green', icon: 'check' };
   if (invoice.status === 'draft') return { label: 'Draft · not saved yet', tone: 'neutral', icon: 'edit-3' };
   if (invoice.ewbRequired === false) return { label: 'EWB not required', tone: 'neutral', icon: 'file-text' };
@@ -712,7 +722,7 @@ function sameSeller(invoice: Invoice, gstin: string) {
 
 /** Number for the next invoice of one GSTIN, continuing that GSTIN's series. */
 export function nextNumberForSeller(invoices: Invoice[], gstin: string, ewbs: EwbRecord[] = []) {
-  const sellerInvoices = invoices.filter((invoice) => sameSeller(invoice, gstin));
+  const sellerInvoices = invoices.filter((invoice) => !isPurchase(invoice) && sameSeller(invoice, gstin));
   return nextInvoiceNumber(sellerInvoices, releasedInvoiceIds(sellerInvoices, ewbs));
 }
 
@@ -760,6 +770,26 @@ export function draftForBusiness(business: Business, activeGstin: string, invoic
     sellerState: registration?.state || business.state,
     sellerPincode: business.pincode ?? '',
     bank: defaultBank(business) ? invoiceBank(defaultBank(business)!) : null,
+    unsaved: true,
+  };
+}
+
+/** New purchase entry: the party is the seller (filled in by the user), you are the buyer. */
+export function purchaseDraft(business: Business, activeGstin: string): Invoice {
+  const gstin = activeGstin || business.gstin;
+  const registration = business.gstRegistrations?.find((item) => item.gstin === gstin);
+  const state = registration?.state || business.state;
+  return {
+    ...newInvoice('classic'),
+    kind: 'purchase',
+    buyerName: business.name,
+    buyerGstin: gstin,
+    buyerAddress: business.address,
+    buyerState: state,
+    buyerPincode: business.pincode ?? '',
+    placeOfSupply: state,
+    bank: null,
+    ewbRequired: false,
     unsaved: true,
   };
 }
