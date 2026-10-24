@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { Router, type IRouter } from "express";
 import { z } from "zod";
-import { audit, currentPeriod, withWorkspace } from "../lib/store";
+import { appendLog, audit, currentPeriod, withWorkspace } from "../lib/store";
+import { rateLimit } from "../lib/rate-limit";
 import { billingMode, planById, plans, plansAreSamples } from "../lib/plans";
 import { ewbProvider } from "../providers/ewb-provider";
 import { gstProvider } from "../providers/gst-provider";
@@ -119,6 +120,18 @@ router.post("/sync", async (req, res) => {
     return out;
   }, { sync: since ? { since, keys: Object.entries(collections).flatMap(([name, records]) => records.map((record) => `${name}/${record.id}`)) } : "all" });
   return res.json({ serverTime, changes });
+});
+
+/**
+ * The app was opened (started, or brought back after a while). One record per open in
+ * the `app_opens` log, for daily active users and opens per day in the admin panel.
+ * Holds no business data: only who, when and which app build.
+ */
+router.post("/activity/open", rateLimit({ windowMs: 60_000, max: 6, by: "workspace" }), async (req, res) => {
+  const parsed = z.object({ platform: z.enum(["android", "ios", "web"]), appVersion: z.string().max(20) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "bad_request", message: "Activity could not be read." });
+  await appendLog("app_opens", { at: new Date().toISOString(), workspaceId: req.workspaceId, platform: parsed.data.platform, appVersion: parsed.data.appVersion });
+  return res.status(204).end();
 });
 
 router.get("/audit", async (req, res) => {

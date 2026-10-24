@@ -194,6 +194,8 @@ export const api = {
   /** Road distance between two PIN codes (Google Routes, looked up once per pair on the server). */
   distance: (from: string, to: string) => request<{ from: string; to: string; km: number; cached: boolean }>(`/distance?from=${from}&to=${to}`, { timeoutMs: 20_000 }),
   verifyGstin: (gstin: string) => request<{ gstin: VerifiedGstin; cached: boolean; stale?: boolean }>('/gstin/verify', { body: { gstin }, timeoutMs: 30_000 }),
+  /** The app was opened: counted for daily active users in the admin panel. */
+  appOpened: (platform: 'android' | 'ios' | 'web', appVersion: string) => request<Record<string, never>>('/activity/open', { body: { platform, appVersion }, timeoutMs: 10_000 }),
   wallet: () => request<WalletSummary>('/wallet'),
   /** One page of history, newest first: a month (YYYY-MM) or every month (''), after the entry `before`. */
   walletHistory: (month: string, limit: number, before?: string) =>

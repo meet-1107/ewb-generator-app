@@ -292,6 +292,7 @@
   const NAV = [
     { group: "Monitor" },
     { id: "overview", label: "Overview", permission: "overview" },
+    { id: "activity", label: "Active users", permission: "users" },
     { id: "users", label: "Users & businesses", permission: "users" },
     { id: "ewbs", label: "E-way bills", permission: "ewbs" },
     { id: "api", label: "API usage & quota", permission: "api" },
@@ -334,6 +335,41 @@
           h("div", { class: "card" }, h("h2", {}, "Latest e-way bills"), table([{ label: "Bill", key: "ewbNumber", mono: true }, { label: "User", render: (r) => r.userEmail ?? "—" }, { label: "Generated", render: (r) => when(r.generatedAt) }, { label: "Status", render: (r) => badge(r.status) }], o.recent.ewbs, { onRow: (r) => go(`ewbs/${r.uid}/${r.id}`), empty: "No e-way bills yet." })),
           o.payments ? h("div", { class: "card" }, h("h2", {}, "Latest payments"), table([{ label: "User", render: (r) => r.userEmail ?? "—" }, { label: "Amount", num: true, render: (r) => inr(r.amountPaise) }, { label: "Credits", num: true, key: "credits" }, { label: "Paid", render: (r) => when(r.paidAt) }], o.recent.payments, { onRow: (r) => go(`payments/${r.uid}/${r.id}`), empty: "No payments yet." })) : null),
         o.recent.admin.length ? h("div", { class: "card section" }, h("h2", {}, "Recent admin activity"), auditTable(o.recent.admin)) : null,
+      );
+    },
+
+    async activity(view) {
+      view.append(head("Active users", "Accounts that opened the app each day, and how many times the app was opened. An open is counted when the app starts, or comes back after 30 minutes away.", rangePicker(render)));
+      const body = h("div", {}, loading());
+      view.append(body);
+      const a = await api(`/activity?${rangeQuery()}`);
+      const s = a.summary;
+      const days = [...a.days].reverse();
+      put(body,
+        a.capped ? h("div", { class: "notice warn" }, "Showing the latest 50,000 opens in this period; narrow the dates for exact totals.") : h("div", { class: "note", style: "margin:-8px 0 12px" }, rangeText()),
+        h("div", { class: "grid kpis" },
+          tile("Active today", num(s.activeToday), `${num(s.opensToday)} app opens today`),
+          tile("Active in period", num(s.activeInRange), "different accounts"),
+          tile("App opens in period", num(s.opensInRange)),
+          tile("Avg daily active", num(s.avgDailyActive), "users per day"),
+          tile("Opens per active user", num(s.avgOpensPerUserDay), "per day, on average"),
+          tile("Busiest day", s.peakDay && s.peakDay.activeUsers ? `${num(s.peakDay.activeUsers)} users` : "—", s.peakDay && s.peakDay.activeUsers ? `${day(`${s.peakDay.day}T12:00:00+05:30`)} · ${num(s.peakDay.opens)} opens` : "")),
+        h("div", { class: "grid two section" }, dayChart("Active users per day", a.activeSeries), dayChart("App opens per day", a.opensSeries)),
+        h("div", { class: "grid two section" },
+          h("div", { class: "card" }, h("h2", {}, "Day by day"), table([
+            { label: "Date", render: (r) => day(`${r.day}T12:00:00+05:30`) },
+            { label: "Active users", num: true, render: (r) => num(r.activeUsers) },
+            { label: "App opens", num: true, render: (r) => num(r.opens) },
+            { label: "Opens per user", num: true, render: (r) => (r.activeUsers ? (r.opens / r.activeUsers).toFixed(1) : "—") },
+          ], days, { empty: "No app opens in this period." })),
+          h("div", { class: "card" }, h("h2", {}, `Active users (${num(a.users.length)})`), table([
+            { label: "Name / email", wrap: true, render: (r) => h("div", {}, h("div", { style: "font-weight:600" }, r.name || r.businessName || "—"), h("div", { class: "note", style: "margin:0" }, r.email || r.uid)) },
+            { label: "Business", wrap: true, render: (r) => r.businessName || "—" },
+            { label: "Opens", num: true, render: (r) => num(r.opens) },
+            { label: "Days active", num: true, render: (r) => num(r.activeDays) },
+            { label: "Last opened", render: (r) => when(r.lastOpenAt) },
+            { label: "App", render: (r) => [r.platform, r.appVersion].filter(Boolean).join(" ") || "—" },
+          ], a.users, { onRow: (r) => go(`users/${r.uid}`), empty: "No one opened the app in this period." }))),
       );
     },
 

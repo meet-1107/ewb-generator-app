@@ -1,7 +1,7 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import { adminAudit, ADMIN_ROLES, allow, bootstrapEmails, can, forgetRole, maskEmail, maskGstin, PERMISSIONS, recentSignIn, requireAdmin, ROLE_LABELS, type AdminIdentity } from "../lib/admin-auth";
-import { apiCalls, inRange, invalidateSnapshot, overview, providerQuota, reconcile, snapshot, summarizeApi, type EwbRow, type PurchaseRow, type Range, type UserRow } from "../lib/admin-data";
+import { activity, apiCalls, inRange, invalidateSnapshot, overview, providerQuota, reconcile, snapshot, summarizeApi, type EwbRow, type PurchaseRow, type Range, type UserRow } from "../lib/admin-data";
 import { directory } from "../lib/admin-directory";
 import { authMode } from "../lib/auth";
 import { distanceConfigured } from "../lib/distance";
@@ -114,6 +114,17 @@ router.get("/overview", allow("overview"), async (req, res) => {
       ewbs: data.recent.ewbs.map((ewb) => ewbView(admin, ewb, users)),
       admin: can(admin, "audit") ? data.recent.admin : [],
     },
+  });
+});
+
+/* ---------- App activity ---------- */
+
+router.get("/activity", allow("users"), async (req, res) => {
+  const data = await activity(rangeOf(req));
+  const pii = can(req.admin!, "pii");
+  res.json({
+    ...data,
+    users: data.users.map((user) => (pii ? user : { ...user, email: maskEmail(user.email), name: user.name ? `${user.name.slice(0, 1)}•••` : null, gstin: maskGstin(user.gstin) })),
   });
 });
 

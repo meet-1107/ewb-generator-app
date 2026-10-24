@@ -264,6 +264,70 @@ export async function providerQuota() {
   return readDoc<{ provider: string; creditsRemaining: number; reportedAt: string; source: string }>("provider_status", "gstinapi");
 }
 
+/* ---------- App activity ---------- */
+
+export const OPENS_LOG_CAP = 50_000;
+
+/**
+ * Daily active users (accounts that opened the app that day) and app opens per day,
+ * from the `app_opens` log the app writes on each start, plus one row per active account.
+ */
+export async function activity(range: Range) {
+  const [records, snap] = await Promise.all([queryLogs("app_opens", { ...range, limit: OPENS_LOG_CAP }), snapshot()]);
+  const byDay = new Map(daysOf(range).map((day) => [day, { opens: 0, users: new Set<string>() }]));
+  const byUser = new Map<string, { opens: number; days: Set<string>; firstAt: string; lastAt: string; platform: string; appVersion: string }>();
+  for (const record of records) {
+    const uid = String(record["workspaceId"] ?? "");
+    if (!uid) continue;
+    const day = istDay(record.at);
+    const entry = byDay.get(day);
+    if (entry) {
+      entry.opens += 1;
+      entry.users.add(uid);
+    }
+    const user = byUser.get(uid) ?? { opens: 0, days: new Set<string>(), firstAt: record.at, lastAt: record.at, platform: "", appVersion: "" };
+    user.opens += 1;
+    user.days.add(day);
+    if (record.at <= user.firstAt) user.firstAt = record.at;
+    // Records come newest first: the first one seen carries the latest platform and build.
+    if (!user.platform) {
+      user.platform = String(record["platform"] ?? "");
+      user.appVersion = String(record["appVersion"] ?? "");
+    }
+    if (record.at >= user.lastAt) user.lastAt = record.at;
+    byUser.set(uid, user);
+  }
+  const days = [...byDay.entries()].map(([day, entry]) => ({ day, activeUsers: entry.users.size, opens: entry.opens }));
+  const today = istDay(new Date().toISOString());
+  const todayRow = days.find((row) => row.day === today);
+  const accounts = new Map(snap.users.map((user) => [user.uid, user]));
+  const users = [...byUser.entries()].map(([uid, entry]) => {
+    const account = accounts.get(uid);
+    return {
+      uid, email: account?.email ?? null, name: account?.name ?? null, businessName: account?.businessName ?? null, gstin: account?.gstin ?? null,
+      opens: entry.opens, activeDays: entry.days.size, firstOpenAt: entry.firstAt, lastOpenAt: entry.lastAt, platform: entry.platform, appVersion: entry.appVersion,
+    };
+  }).sort((a, b) => b.lastOpenAt.localeCompare(a.lastOpenAt));
+  const activeDays = days.filter((row) => row.activeUsers > 0);
+  return {
+    range,
+    capped: records.length >= OPENS_LOG_CAP,
+    summary: {
+      activeToday: todayRow?.activeUsers ?? 0,
+      opensToday: todayRow?.opens ?? 0,
+      activeInRange: users.length,
+      opensInRange: records.length,
+      avgDailyActive: days.length ? Math.round((days.reduce((total, row) => total + row.activeUsers, 0) / days.length) * 10) / 10 : 0,
+      avgOpensPerUserDay: activeDays.length ? Math.round((activeDays.reduce((total, row) => total + row.opens, 0) / activeDays.reduce((total, row) => total + row.activeUsers, 0)) * 10) / 10 : 0,
+      peakDay: [...days].sort((a, b) => b.activeUsers - a.activeUsers)[0] ?? null,
+    },
+    days,
+    activeSeries: days.map((row) => ({ day: row.day, value: row.activeUsers })),
+    opensSeries: days.map((row) => ({ day: row.day, value: row.opens })),
+    users,
+  };
+}
+
 /* ---------- Overview ---------- */
 
 export async function overview(range: Range) {

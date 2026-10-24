@@ -8,7 +8,8 @@ import React, {
   useState,
   type ReactNode,
 } from 'react';
-import { AppState } from 'react-native';
+import { AppState, Platform } from 'react-native';
+import Constants from 'expo-constants';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import {
   isPurchase,
@@ -93,6 +94,8 @@ type StoreValue = Omit<Persisted, 'tombstones'> & {
 
 const StoreContext = createContext<StoreValue | null>(null);
 const STORE_PREFIX = 'ewb-vendor-v1:';
+/** Away from the app at least this long, then back: counted as a new app open. */
+const OPEN_GAP_MS = 30 * 60_000;
 const EMPTY: Persisted = {
   business: null,
   invoices: [],
@@ -350,21 +353,34 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
   // Initial online work once hydrated with an identity.
   const ready = Boolean(scope && hydratedScope === scope && workspaceId);
+  // An app open is counted when the app starts, and again when it comes back after
+  // being away for OPEN_GAP_MS (a quick switch to WhatsApp and back is the same visit).
+  const lastOpen = useRef(0);
+  const countOpen = useCallback(() => {
+    if (Date.now() - lastOpen.current < OPEN_GAP_MS) return;
+    lastOpen.current = Date.now();
+    const platform = Platform.OS === 'android' || Platform.OS === 'ios' ? Platform.OS : 'web';
+    void api.appOpened(platform, Constants.expoConfig?.version ?? '').catch(() => { lastOpen.current = 0; });
+  }, []);
   useEffect(() => {
     if (!ready) return;
+    countOpen();
     void refreshServices();
     void refreshSubscription();
     void refreshWallet();
     void refreshEwbs().catch(() => undefined);
     void syncNow();
+    let backgroundAt = 0;
     const subscriptionHandle = AppState.addEventListener('change', (state) => {
+      if (state === 'background') backgroundAt = Date.now();
       if (state === 'active') {
+        if (backgroundAt && Date.now() - backgroundAt >= OPEN_GAP_MS) countOpen();
         void refreshEwbs().catch(() => undefined);
         void syncNow();
       }
     });
     return () => subscriptionHandle.remove();
-  }, [ready, refreshEwbs, refreshServices, refreshSubscription, refreshWallet, syncNow]);
+  }, [ready, countOpen, refreshEwbs, refreshServices, refreshSubscription, refreshWallet, syncNow]);
 
   // Debounced background sync after local edits.
   const syncKey = `${data.invoices.length}:${data.invoices[0]?.updatedAt}:${data.parties.length}:${data.products.length}:${data.transporters.length}:${data.business?.updatedAt}:${Object.keys(data.tombstones).length}`;

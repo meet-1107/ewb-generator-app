@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as WebBrowser from 'expo-web-browser';
 import { router } from 'expo-router';
-import { AppState, Linking, Platform, Pressable, RefreshControl, Share, StyleSheet, TextInput, View } from 'react-native';
+import { ActivityIndicator, AppState, Linking, Platform, Pressable, RefreshControl, Share, StyleSheet, TextInput, View } from 'react-native';
+import { Feather } from '@expo/vector-icons';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { Button, Card, Chip, ChipRow, Divider, EmptyState, Field, KeyValue, ListRow, Notice, ScreenHeader, SectionTitle, StatCard, TextBlock } from '@/components/AppUI';
+import { Button, Card, Chip, ChipRow, Divider, EmptyState, Field, KeyValue, ListRow, Notice, ScreenHeader, SectionTitle, Sheet, StatCard, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
 import { useColors } from '@/hooks/useColors';
 import { api, ApiError, SUPPORT_EMAIL, type CreditPurchase, type WalletAction, type WalletEntry, type WalletSummary } from '@/lib/api';
@@ -53,16 +54,25 @@ export default function WalletScreen() {
     setRefreshing(false);
   };
 
+  /** Credits shown on the secure checkout sheet before paying; null when it is closed. */
+  const [checkout, setCheckout] = useState<number | null>(null);
+  /** A payment being confirmed with Razorpay after the user came back from it. */
+  const [confirming, setConfirming] = useState<CreditPurchase | null>(null);
+
+  /** Paid: straight to Home, which shows the new balance and what was added. */
+  const paid = (credits: number, balance: number | undefined) => {
+    store.setWalletBalance(balance);
+    void store.refreshWallet();
+    router.replace({ pathname: '/(tabs)', params: { credited: String(credits) } });
+  };
+
   /** Waits for Razorpay to report the payment (the webhook may also credit it first). */
   const confirmPaid = async (purchase: CreditPurchase) => {
+    setConfirming(purchase);
     try {
       for (let attempt = 0; attempt < 6; attempt++) {
         const { purchase: latest, balance } = await api.purchaseStatus(purchase.id);
-        if (latest.status === 'paid') {
-          store.setWalletBalance(balance);
-          dialog.toast(`${latest.credits} credits added`, 'success');
-          return;
-        }
+        if (latest.status === 'paid') return paid(latest.credits, balance);
         if (latest.status !== 'created') break;
         await new Promise((resolve) => setTimeout(resolve, 2500));
       }
@@ -70,6 +80,7 @@ export default function WalletScreen() {
     } catch {
       dialog.toast('Could not check the payment right now. If you paid, credits are added automatically within a few minutes.', 'default');
     } finally {
+      setConfirming(null);
       void store.refreshWallet();
     }
   };
@@ -93,16 +104,20 @@ export default function WalletScreen() {
     if (!Number.isInteger(credits) || credits < pricing.min || credits > pricing.max) {
       return dialog.toast(`Choose between ${pricing.min} and ${pricing.max.toLocaleString('en-IN')} credits.`, 'danger');
     }
+    setCheckout(credits);
+  };
+
+  /** "Pay securely" on the checkout sheet: opens Razorpay, then confirms the payment. */
+  const pay = async (credits: number) => {
     if (buyGuard.current) return;
     buyGuard.current = true;
-    const ok = await dialog.confirm({ title: `Buy ${credits} credits?`, message: `You pay ${rupees(credits)} (1 credit = ${rupees(1)}).${pricing.payments === 'sandbox' ? ' Test workspace: no real payment is taken.' : ' You will finish the payment on Razorpay (UPI, card or net banking).'}`, confirmLabel: `Pay ${rupees(credits)}`, icon: 'credit-card' });
-    if (!ok) { buyGuard.current = false; return; }
+    setCheckout(null);
     setBuying(credits);
     try {
       const { purchase, balance } = await api.buyCredits(credits);
       if (purchase.status === 'paid') {
-        store.setWalletBalance(balance);
-        dialog.toast(`${credits} credits added`, 'success');
+        paid(credits, balance);
+        return;
       } else if (purchase.shortUrl) {
         if (Platform.OS === 'android') awaitingPayment.current = purchase;
         await WebBrowser.openBrowserAsync(purchase.shortUrl).catch(() => Linking.openURL(purchase.shortUrl!));
@@ -135,6 +150,15 @@ export default function WalletScreen() {
         contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 30 }]}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={() => void refresh()} />}
       >
+        {confirming ? (
+          <Card style={styles.confirming}>
+            <ActivityIndicator color={colors.primary} />
+            <View style={{ flex: 1, gap: 2 }}>
+              <TextBlock size={14} weight="bold">Confirming your payment…</TextBlock>
+              <TextBlock size={12} color={colors.mutedForeground}>{confirming.credits} credits · {rupees(confirming.credits)}. Please keep the app open; this takes a few seconds.</TextBlock>
+            </View>
+          </Card>
+        ) : null}
         <Card style={{ ...styles.balance, backgroundColor: colors.primary }}>
           <TextBlock size={12} weight="bold" color={colors.primaryForeground}>AVAILABLE CREDITS</TextBlock>
           <TextBlock size={40} weight="bold" color={colors.primaryForeground}>{wallet ? String(wallet.balance) : '—'}</TextBlock>
@@ -264,9 +288,62 @@ export default function WalletScreen() {
 
         <WalletHistory wallet={wallet} />
       </KeyboardAwareScrollViewCompat>
+
+      <Sheet
+        visible={checkout !== null}
+        onClose={() => setCheckout(null)}
+        title="Secure checkout"
+        subtitle="Check your order before paying"
+        footer={checkout !== null ? (
+          <View style={{ gap: 8 }}>
+            <Button title={`Pay ${rupees(checkout)} securely`} icon="lock" onPress={() => void pay(checkout)} testID="wallet-pay" />
+            <TextBlock size={11} color={colors.mutedForeground} style={{ textAlign: 'center' }}>
+              {pricing?.payments === 'sandbox' ? 'Test workspace: no real payment is taken.' : 'You finish the payment on Razorpay’s secure page (razorpay.com).'}
+            </TextBlock>
+          </View>
+        ) : undefined}
+      >
+        {checkout !== null ? (
+          <View style={{ paddingHorizontal: 18, gap: 14 }}>
+            <View style={[styles.amount, { backgroundColor: colors.muted }]}>
+              <TextBlock size={12} weight="semibold" color={colors.mutedForeground}>YOU PAY</TextBlock>
+              <TextBlock size={32} weight="bold">{rupees(checkout)}</TextBlock>
+              <TextBlock size={13} color={colors.mutedForeground}>for {checkout.toLocaleString('en-IN')} credits</TextBlock>
+            </View>
+            <Card style={{ gap: 8 }}>
+              <KeyValue label="Credits" value={checkout.toLocaleString('en-IN')} />
+              <Divider />
+              <KeyValue label="Price per credit" value={rupees(1)} />
+              <Divider />
+              <KeyValue label="Wallet balance after payment" value={wallet ? `${(wallet.balance + checkout).toLocaleString('en-IN')} credits` : '—'} />
+              <Divider />
+              <KeyValue label="Total payable" value={rupees(checkout)} strong />
+            </Card>
+            <View style={{ gap: 12 }}>
+              {TRUST.map((item) => (
+                <View key={item.title} style={styles.trust}>
+                  <View style={[styles.trustIcon, { backgroundColor: colors.successBackground }]}><Feather name={item.icon} size={15} color={colors.successForeground} /></View>
+                  <View style={{ flex: 1, gap: 1 }}>
+                    <TextBlock size={13} weight="semibold">{item.title}</TextBlock>
+                    <TextBlock size={12} color={colors.mutedForeground}>{item.body}</TextBlock>
+                  </View>
+                </View>
+              ))}
+            </View>
+          </View>
+        ) : null}
+      </Sheet>
     </View>
   );
 }
+
+/** Why the payment is safe, shown on the checkout sheet. */
+const TRUST: { icon: keyof typeof Feather.glyphMap; title: string; body: string }[] = [
+  { icon: 'shield', title: 'Secured by Razorpay', body: 'Pay with UPI, card or net banking on Razorpay’s PCI DSS compliant checkout.' },
+  { icon: 'lock', title: 'Your details stay private', body: 'We never see or store your card number, bank login or UPI PIN.' },
+  { icon: 'zap', title: 'Credits added instantly', body: 'Credits reach your wallet as soon as the payment succeeds and never expire.' },
+  { icon: 'file-text', title: 'Invoice for every payment', body: 'Kept in Wallet → Billing invoices and sent to your email.' },
+];
 
 /** Entries loaded at a time; Show more loads the next page from the server. */
 const PAGE = 20;
@@ -377,6 +454,10 @@ function WalletHistory({ wallet }: { wallet: WalletSummary | null }) {
 const styles = StyleSheet.create({
   body: { padding: 16, gap: 14, maxWidth: 720, width: '100%', alignSelf: 'center' },
   balance: { gap: 4, borderWidth: 0 },
+  confirming: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  amount: { borderRadius: 16, padding: 16, alignItems: 'center', gap: 2 },
+  trust: { flexDirection: 'row', alignItems: 'flex-start', gap: 11 },
+  trustIcon: { width: 30, height: 30, borderRadius: 10, alignItems: 'center', justifyContent: 'center' },
   quickAdd: { gap: 10, marginTop: 10 },
   quickPacks: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   quickInput: { borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10, fontSize: 16, fontWeight: '600' },

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
-import { router } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useColors } from '@/hooks/useColors';
@@ -23,6 +23,8 @@ import { AccountButton, BrandBar } from '@/components/Brand';
 export default function DashboardScreen() {
   const colors = useColors();
   const store = useAppStore();
+  // credited=N: just back from a successful credit purchase.
+  const { credited } = useLocalSearchParams<{ credited?: string }>();
   const { invoices, purchases, ewbs } = useScopedRecords();
   const [refreshing, setRefreshing] = useState(false);
   const [gstinPicker, setGstinPicker] = useState(false);
@@ -116,6 +118,15 @@ export default function DashboardScreen() {
         </View>
       </View>
 
+      {credited && Number(credited) > 0 ? (
+        <Notice
+          tone="success"
+          title={`Payment successful · ${Number(credited).toLocaleString('en-IN')} credits added`}
+          body={wallet ? `Your wallet now has ${wallet.balance.toLocaleString('en-IN')} credits. The invoice is in Wallet → Billing invoices.` : 'The invoice is in Wallet → Billing invoices.'}
+          action="Done"
+          onAction={() => router.setParams({ credited: undefined })}
+        />
+      ) : null}
       <Pressable onPress={() => router.push('/wallet')} accessibilityRole="button" accessibilityLabel={`Wallet: ${wallet ? `${wallet.balance} credits` : 'balance loading'}. Open wallet`} testID="dashboard-wallet">
         {({ pressed }) => (
           <LinearGradient colors={[colors.heroEnd, colors.heroStart]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 0 }} style={[styles.wallet, pressed && { opacity: 0.92 }]}>
