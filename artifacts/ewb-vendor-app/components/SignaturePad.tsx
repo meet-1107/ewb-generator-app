@@ -32,6 +32,27 @@ export function cropStrokes({ paths, width, height }: Strokes, margin = 6): Stro
   };
 }
 
+/** Turns cropped strokes a quarter turn, clockwise or counter-clockwise. */
+export function rotateStrokes({ paths, width, height }: Strokes, direction: 'cw' | 'ccw'): Strokes {
+  return {
+    paths: paths.map((d) => d.replace(POINT, (_, x, y) => (direction === 'cw'
+      ? `${round(height - Number(y))} ${round(Number(x))}`
+      : `${round(Number(y))} ${round(width - Number(x))}`))),
+    width: height,
+    height: width,
+  };
+}
+
+/**
+ * Crops the strokes and lays a signature written down the length of the pad
+ * (taller than it is wide, as when the phone is turned sideways to sign) flat,
+ * so it reads left to right on the invoice.
+ */
+export function flatSignature(strokes: Strokes): Strokes {
+  const cropped = cropStrokes(strokes);
+  return cropped.height > cropped.width ? rotateStrokes(cropped, 'ccw') : cropped;
+}
+
 /** A white pad to sign on; `onChange` gets every stroke so far (empty when cleared). */
 export function SignaturePad({ strokes, onChange, height = PAD_HEIGHT }: { strokes: string[]; onChange: (next: Strokes) => void; height?: number }) {
   const colors = useColors();

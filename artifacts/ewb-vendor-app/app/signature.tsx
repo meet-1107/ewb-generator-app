@@ -6,7 +6,7 @@ import { File } from 'expo-file-system';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Card, Notice, ScreenHeader, Segmented, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
-import { cropStrokes, PAD_HEIGHT, SignaturePad, type Strokes } from '@/components/SignaturePad';
+import { flatSignature, PAD_HEIGHT, rotateStrokes, SignaturePad, type Strokes } from '@/components/SignaturePad';
 import { SignatureView } from '@/components/SignatureView';
 import { useColors } from '@/hooks/useColors';
 import { MAX_SIGNATURE_BYTES, type Signature } from '@/lib/domain';
@@ -28,13 +28,13 @@ export default function SignatureScreen() {
   const [busy, setBusy] = useState(false);
   const [padHeight, setPadHeight] = useState(0);
 
-  const save = async (signature: Signature | undefined) => {
+  const save = async (signature: Signature | undefined, stay = false) => {
     if (!store.business) return;
     setBusy(true);
     try {
       await store.saveBusiness({ ...store.business, signature });
-      dialog.toast(signature ? 'Signature saved. It prints on every invoice.' : 'Signature removed', 'success');
-      if (signature && router.canGoBack()) router.back();
+      dialog.toast(signature ? (stay ? 'Signature turned' : 'Signature saved. It prints on every invoice.') : 'Signature removed', 'success');
+      if (signature && !stay && router.canGoBack()) router.back();
     } finally {
       setBusy(false);
     }
@@ -74,6 +74,7 @@ export default function SignatureScreen() {
           {saved ? (
             <View style={styles.savedRow}>
               <View style={[styles.preview, styles.savedPreview]}><SignatureView signature={saved} height={34} /></View>
+              {saved.kind === 'drawn' ? <Button title="Rotate" icon="rotate-cw" variant="ghost" size="sm" onPress={() => void save({ ...saved, ...rotateStrokes(saved, 'cw'), updatedAt: now() }, true)} disabled={busy} testID="signature-rotate" /> : null}
               <Button title="Remove" icon="trash-2" variant="ghost" size="sm" onPress={() => void remove()} />
             </View>
           ) : null}
@@ -82,7 +83,7 @@ export default function SignatureScreen() {
           </View>
           <View style={{ flexDirection: 'row', gap: 10 }}>
             <Button title="Clear" icon="rotate-ccw" variant="outline" onPress={() => setStrokes({ paths: [], width: 0, height: PAD_HEIGHT })} disabled={!strokes.paths.length} style={{ flex: 1 }} />
-            <Button title="Save signature" icon="check" onPress={() => void save({ kind: 'drawn', ...cropStrokes({ ...strokes, width: strokes.width || 320 }), updatedAt: now() })} disabled={!ready || busy} loading={busy} style={{ flex: 2 }} testID="signature-save" />
+            <Button title="Save signature" icon="check" onPress={() => void save({ kind: 'drawn', ...flatSignature({ ...strokes, width: strokes.width || 320 }), updatedAt: now() })} disabled={!ready || busy} loading={busy} style={{ flex: 2 }} testID="signature-save" />
           </View>
         </View>
       </View>
