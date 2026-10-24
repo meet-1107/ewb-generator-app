@@ -86,6 +86,7 @@ export function TextBlock({
   numberOfLines,
   selectable,
   accessibilityRole,
+  fit,
 }: {
   children: ReactNode;
   size?: number;
@@ -95,11 +96,15 @@ export function TextBlock({
   numberOfLines?: number;
   selectable?: boolean;
   accessibilityRole?: 'header' | 'text';
+  /** Shrink the text to fit its width on one line (large amounts) instead of overflowing. */
+  fit?: boolean;
 }) {
   const colors = useColors();
   return (
     <Text
-      numberOfLines={numberOfLines}
+      numberOfLines={fit ? 1 : numberOfLines}
+      adjustsFontSizeToFit={fit}
+      minimumFontScale={fit ? 0.5 : undefined}
       selectable={selectable}
       accessibilityRole={accessibilityRole}
       maxFontSizeMultiplier={1.6}
@@ -123,6 +128,19 @@ export function Heading({ eyebrow, title, subtitle, right }: { eyebrow?: string;
         {subtitle ? <TextBlock color={colors.mutedForeground} style={styles.subtitle}>{subtitle}</TextBlock> : null}
       </View>
       {right}
+    </View>
+  );
+}
+
+/** A highlighted total under a list heading: "TOTAL SALES ₹12,34,567 · 42 invoices". */
+export function TotalBanner({ label, amount, detail, testID }: { label: string; amount: string; detail?: string; testID?: string }) {
+  const colors = useColors();
+  return (
+    <View testID={testID} accessibilityLabel={`${label}: ${amount}${detail ? `, ${detail}` : ''}`}
+      style={{ backgroundColor: colors.accent, borderColor: colors.primary, borderWidth: 1, borderRadius: colors.radius + 2, paddingVertical: 12, paddingHorizontal: 16, gap: 2 }}>
+      <TextBlock size={11} weight="bold" color={colors.primary} style={{ letterSpacing: 1 }}>{label.toUpperCase()}</TextBlock>
+      <TextBlock size={26} weight="bold" color={colors.primary} style={{ letterSpacing: -0.5 }} fit>{amount}</TextBlock>
+      {detail ? <TextBlock size={12} color={colors.mutedForeground} numberOfLines={1}>{detail}</TextBlock> : null}
     </View>
   );
 }

@@ -33,6 +33,7 @@ import {
   expectedSupplyType,
   formatDate,
   formatInr,
+  formatRoundOff,
   invoiceIssues,
   invoiceTotals,
   STATES,
@@ -58,7 +59,7 @@ import {
   type Party,
   type Section,
 } from '@/lib/domain';
-import { invoiceHtml, printHtml, shareHtmlAsPdf } from '@/lib/documents';
+import { invoiceHtml, invoicePdfLabel, printHtml, shareHtmlAsPdf } from '@/lib/documents';
 import { useAppStore } from '@/state/app-store';
 
 const stateOptions = STATES.map((state) => ({ value: state.name, label: state.name, detail: `Code ${state.code}` }));
@@ -488,7 +489,7 @@ export default function InvoiceEditorScreen() {
     if (!result) return;
     try {
       if (result.choice === 'Print invoice') await printHtml(invoiceHtml(invoice, signature));
-      if (result.choice === 'Share as PDF') await shareHtmlAsPdf(invoiceHtml(invoice, signature), invoice.invoiceNumber || (purchase ? 'Purchase' : 'Invoice'));
+      if (result.choice === 'Share as PDF') await shareHtmlAsPdf(invoiceHtml(invoice, signature), invoicePdfLabel(invoice));
     } catch (error) {
       dialog.toast((error as Error).message || 'Could not open the document', 'danger');
     }
@@ -538,7 +539,7 @@ export default function InvoiceEditorScreen() {
           <ProgressSteps steps={['Invoice', 'Review EWB', 'Generated']} current={2} />
           <Notice tone="success" title={`E-way bill ${invoice.ewbNumber} is generated`} body="Generated bills keep the invoice exactly as submitted." action="Open e-way bill" onAction={() => router.push(`/ewb/${invoice.ewbId}`)} />
           <InvoicePreview invoice={invoice} signature={store.business?.signature} />
-          <Button title="Share invoice PDF" icon="share" onPress={() => void shareHtmlAsPdf(invoiceHtml(invoice, store.business?.signature), invoice.invoiceNumber).catch((error: Error) => dialog.toast(error.message, 'danger'))} />
+          <Button title="Share invoice PDF" icon="share" onPress={() => void shareHtmlAsPdf(invoiceHtml(invoice, store.business?.signature), invoicePdfLabel(invoice)).catch((error: Error) => dialog.toast(error.message, 'danger'))} />
         </KeyboardAwareScrollViewCompat>
       </View>
     );
@@ -655,8 +656,9 @@ export default function InvoiceEditorScreen() {
         <View style={[styles.totalsBox, { backgroundColor: colors.muted }]}>
           <KeyValue label="Taxable value" value={formatInr(totals.taxable)} />
           {invoice.supplyType === 'intra' ? <><KeyValue label="CGST" value={formatInr(totals.cgst)} /><KeyValue label="SGST" value={formatInr(totals.sgst)} /></> : <KeyValue label="IGST" value={formatInr(totals.igst)} />}
-          <KeyValue label="Invoice total" value={formatInr(totals.total)} strong />
-          <TextBlock size={11} color={colors.mutedForeground}>Tax is calculated per line and rounded to the nearest paisa.</TextBlock>
+          {totals.roundOff ? <KeyValue label="Round off" value={formatRoundOff(totals.roundOff)} /> : null}
+          <KeyValue label={purchase ? 'Bill total' : 'Invoice total'} value={formatInr(totals.total)} strong />
+          <TextBlock size={11} color={colors.mutedForeground}>Tax is calculated per line; the total is rounded to the nearest rupee.</TextBlock>
         </View>
       </EditorSection>
     ),

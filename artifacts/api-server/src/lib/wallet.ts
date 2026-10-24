@@ -140,6 +140,7 @@ export function walletSummary(workspace: Workspace) {
     ledgerMore: visible(workspace).length > HISTORY_PAGE,
     historyMonths: historyMonths(visible(workspace)),
     // Free trial credits still to come: given when the first GSTIN's portal login is saved.
-    welcomeCredits: workspace.welcomeGstin || workspace.wallet.ledger.some((entry) => entry.kind === "grant") ? 0 : welcomeCredits(),
+    // None once a login is saved, even if it brought no credits (GSTIN already used, or not checked).
+    welcomeCredits: workspace.welcomeGstin || Object.keys(workspace.ewbCredentials ?? {}).length || workspace.wallet.ledger.some((entry) => entry.kind === "grant") ? 0 : welcomeCredits(),
   };
 }

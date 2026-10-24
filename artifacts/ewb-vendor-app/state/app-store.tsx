@@ -44,6 +44,8 @@ type Persisted = {
   activeGstin: string;
   ewbs: EwbRecord[];
   ewbsFetchedAt: string | null;
+  /** Server time of the last e-way bill list: the next one asks only for bills changed since. */
+  ewbsSince?: string | null;
   gstCache: Record<string, { snapshots: GstSnapshot[]; fetchedAt: string }>;
   lastSyncAt: string | null;
   /** Device time when the last pushed snapshot was taken: records saved after it go up next sync. */
@@ -77,7 +79,8 @@ type StoreValue = Omit<Persisted, 'tombstones'> & {
   saveTransporter: (transporter: Omit<Transporter, 'id' | 'updatedAt'> & { id?: string }) => Promise<Transporter>;
   removeTransporter: (id: string) => Promise<void>;
   upsertEwb: (ewb: EwbRecord) => void;
-  refreshEwbs: () => Promise<void>;
+  /** `full`: the whole list (pull to refresh); otherwise only the bills changed since the last list. */
+  refreshEwbs: (options?: { full?: boolean }) => Promise<void>;
   setGstCache: (key: string, snapshots: GstSnapshot[]) => void;
   refreshServices: () => Promise<void>;
   refreshSubscription: () => Promise<void>;
@@ -305,12 +308,18 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     }
   }, [handleError, update, workspaceId]);
 
-  const refreshEwbs = useCallback(async () => {
+  const refreshEwbs = useCallback(async (options?: { full?: boolean }) => {
     if (!workspaceId) return;
     try {
-      const result = await api.listEwbs();
+      const result = await api.listEwbs(options?.full ? undefined : dataRef.current.ewbsSince ?? undefined);
       setOnline(true);
-      update((state) => ({ ...state, ewbs: result.ewbs, ewbsFetchedAt: new Date().toISOString(), invoices: linkInvoices(state.invoices, result.ewbs) }));
+      update((state) => {
+        // A partial list holds only the changed bills: merge them in by id.
+        const ewbs = result.full === false
+          ? [...new Map([...state.ewbs, ...result.ewbs].map((ewb) => [ewb.id, ewb])).values()].sort((a, b) => b.generatedAt.localeCompare(a.generatedAt))
+          : result.ewbs;
+        return { ...state, ewbs, ewbsFetchedAt: new Date().toISOString(), ewbsSince: result.serverTime ?? null, invoices: linkInvoices(state.invoices, ewbs) };
+      });
     } catch (error) {
       handleError(error);
       throw error;
@@ -368,6 +377,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     void refreshServices();
     void refreshSubscription();
     void refreshWallet();
+    // Only the bills changed since the last list; pull to refresh fetches them all.
     void refreshEwbs().catch(() => undefined);
     void syncNow();
     let backgroundAt = 0;

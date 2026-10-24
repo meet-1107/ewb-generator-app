@@ -80,7 +80,7 @@ export default function EwbRegisterScreen() {
   const refresh = async () => {
     setRefreshing(true);
     try {
-      await store.refreshEwbs();
+      await store.refreshEwbs({ full: true });
     } catch (error) {
       dialog.toast((error as Error).message, 'danger');
     } finally {

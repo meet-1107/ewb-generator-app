@@ -2,7 +2,7 @@ import React from 'react';
 import { StyleSheet, View } from 'react-native';
 import { TextBlock } from '@/components/AppUI';
 import { useColors } from '@/hooks/useColors';
-import { amountInWords, formatDate, formatInr, hasDispatch, hasShipTo, invoiceTotals, lineTax, type Invoice, type Signature } from '@/lib/domain';
+import { amountInWords, formatDate, formatInr, formatRoundOff, hasDispatch, hasShipTo, invoiceTotals, lineTax, type Invoice, type Signature } from '@/lib/domain';
 import { SignatureView } from '@/components/SignatureView';
 
 /** The invoice laid out like the printed copy, for checking before it is saved. */
@@ -23,10 +23,10 @@ export function InvoicePreview({ invoice, signature }: { invoice: Invoice; signa
     </View>
   );
 
-  const money = (label: string, value: number, strong = false) => (
+  const money = (label: string, value: number | string, strong = false) => (
     <View style={styles.totalRow} key={label}>
       <TextBlock size={strong ? 14 : 12} weight={strong ? 'bold' : 'regular'} color={strong ? undefined : muted}>{label}</TextBlock>
-      <TextBlock size={strong ? 14 : 12} weight={strong ? 'bold' : 'semibold'}>{formatInr(value)}</TextBlock>
+      <TextBlock size={strong ? 14 : 12} weight={strong ? 'bold' : 'semibold'}>{typeof value === 'string' ? value : formatInr(value)}</TextBlock>
     </View>
   );
 
@@ -82,6 +82,7 @@ export function InvoicePreview({ invoice, signature }: { invoice: Invoice; signa
       <View style={styles.totals}>
         {money('Taxable value', totals.taxable)}
         {invoice.supplyType === 'intra' ? [money('CGST', totals.cgst), money('SGST', totals.sgst)] : money('IGST', totals.igst)}
+        {totals.roundOff ? money('Round off', formatRoundOff(totals.roundOff)) : null}
         <View style={[styles.grand, { borderTopColor: colors.primary }]}>{money('Total', totals.total, true)}</View>
       </View>
       <View style={{ gap: 2 }}>

@@ -180,7 +180,8 @@ export const api = {
   acceptConsent: (version: string, method: 'signup' | 'google' | 'prompt') => request<{ version: string; acceptedAt: string }>('/consent', { body: { version, method }, timeoutMs: 15_000 }),
   validateEwb: (input: unknown) => request<{ issues: ProviderIssue[]; warnings: string[]; provider: ProviderInfo }>('/ewb/validate', { body: { input } }),
   generateEwb: (idempotencyKey: string, input: unknown) => request<{ ewb: EwbRecord; replay?: boolean; balance?: number }>('/ewb/generate', { body: { idempotencyKey, input }, timeoutMs: 45_000 }),
-  listEwbs: () => request<{ ewbs: EwbRecord[]; provider: ProviderInfo }>('/ewb'),
+  /** With `since` (an earlier list's `serverTime`), only the bills changed after it (`full: false`); servers before this read sent no `full` or `serverTime`. */
+  listEwbs: (since?: string) => request<{ ewbs: EwbRecord[]; full?: boolean; serverTime?: string; provider: ProviderInfo }>(since ? `/ewb?since=${encodeURIComponent(since)}` : '/ewb'),
   getEwb: (id: string) => request<{ ewb: EwbRecord }>(`/ewb/${encodeURIComponent(id)}`),
   ewbAction: (id: string, body: { action: 'cancel'; reason: string } | ({ action: 'extend'; reason: string; remainingKm: number; fromPincode?: string } & Movement) | ({ action: 'update_vehicle'; reason: string; vehicleNumber: string } & Movement)) =>
     request<{ ewb: EwbRecord; balance?: number }>(`/ewb/${encodeURIComponent(id)}/actions`, { body, timeoutMs: 45_000 }),

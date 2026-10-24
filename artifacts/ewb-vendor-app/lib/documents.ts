@@ -10,6 +10,7 @@ import {
   hasDispatch,
   hasShipTo,
   invoiceTotals,
+  isPurchase,
   lineTax,
   signatureHtml,
   type Signature,
@@ -53,9 +54,8 @@ export function invoiceHtml(invoice: Invoice, signature?: Signature) {
   const service = template.id === 'service';
   const accent = minimal ? '#3c4a43' : template.accent;
   const totals = invoiceTotals(invoice);
-  // The printed bill is rounded to the nearest rupee; the e-way bill keeps the exact value.
-  const billPaise = Math.round(totals.total / 100) * 100;
-  const roundOff = billPaise - totals.total;
+  const billPaise = totals.total;
+  const roundOff = totals.roundOff;
   const lines = invoice.lines.filter((line) => line.description.trim() || line.taxablePaise);
   const discounted = lines.some((line) => line.discountPaise);
   const party = (title: string, name: string, gstin: string, address: string, state: string, pin: string) => `
@@ -183,6 +183,28 @@ export async function printHtml(html: string) {
   await Print.printAsync({ html });
 }
 
+/** Name for an invoice's PDF: its document type and number, e.g. "Tax Invoice-INV-05", "Bill of Supply-12". */
+export function invoicePdfLabel(invoice: Invoice) {
+  const type = isPurchase(invoice) ? 'Purchase' : invoice.documentType || 'Tax invoice';
+  const title = type.replace(/\b\w+/g, (word) => (word.toLowerCase() === 'of' ? 'of' : word[0]!.toUpperCase() + word.slice(1)));
+  return `${title}-${invoice.invoiceNumber.trim() || 'Draft'}`;
+}
+
+/** File name for a PDF: the label without characters file systems refuse ("/" in "FY26-27/305"). */
+function pdfFileName(fileLabel: string) {
+  return `${fileLabel.replace(/[\\/:*?"<>|]+/g, '-').replace(/\s+/g, ' ').trim() || 'Document'}.pdf`;
+}
+
+/** A copy of a rendered PDF named after `fileLabel`, so the apps it is shared to show that name, not a random one. */
+async function namedPdf(uri: string, fileLabel: string) {
+  const dir = `${LegacyFS.cacheDirectory}shared-pdf/`;
+  await LegacyFS.makeDirectoryAsync(dir, { intermediates: true }).catch(() => undefined);
+  const target = `${dir}${encodeURIComponent(pdfFileName(fileLabel))}`;
+  await LegacyFS.deleteAsync(target, { idempotent: true });
+  await LegacyFS.copyAsync({ from: uri, to: target });
+  return target;
+}
+
 /** Renders a PDF and opens the OS share sheet (web falls back to the print dialog). */
 export async function shareHtmlAsPdf(html: string, fileLabel: string) {
   if (Platform.OS === 'web') {
@@ -190,8 +212,7 @@ export async function shareHtmlAsPdf(html: string, fileLabel: string) {
     return 'printed';
   }
   const { uri } = await Print.printToFileAsync({ html });
-  if (!(await Sharing.isAvailableAsync())) throw new Error('Sharing is not available on this device.');
-  await Sharing.shareAsync(uri, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf', dialogTitle: fileLabel });
+  await sharePdfFile(uri, fileLabel);
   return 'shared';
 }
 
@@ -208,7 +229,7 @@ export type SavedPdf = { status: 'saved'; fileName: string; uri: string } | { st
 export async function downloadHtmlAsPdf(html: string, fileLabel: string): Promise<SavedPdf> {
   if (Platform.OS !== 'android') return { status: await shareHtmlAsPdf(html, fileLabel) as 'printed' | 'shared' };
   const { uri } = await Print.printToFileAsync({ html });
-  const fileName = `${fileLabel.replace(/[^\w.-]+/g, '_')}.pdf`;
+  const fileName = pdfFileName(fileLabel);
   const data = await LegacyFS.readAsStringAsync(uri, { encoding: LegacyFS.EncodingType.Base64 });
   const SAF = LegacyFS.StorageAccessFramework;
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -235,5 +256,5 @@ export async function downloadHtmlAsPdf(html: string, fileLabel: string): Promis
 /** Opens the share sheet for a PDF already rendered on the phone. */
 export async function sharePdfFile(uri: string, fileLabel: string) {
   if (!(await Sharing.isAvailableAsync())) throw new Error('Sharing is not available on this device.');
-  await Sharing.shareAsync(uri, { mimeType: 'application/pdf', UTI: 'com.adobe.pdf', dialogTitle: fileLabel });
+  await Sharing.shareAsync(await namedPdf(uri, fileLabel), { mimeType: 'application/pdf', UTI: 'com.adobe.pdf', dialogTitle: fileLabel });
 }

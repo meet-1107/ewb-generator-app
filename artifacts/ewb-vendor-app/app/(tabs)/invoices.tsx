@@ -5,10 +5,10 @@ import { Feather } from '@expo/vector-icons';
 import { useColors } from '@/hooks/useColors';
 import { useLoadMore } from '@/hooks/useLoadMore';
 import { useDeleteInvoice } from '@/hooks/useDeleteInvoice';
-import { formatInr, invoiceTotals, type Invoice } from '@/lib/domain';
-import { invoiceHtml, printHtml, shareHtmlAsPdf } from '@/lib/documents';
+import { formatRupees, invoiceTotals, type Invoice } from '@/lib/domain';
+import { invoiceHtml, invoicePdfLabel, printHtml, shareHtmlAsPdf } from '@/lib/documents';
 import { useAppStore, useScopedRecords } from '@/state/app-store';
-import { Button, Card, Chip, ChipRow, EmptyState, Field, Heading, IconButton, LoadMore, Notice, Page, SearchBar, SectionTitle, SelectSheet, Sheet, TextBlock } from '@/components/AppUI';
+import { Button, Card, Chip, ChipRow, EmptyState, Field, Heading, IconButton, LoadMore, Notice, Page, SearchBar, SectionTitle, SelectSheet, Sheet, TextBlock, TotalBanner } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
 import InvoiceCard from '@/components/InvoiceCard';
 import { AccountButton } from '@/components/Brand';
@@ -64,6 +64,7 @@ export function InvoicesScreen({ stacked = false }: { stacked?: boolean }) {
     }
   }, [params.period, params.from, params.to]);
 
+  const issued = useMemo(() => invoices.filter((item) => item.status !== 'draft'), [invoices]);
   const pending = useMemo(() => invoices.filter((item) => item.status === 'ready' && item.ewbRequired !== false).length, [invoices]);
 
   // Parties that have invoices, with how many each.
@@ -110,7 +111,7 @@ export function InvoicesScreen({ stacked = false }: { stacked?: boolean }) {
     if (choice.choice === 'Open') openInvoice(invoice);
     if (choice.choice === 'Edit invoice') router.push(`/invoice/${invoice.id}`);
     try {
-      if (choice.choice === 'Share as PDF') await shareHtmlAsPdf(invoiceHtml(invoice, store.business?.signature), invoice.invoiceNumber || 'Invoice');
+      if (choice.choice === 'Share as PDF') await shareHtmlAsPdf(invoiceHtml(invoice, store.business?.signature), invoicePdfLabel(invoice));
       if (choice.choice === 'Print invoice') await printHtml(invoiceHtml(invoice, store.business?.signature));
     } catch (error) {
       dialog.toast((error as Error).message || 'Could not open the document', 'danger');
@@ -130,6 +131,13 @@ export function InvoicesScreen({ stacked = false }: { stacked?: boolean }) {
         title={stacked ? 'Sales' : 'Invoices'}
         subtitle={`${invoices.length} invoice${invoices.length === 1 ? '' : 's'}${pending ? ` · ${pending} e-way bill${pending === 1 ? '' : 's'} pending` : ''}`}
         right={stacked ? undefined : <AccountButton />}
+      />
+      {/* Total sales as on the dashboard: drafts are not sales yet. */}
+      <TotalBanner
+        label="Total sales"
+        amount={formatRupees(issued.reduce((sum, invoice) => sum + invoiceTotals(invoice).total, 0))}
+        detail={`${issued.length} invoice${issued.length === 1 ? '' : 's'}${invoices.length > issued.length ? ` · ${invoices.length - issued.length} draft${invoices.length - issued.length === 1 ? '' : 's'} not counted` : ''}`}
+        testID="sales-total"
       />
       {params.for === 'ewb' ? (
         <Notice
@@ -162,7 +170,7 @@ export function InvoicesScreen({ stacked = false }: { stacked?: boolean }) {
         <Card style={styles.partySummary}>
           <View style={{ flex: 1, gap: 2 }}>
             <TextBlock size={15} weight="bold" numberOfLines={1}>{party}</TextBlock>
-            <TextBlock size={12} color={colors.mutedForeground}>{filtered.length} invoice{filtered.length === 1 ? '' : 's'} · {formatInr(filtered.reduce((sum, invoice) => sum + invoiceTotals(invoice).total, 0))}</TextBlock>
+            <TextBlock size={12} color={colors.mutedForeground}>{filtered.length} invoice{filtered.length === 1 ? '' : 's'} · {formatRupees(filtered.reduce((sum, invoice) => sum + invoiceTotals(invoice).total, 0))}</TextBlock>
           </View>
           <Button title="Change" size="sm" variant="outline" onPress={() => setPartyPicker(true)} />
         </Card>
@@ -212,7 +220,7 @@ export function InvoicesScreen({ stacked = false }: { stacked?: boolean }) {
         title="Invoices of which party?"
         value={party}
         emptyText="No invoices with a buyer yet."
-        options={[{ value: '', label: 'All parties', detail: `${invoices.length} invoices` }, ...parties.map((item) => ({ value: item.name, label: item.name, detail: `${item.count} invoice${item.count === 1 ? '' : 's'} · ${formatInr(item.total)}` }))]}
+        options={[{ value: '', label: 'All parties', detail: `${invoices.length} invoices` }, ...parties.map((item) => ({ value: item.name, label: item.name, detail: `${item.count} invoice${item.count === 1 ? '' : 's'} · ${formatRupees(item.total)}` }))]}
         onSelect={(value) => { setParty(value); list.reset(); setPartyPicker(false); }}
       />
 

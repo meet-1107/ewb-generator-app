@@ -394,8 +394,20 @@ export function paiseToInput(paise: number) {
 const inr = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2, minimumFractionDigits: 2 });
 const inrCompact = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', notation: 'compact', maximumFractionDigits: 1 });
 
+const inrWhole = new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0, minimumFractionDigits: 0 });
+
 export function formatInr(paise: number, compact = false) {
   return (compact ? inrCompact : inr).format(paise / 100);
+}
+
+/** Round off to the nearest rupee, signed: "+ ₹0.40", "− ₹0.25". */
+export function formatRoundOff(paise: number) {
+  return `${paise > 0 ? '+ ' : paise < 0 ? '− ' : ''}${formatInr(Math.abs(paise))}`;
+}
+
+/** Whole rupees, rounded: for totals of sales, purchases and their difference. */
+export function formatRupees(paise: number) {
+  return inrWhole.format(Math.round(paise / 100));
 }
 
 export function formatDate(iso: string, withTime = false) {
@@ -449,13 +461,18 @@ export function invoiceTotals(invoice: Pick<Invoice, 'lines' | 'supplyType'>) {
   const taxable = invoice.lines.reduce((sum, line) => sum + line.taxablePaise, 0);
   const tax = invoice.lines.reduce((sum, line) => sum + lineTax(line), 0);
   const halfTax = invoice.supplyType === 'intra' ? Math.round(tax / 2) : 0;
+  // Invoices and purchase bills total to the nearest rupee; the e-way bill keeps the exact value.
+  const exact = taxable + tax;
+  const total = Math.round(exact / 100) * 100;
   return {
     taxable,
     tax,
     cgst: halfTax,
     sgst: invoice.supplyType === 'intra' ? tax - halfTax : 0,
     igst: invoice.supplyType === 'inter' ? tax : 0,
-    total: taxable + tax,
+    exact,
+    roundOff: total - exact,
+    total,
   };
 }
 
@@ -590,7 +607,7 @@ export function toEwbInput(invoice: Invoice) {
       docDate: invoice.transportDocDate.trim() || undefined,
       vehicleType: invoice.vehicleType,
     },
-    totals: { taxable: totals.taxable, tax: totals.tax, total: totals.total },
+    totals: { taxable: totals.taxable, tax: totals.tax, total: totals.exact },
   };
 }
 
@@ -676,7 +693,7 @@ function seriesOf(invoiceNumber: string) {
   return match ? `${match[1]!.toLowerCase()}#${match[3]!.toLowerCase()}` : null;
 }
 
-export const DOCUMENT_TYPES = ['Tax invoice', 'Bill of supply', 'Delivery challan', 'Credit note'];
+export const DOCUMENT_TYPES = ['Tax invoice', 'Bill of supply', 'Delivery challan', 'Credit note', 'Debit note'];
 
 /** Same document type (Tax invoice, Bill of supply, …), ignoring case; older invoices without one are tax invoices. */
 export function sameDocumentType(invoice: Pick<Invoice, 'documentType'>, documentType: string) {

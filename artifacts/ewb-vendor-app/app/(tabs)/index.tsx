@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
+import { useWelcomeCredits } from '@/hooks/useWelcomeCredits';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useColors } from '@/hooks/useColors';
@@ -9,7 +10,7 @@ import {
   ewbStatusMeta,
   financialYear,
   formatDate,
-  formatInr,
+  formatRupees,
   invoiceTotals,
   istDate,
   liveEwbStatus,
@@ -60,10 +61,11 @@ export default function DashboardScreen() {
   }, [store.workspaceId]);
   const wallet = store.wallet;
   const lowCredits = Boolean(wallet && wallet.balance < wallet.costs.generate);
+  const welcomeCredits = useWelcomeCredits();
 
   const refresh = async () => {
     setRefreshing(true);
-    await Promise.allSettled([store.refreshEwbs(), store.syncNow(), store.refreshServices(), store.refreshWallet()]);
+    await Promise.allSettled([store.refreshEwbs({ full: true }), store.syncNow(), store.refreshServices(), store.refreshWallet()]);
     setRefreshing(false);
   };
 
@@ -148,7 +150,7 @@ export default function DashboardScreen() {
       <LinearGradient colors={[colors.heroStart, colors.heroEnd]} start={{ x: 0, y: 0 }} end={{ x: 1, y: 1 }} style={styles.hero}>
         <View style={styles.heroDecor} />
         <TextBlock size={11} weight="bold" color={colors.heroMuted} style={{ letterSpacing: 1 }}>TOTAL SALES · {fy.label}</TextBlock>
-        <TextBlock size={32} weight="bold" color={colors.heroText} style={{ letterSpacing: -1 }}>{formatInr(stats.sales)}</TextBlock>
+        <TextBlock size={32} weight="bold" color={colors.heroText} style={{ letterSpacing: -1 }} fit>{formatRupees(stats.sales)}</TextBlock>
         <TextBlock size={12} color={colors.heroMuted}>{formatDate(fy.from)} – {formatDate(today())} · {stats.issuedCount} invoice{stats.issuedCount === 1 ? '' : 's'}{stats.drafts ? ` · ${stats.drafts} draft${stats.drafts === 1 ? '' : 's'} not counted` : ''}</TextBlock>
         <View style={styles.heroActions}>
           <Pressable onPress={() => router.push('/invoice/new')} style={({ pressed }) => [styles.heroButton, { backgroundColor: colors.warmAccent, opacity: pressed ? 0.85 : 1 }]} accessibilityRole="button" testID="dashboard-new-invoice">
@@ -163,10 +165,10 @@ export default function DashboardScreen() {
       </LinearGradient>
 
       <View style={styles.stats}>
-        <MoneyCard label="Total purchase" value={formatInr(stats.purchases)} hint={`${stats.purchaseCount} bill${stats.purchaseCount === 1 ? '' : 's'} · ${fy.label}`} onPress={() => router.push('/purchases')} testID="stat-purchases" />
+        <MoneyCard label="Total purchase" value={formatRupees(stats.purchases)} hint={`${stats.purchaseCount} bill${stats.purchaseCount === 1 ? '' : 's'} · ${fy.label}`} onPress={() => router.push('/purchases')} testID="stat-purchases" />
         <MoneyCard
           label="Difference"
-          value={`${difference > 0 ? '+ ' : difference < 0 ? '− ' : ''}${formatInr(Math.abs(difference))}`}
+          value={`${difference > 0 ? '+ ' : difference < 0 ? '− ' : ''}${formatRupees(Math.abs(difference))}`}
           hint="Sales − Purchase"
           color={difference > 0 ? colors.successForeground : difference < 0 ? colors.dangerForeground : undefined}
           testID="stat-difference"
@@ -181,10 +183,10 @@ export default function DashboardScreen() {
       {sandbox ? <Notice title="Sandbox mode" body="E-way bills come from a test provider. Nothing is sent to the government portal — use test data only." tone="warning" /> : null}
       {store.online === false ? <Notice title="You're offline" body="Drafts keep saving on this device. E-way bill generation needs a connection and is never queued." tone="info" /> : null}
       {store.storageError ? <Notice title="Storage problem" body={store.storageError} tone="danger" /> : null}
-      {wallet?.welcomeCredits ? (
+      {welcomeCredits ? (
         <Notice
           tone="success"
-          title={`Get ${wallet.welcomeCredits} free credits`}
+          title={`Get ${welcomeCredits} free credits`}
           body="Save your e-way bill portal API login for your GSTIN. Once the portal accepts it, the free credits are added to your wallet. Once per GSTIN."
           action="Add portal login"
           onAction={() => router.push('/ewb-login')}
@@ -254,14 +256,15 @@ function MoneyCard({ label, value, hint, color, onPress, testID }: { label: stri
     <Pressable onPress={onPress} disabled={!onPress} testID={testID} accessibilityRole={onPress ? 'button' : undefined} accessibilityLabel={`${label}: ${value}`}
       style={({ pressed }) => [styles.money, { backgroundColor: colors.card, borderColor: colors.border }, pressed && { opacity: 0.85 }]}>
       <TextBlock size={12} weight="medium" color={colors.mutedForeground}>{label}</TextBlock>
-      <TextBlock size={17} weight="bold" color={color} numberOfLines={1}>{value}</TextBlock>
+      <TextBlock size={17} weight="bold" color={color} fit>{value}</TextBlock>
       <TextBlock size={11} color={colors.mutedForeground} numberOfLines={1}>{hint}</TextBlock>
     </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
-  money: { flex: 1, minWidth: 140, borderWidth: 1, borderRadius: 18, padding: 14, gap: 3 },
+  // flexBasis 0: both cards stay half the row however long the amount is.
+  money: { flex: 1, flexBasis: 0, minWidth: 140, borderWidth: 1, borderRadius: 18, padding: 14, gap: 3 },
   help: { height: 40, paddingHorizontal: 12, borderRadius: 20, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },
   page: { gap: 16 },
   topline: { flexDirection: 'row', alignItems: 'center', gap: 8 },

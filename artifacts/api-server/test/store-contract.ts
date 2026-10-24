@@ -62,6 +62,26 @@ export function storeContract(name: string, load: () => Promise<typeof Store>) {
       if (name === "firestore") assert.deepEqual(later, ["mine", "new"]);
     });
 
+    it("stamps changedAt on saved e-way bills and loads those changed after `since`", async () => {
+      const { withWorkspace } = await load();
+      const id = workspaceId();
+      await withWorkspace(id, (ws) => { ws.ewbs["a"] = bill("a"); ws.ewbs["b"] = bill("b"); }, { ewbs: [] });
+      const first = await withWorkspace(id, (ws) => Object.fromEntries(Object.values(ws.ewbs).map((e) => [e.id, e.changedAt])), { ewbs: "all" });
+      assert.ok(first["a"] && first["b"], "both bills stamped");
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      const mark = new Date().toISOString();
+      await new Promise((resolve) => setTimeout(resolve, 15));
+      // Only "b" changes; reading "a" without changing it keeps its stamp.
+      await withWorkspace(id, (ws) => { ws.ewbs["b"]!.status = "cancelled"; return ws.ewbs["a"]!.status; }, { ewbs: ["a", "b"] });
+      const after = await withWorkspace(id, (ws) => Object.fromEntries(Object.values(ws.ewbs).map((e) => [e.id, e.changedAt])), { ewbs: "all" });
+      assert.equal(after["a"], first["a"]);
+      assert.ok(after["b"]! > mark);
+      const changed = await withWorkspace(id, (ws) => Object.values(ws.ewbs).filter((e) => (e.changedAt ?? "") > mark).map((e) => e.id), { ewbs: { since: mark } });
+      assert.deepEqual(changed, ["b"]);
+      // Firestore reads only the changed bill; the file store loads every bill.
+      if (name === "firestore") assert.deepEqual(await withWorkspace(id, (ws) => Object.keys(ws.ewbs), { ewbs: { since: mark } }), ["b"]);
+    });
+
     it("refuses sections that were not requested and saves nothing when fn throws", async () => {
       const { withWorkspace } = await load();
       const id = workspaceId();

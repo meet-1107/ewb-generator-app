@@ -4,7 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Card, Chip, ChipRow, Divider, Field, KeyValue, ScreenHeader, SectionTitle, Segmented, SelectSheet, TextBlock } from '@/components/AppUI';
 import { useColors } from '@/hooks/useColors';
 import { usePdfActions } from '@/hooks/usePdfActions';
-import { DOCUMENT_TYPES, formatInr } from '@/lib/domain';
+import { DOCUMENT_TYPES, formatInr, formatRupees } from '@/lib/domain';
 import { partyOf, reportEwbs, reportHtml, reportInvoices, salesSummary, type ReportFilter } from '@/lib/reports';
 import { useAppStore, useScopedRecords } from '@/state/app-store';
 
@@ -23,6 +23,20 @@ function financialYear(date: string, back = 0): [string, string] {
   const [year, month] = date.split('-').map(Number) as [number, number];
   const start = (month >= 4 ? year : year - 1) - back;
   return [`${start}-04-01`, `${start + 1}-03-31`];
+}
+
+const shortMonth = (date: string) => new Date(`${date}T00:00:00+05:30`).toLocaleString('en-IN', { month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
+const shortDate = (date: string) => new Date(`${date}T00:00:00+05:30`).toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' });
+
+/** The period in a report's file name: "Oct 2026", "FY 2025-26", "FY 2026-27 (till 24 Oct 2026)" or "24 Jul 2026 to 24 Oct 2026". */
+function periodFileLabel(from: string, to: string) {
+  if (from.slice(0, 7) === to.slice(0, 7) && from.endsWith('-01') && to === monthEnd(to.slice(0, 7))) return shortMonth(from);
+  const [fyFrom, fyTo] = financialYear(from);
+  if (from === fyFrom && to <= fyTo) {
+    const fy = `FY ${fyFrom.slice(0, 4)}-${fyTo.slice(2, 4)}`;
+    return to === fyTo ? fy : `${fy} (till ${shortDate(to)})`;
+  }
+  return `${shortDate(from)} to ${shortDate(to)}`;
 }
 
 /**
@@ -75,10 +89,10 @@ export default function ReportsScreen() {
   const summary = salesSummary(chosenInvoices);
   const empty = (kind !== 'ewb' ? chosenInvoices.length : 0) + chosenEwbs.length === 0;
 
+  // "Purchase Report-Oct 2026", "Sales Report-FY 2025-26", "EWB Report-24 Jul 2026 to 24 Oct 2026-J K INDUSTRIES".
   const fileLabel = () => {
-    const what = kind === 'sales' ? 'Sales report' : purchase ? 'Purchase report' : kind === 'ewb' ? 'EWB report' : 'Sales & EWB report';
-    const when = mode === 'month' ? month : `${from} to ${to}`;
-    return `${what} ${when}${party ? ` ${party}` : ''}${documentType ? ` ${documentType}` : ''}`;
+    const what = kind === 'sales' ? 'Sales Report' : purchase ? 'Purchase Report' : kind === 'ewb' ? 'EWB Report' : 'Sales & EWB Report';
+    return [what, periodFileLabel(filter.from, filter.to), party, documentType].filter(Boolean).join('-');
   };
 
   const run = async (action: 'download' | 'share') => {
@@ -149,7 +163,7 @@ export default function ReportsScreen() {
               <Divider />
               <KeyValue label="GST (CGST + SGST + IGST)" value={formatInr(summary.cgst + summary.sgst + summary.igst)} />
               <Divider />
-              <KeyValue label={purchase ? 'Total purchases' : 'Total sales'} value={formatInr(summary.total)} strong />
+              <KeyValue label={purchase ? 'Total purchases' : 'Total sales'} value={formatRupees(summary.total)} strong />
             </>
           ) : null}
           {showEwbs ? (

@@ -8,6 +8,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Card, Chip, ChipRow, Divider, EmptyState, Field, KeyValue, ListRow, Notice, ScreenHeader, SectionTitle, Sheet, StatCard, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
 import { useColors } from '@/hooks/useColors';
+import { useWelcomeCredits } from '@/hooks/useWelcomeCredits';
 import { api, ApiError, SUPPORT_EMAIL, type CreditPurchase, type WalletAction, type WalletEntry, type WalletSummary } from '@/lib/api';
 import { formatDate } from '@/lib/domain';
 import { useAppStore } from '@/state/app-store';
@@ -34,6 +35,7 @@ export default function WalletScreen() {
   const buyGuard = useRef(false);
   const [custom, setCustom] = useState('');
   const wallet = store.wallet;
+  const welcomeCredits = useWelcomeCredits();
   const pricing = wallet?.pricing;
   const rupees = (credits: number) => `₹${((credits * (pricing?.creditPricePaise ?? 100)) / 100).toLocaleString('en-IN')}`;
   /** Pack chosen on the balance card; the middle pack until the user picks one. */
@@ -224,8 +226,8 @@ export default function WalletScreen() {
           ) : null}
         </Card>
 
-        {wallet?.welcomeCredits ? (
-          <Notice tone="success" title={`Get ${wallet.welcomeCredits} free credits`} body="Save your e-way bill portal API login for your GSTIN and we add free credits to try E-Way Easy. Once per GSTIN." action="Add portal login" onAction={() => router.push('/ewb-login')} />
+        {welcomeCredits ? (
+          <Notice tone="success" title={`Get ${welcomeCredits} free credits`} body="Save your e-way bill portal API login for your GSTIN and we add free credits to try E-Way Easy. Once per GSTIN." action="Add portal login" onAction={() => router.push('/ewb-login')} />
         ) : wallet && wallet.balance < wallet.costs.generate ? (
           <Notice tone="warning" title="Low balance" body={`Generating an e-way bill needs ${wallet.costs.generate} credits. Add credits to keep generating.`} />
         ) : null}

@@ -17,8 +17,9 @@ import type { EwbInput } from "./validation";
  *
  * Callers name the large sections they use, so a request reads only those
  * records: `{ ewbs: "all" }` loads every bill, `{ ewbs: [id] }` only that one,
- * `{ ewbs: [] }` none (new records can still be added). Touching a section
- * that was not named throws, on both backends.
+ * `{ ewbs: [] }` none (new records can still be added), `{ ewbs: { since } }`
+ * those changed after `since` (see `changedAt`). Touching a section that was
+ * not named throws, on both backends.
  */
 
 export type EwbStatus = "active" | "expired" | "cancelled" | "part_b_pending";
@@ -62,6 +63,11 @@ export type EwbRecord = {
   nicDistanceKm?: number;
   createdAt: string;
   updatedAt: string;
+  /**
+   * When the server last saved a change to this bill, set by the store on every write
+   * (and once on old bills when they are next loaded), so the list can send only what changed.
+   */
+  changedAt?: string;
 };
 
 export type EwbRequest = {
@@ -185,7 +191,19 @@ export type Section = (typeof SECTIONS)[number];
  * record changed after `since`, so a sync reads only what changed.
  */
 export type SyncSpec = "all" | { keys: string[]; since?: string };
-export type SectionSpec = { [K in Exclude<Section, "sync">]?: "all" | string[] } & { sync?: SyncSpec };
+/** E-way bills changed after `since` (their `changedAt`). */
+export type ChangedSpec = { since: string };
+export type SectionSpec = { [K in Exclude<Section, "sync" | "ewbs">]?: "all" | string[] } & { ewbs?: "all" | string[] | ChangedSpec; sync?: SyncSpec };
+
+/**
+ * Stamps `changedAt` on every e-way bill that is new, changed by this call, or has none yet.
+ * `before` is the bill's stored JSON (undefined when it was not stored or not loaded).
+ */
+function stampChangedEwbs(ewbs: Record<string, EwbRecord>, before: (key: string) => string | undefined, now: string) {
+  for (const [key, record] of Object.entries(ewbs)) {
+    if (!record.changedAt || before(key) !== JSON.stringify(record)) record.changedAt = now;
+  }
+}
 type Core = Omit<Workspace, Section>;
 
 const backend = process.env["STORE"] === "firestore" ? "firestore" : "file";
@@ -302,8 +320,10 @@ function fileWorkspace<T>(id: string, fn: (workspace: Workspace) => T | Promise<
   const previous = queues.get(id) ?? Promise.resolve();
   const next = previous.catch(() => undefined).then(async () => {
     // fn works on a copy, so a throw leaves the workspace exactly as it was.
-    const workspace = structuredClone(await loadFile(id));
+    const stored = await loadFile(id);
+    const workspace = structuredClone(stored);
     const result = await fn(guard(workspace, spec));
+    stampChangedEwbs(workspace.ewbs, (key) => (stored.ewbs[key] ? JSON.stringify(stored.ewbs[key]) : undefined), new Date().toISOString());
     await writeJson(workspaceFile(id), workspace);
     cache.set(id, workspace);
     return result;
@@ -360,14 +380,17 @@ function docId(key: string) {
   return encoded.length <= 700 ? encoded : `h${createHash("sha256").update(key).digest("hex")}`;
 }
 
-/** One stored record of a large section. `name` is the sync collection, for `sync` only. */
-type RecordDoc = { key: string; name?: string; json: string; updatedAt?: string };
+/** One stored record of a large section. `name` is the sync collection, for `sync` only; `changedAt` is queried, for `ewbs` only. */
+type RecordDoc = { key: string; name?: string; json: string; updatedAt?: string; changedAt?: string };
 
 function sectionEntries(workspace: Workspace, section: Section): { id: string; doc: RecordDoc }[] {
   if (section === "sync") {
     return Object.entries(workspace.sync).flatMap(([name, records]) =>
       Object.entries(records).map(([key, record]) => ({ id: docId(`${name}/${key}`), doc: { key, name, json: JSON.stringify(record), updatedAt: record.receivedAt ?? record.updatedAt } })),
     );
+  }
+  if (section === "ewbs") {
+    return Object.entries(workspace.ewbs).map(([key, record]) => ({ id: docId(key), doc: { key, json: JSON.stringify(record), ...(record.changedAt ? { changedAt: record.changedAt } : {}) } }));
   }
   return Object.entries(workspace[section] as Record<string, unknown>).map(([key, record]) => ({ id: docId(key), doc: { key, json: JSON.stringify(record) } }));
 }
@@ -388,6 +411,10 @@ async function firestoreWorkspace<T>(id: string, fn: (workspace: Workspace) => T
     const loaded = await Promise.all(sections.map(async (section) => {
       const wanted = spec[section]!;
       if (wanted === "all") return (await tx.get(root.collection(section))).docs;
+      if (!Array.isArray(wanted) && !("keys" in wanted)) {
+        // ewbs: only the bills changed after `since`.
+        return (await tx.get(root.collection(section).where("changedAt", ">", wanted.since))).docs;
+      }
       if (!Array.isArray(wanted)) {
         // sync: the named records plus those changed after `since`, read once each.
         const named = wanted.keys.length ? await tx.getAll(...[...new Set(wanted.keys)].map((key) => root.collection(section).doc(docId(key)))) : [];
@@ -414,6 +441,7 @@ async function firestoreWorkspace<T>(id: string, fn: (workspace: Workspace) => T
     });
 
     const result = await fn(guard(workspace, spec));
+    if (spec.ewbs !== undefined) stampChangedEwbs(workspace.ewbs, (key) => before.get(`ewbs/${docId(key)}`), new Date().toISOString());
 
     const coreAfter = JSON.stringify(coreOf(workspace));
     if (coreAfter !== coreBefore) {

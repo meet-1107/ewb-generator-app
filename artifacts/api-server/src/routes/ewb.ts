@@ -283,11 +283,24 @@ router.post("/ewb/generate", async (req, res) => {
   return res.status(201).json({ ewb: outcome.record, balance: outcome.wallet });
 });
 
+/** A bill saved while a list was being read can carry a `changedAt` a little before that list's `serverTime`. */
+const LIST_OVERLAP_MS = 5 * 60_000;
+
+/**
+ * The account's e-way bills, newest first. With `since` (the `serverTime` of an earlier list),
+ * only the bills changed after it (`full: false`), for the app to merge into the list it has.
+ */
 router.get("/ewb", async (req, res) => {
+  const serverTime = new Date().toISOString();
+  const since = typeof req.query["since"] === "string" && !Number.isNaN(Date.parse(req.query["since"])) ? new Date(Date.parse(req.query["since"]) - LIST_OVERLAP_MS).toISOString() : null;
   const ewbs = await withWorkspace(req.workspaceId, (workspace) =>
-    Object.values(workspace.ewbs).map((ewb) => refreshStatus(ewb)).sort((a, b) => b.generatedAt.localeCompare(a.generatedAt)),
-  { ewbs: "all" });
-  res.json({ ewbs, provider: ewbProvider ? { id: ewbProvider.id, label: ewbProvider.label, sandbox: ewbProvider.sandbox } : null });
+    Object.values(workspace.ewbs)
+      // The file store loads every bill whatever was asked for.
+      .filter((ewb) => !since || (ewb.changedAt ?? "") > since)
+      .map((ewb) => refreshStatus(ewb))
+      .sort((a, b) => b.generatedAt.localeCompare(a.generatedAt)),
+  { ewbs: since ? { since } : "all" });
+  res.json({ ewbs, full: !since, serverTime, provider: ewbProvider ? { id: ewbProvider.id, label: ewbProvider.label, sandbox: ewbProvider.sandbox } : null });
 });
 
 router.get("/ewb/:id", async (req, res) => {
