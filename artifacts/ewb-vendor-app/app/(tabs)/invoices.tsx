@@ -8,14 +8,19 @@ import { useDeleteInvoice } from '@/hooks/useDeleteInvoice';
 import { formatInr, invoiceTotals, type Invoice } from '@/lib/domain';
 import { invoiceHtml, printHtml, shareHtmlAsPdf } from '@/lib/documents';
 import { useAppStore, useScopedRecords } from '@/state/app-store';
-import { Button, Card, Chip, ChipRow, EmptyState, Field, Heading, LoadMore, Notice, Page, SearchBar, SectionTitle, SelectSheet, Sheet, TextBlock } from '@/components/AppUI';
+import { Button, Card, Chip, ChipRow, EmptyState, Field, Heading, IconButton, LoadMore, Notice, Page, SearchBar, SectionTitle, SelectSheet, Sheet, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
 import InvoiceCard from '@/components/InvoiceCard';
 import { AccountButton } from '@/components/Brand';
 
 const PAGE = 20;
 
-export default function InvoicesScreen() {
+export default function InvoicesTab() {
+  return <InvoicesScreen />;
+}
+
+/** The sales invoice list. `stacked` opens it as its own screen (My business → Sales) with a back button instead of as a tab. */
+export function InvoicesScreen({ stacked = false }: { stacked?: boolean }) {
   const colors = useColors();
   // for=ewb: opened from "New e-way bill" on the E-way bills tab.
   const params = useLocalSearchParams<{ period?: string; from?: string; to?: string; for?: string }>();
@@ -114,12 +119,17 @@ export default function InvoicesScreen() {
   };
 
   return (
-    <Page contentStyle={styles.page} onRefresh={() => void store.syncNow()} refreshing={store.syncState === 'syncing'} onEndReached={() => list.more(filtered.length)}>
+    <Page contentStyle={styles.page} tab={!stacked} onRefresh={() => void store.syncNow()} refreshing={store.syncState === 'syncing'} onEndReached={() => list.more(filtered.length)}>
+      {stacked ? (
+        <View style={styles.top}>
+          <IconButton icon="arrow-left" accessibilityLabel="Go back" onPress={() => (router.canGoBack() ? router.back() : router.replace('/account'))} />
+        </View>
+      ) : null}
       <Heading
-        eyebrow="Sales"
-        title="Invoices"
+        eyebrow={stacked ? 'My business' : 'Sales'}
+        title={stacked ? 'Sales' : 'Invoices'}
         subtitle={`${invoices.length} invoice${invoices.length === 1 ? '' : 's'}${pending ? ` · ${pending} e-way bill${pending === 1 ? '' : 's'} pending` : ''}`}
-        right={<AccountButton />}
+        right={stacked ? undefined : <AccountButton />}
       />
       {params.for === 'ewb' ? (
         <Notice
@@ -237,6 +247,7 @@ export default function InvoicesScreen() {
 
 const styles = StyleSheet.create({
   page: { gap: 16 },
+  top: { flexDirection: 'row' },
   quickActions: { flexDirection: 'row', gap: 10 },
   bulkBar: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14 },
   partySummary: { flexDirection: 'row', alignItems: 'center', gap: 10, padding: 14 },

@@ -229,7 +229,7 @@ export default function AccountScreen() {
 
       <SectionTitle title="My business" />
       <Card style={{ padding: 0, gap: 0 }}>
-        <ListRow icon="trending-up" title="Sales" detail={`${records.invoices.length} sales invoice${records.invoices.length === 1 ? '' : 's'}`} onPress={() => router.push('/(tabs)/invoices')} testID="my-business-sales" />
+        <ListRow icon="trending-up" title="Sales" detail={`${records.invoices.length} sales invoice${records.invoices.length === 1 ? '' : 's'}`} onPress={() => router.push('/sales')} testID="my-business-sales" />
         <Divider inset={64} />
         <ListRow icon="shopping-cart" title="Purchase" detail={`${records.purchases.length} purchase bill${records.purchases.length === 1 ? '' : 's'}`} onPress={() => router.push('/purchases')} testID="my-business-purchases" />
       </Card>

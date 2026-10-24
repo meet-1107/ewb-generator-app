@@ -58,6 +58,7 @@ function RootLayoutNav() {
         <Stack.Screen name="invoice/new" options={{ presentation: 'modal' }} />
         <Stack.Screen name="invoice/import" options={{ presentation: 'modal' }} />
         <Stack.Screen name="invoice/[id]" />
+        <Stack.Screen name="sales" />
         <Stack.Screen name="purchases" />
         <Stack.Screen name="purchase/new" options={{ presentation: 'modal' }} />
         <Stack.Screen name="ewb/review/[invoiceId]" />
