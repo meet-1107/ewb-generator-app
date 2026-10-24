@@ -271,6 +271,9 @@ export function tableLines(rows: PdfRow[], fallbackRate: number): ExtractedLine[
   let header: { kind: Column; center: number }[] | null = null;
   let last: ExtractedLine | null = null;
   let page = 0;
+  // An HSN printed a little above or below its product's row (another baseline) lands on a row of its own.
+  let pendingHsn = "";
+  let hsnAbove: boolean | null = null;
   for (const row of rows) {
     // A table can run onto the next page without repeating its header.
     if (row.page !== page) {
@@ -347,6 +350,17 @@ export function tableLines(rows: PdfRow[], fallbackRate: number): ExtractedLine[
     const amountText = get("taxable") || getAll("amount")[0] || "";
     let taxablePaise = toPaise(amountText.split(/\s+/)[0] ?? "");
     if (!taxablePaise && quantity && rate) taxablePaise = Math.round(Number(quantity.quantity) * rate);
+
+    if (hsn && !description && !quantity && !taxablePaise) {
+      // The first such row says which way the table is offset: before any product
+      // (or after one that has its HSN) it belongs to the product below it.
+      if (hsnAbove === null) hsnAbove = !(last && !last.hsn);
+      if (!hsnAbove && last && !last.hsn) last.hsn = hsn;
+      else pendingHsn = hsn;
+      continue;
+    }
+    if (!hsn && hsnAbove) hsn = pendingHsn;
+    pendingHsn = "";
 
     if ((hsn || quantity) && taxablePaise && (description || hsn)) {
       const gst = rateOf(get("gst")) ?? rowRate(row.cells);

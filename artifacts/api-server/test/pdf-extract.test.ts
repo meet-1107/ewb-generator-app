@@ -66,6 +66,33 @@ describe("PDF line items from the item table", () => {
     assert.equal(extractInvoiceFields(textOf(rows), 1, rows).buyerGstin?.value, "24AAGCP5430N1Z8");
   });
 
+  it("takes an HSN printed just above or below its product's row", () => {
+    // A debit memo whose HSN sits a little higher than the rest of the product row.
+    const above = [
+      row(1, [[35, 30, "SrNo"], [143, 80, "Product Name"], [305, 50, "HSN/SAC"], [368, 20, "Qty"], [419, 25, "Rate"], [515, 40, "Amount"]]),
+      row(1, [[464, 30, "GST %"]]),
+      row(1, [[305, 50, "72044100"]]),
+      row(1, [[53, 40, "1 WASTE"], [95, 60, "AND SCRAP"], [359, 45, "9395.000"], [435, 25, "29.00"], [470, 25, "18.00"], [523, 45, "272455.00"]]),
+      row(1, [[407, 50, "Sub Total"], [517, 45, "272455.00"]]),
+    ];
+    const memo = extractInvoiceFields(textOf(above), 1, above).lines;
+    assert.equal(memo.length, 1, JSON.stringify(memo));
+    assert.equal(memo[0]!.description, "WASTE AND SCRAP");
+    assert.equal(memo[0]!.hsn, "72044100");
+    assert.equal(memo[0]!.quantity, "9395");
+    assert.equal(memo[0]!.taxablePaise, 27_245_500);
+    // The same table with each HSN a little lower than its product.
+    const below = [
+      row(1, [[35, 30, "SrNo"], [143, 80, "Product Name"], [305, 50, "HSN/SAC"], [368, 20, "Qty"], [419, 25, "Rate"], [515, 40, "Amount"]]),
+      row(1, [[53, 40, "1 MS Plate"], [359, 45, "10"], [435, 25, "50.00"], [523, 45, "500.00"]]),
+      row(1, [[305, 50, "7208"]]),
+      row(1, [[53, 40, "2 MS Angle"], [359, 45, "5"], [435, 25, "40.00"], [523, 45, "200.00"]]),
+      row(1, [[305, 50, "7216"]]),
+      row(1, [[407, 50, "Sub Total"], [517, 45, "700.00"]]),
+    ];
+    assert.deepEqual(extractInvoiceFields(textOf(below), 1, below).lines.map((line) => line.hsn), ["7208", "7216"]);
+  });
+
   it("does not read the HSN code as the quantity", () => {
     // HSN header split over two lines, and the code printed nearer to Qty.
     const split = [
