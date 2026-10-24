@@ -25,7 +25,7 @@ export default function InvoiceCard({ invoice, onPress, onLongPress, onMore, sel
           </View>
           <View style={styles.dateRow}>
             <Feather name="calendar" size={12} color={colors.mutedForeground} />
-            <TextBlock size={12} color={colors.mutedForeground} numberOfLines={1}>{formatDate(invoice.invoiceDate)} · {invoice.documentType || 'Tax invoice'}</TextBlock>
+            <TextBlock size={12} color={colors.mutedForeground} numberOfLines={1}>{formatDate(invoice.invoiceDate)} · {isPurchase(invoice) ? 'Purchase' : invoice.documentType || 'Tax invoice'}</TextBlock>
           </View>
           <View style={[styles.row, styles.bottom, { borderTopColor: colors.border }]}>
             <View style={styles.status}>

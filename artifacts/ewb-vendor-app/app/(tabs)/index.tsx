@@ -69,11 +69,11 @@ export default function DashboardScreen() {
 
   const activity = useMemo(() => {
     const items = [
-      ...invoices.slice(0, 8).map((invoice) => ({ kind: 'invoice' as const, at: invoice.updatedAt, invoice })),
-      ...ewbs.slice(0, 8).map((ewb) => ({ kind: 'ewb' as const, at: ewb.history[ewb.history.length - 1]?.at ?? ewb.generatedAt, ewb })),
+      ...[...invoices, ...purchases].map((invoice) => ({ kind: 'invoice' as const, at: invoice.updatedAt, invoice })),
+      ...ewbs.map((ewb) => ({ kind: 'ewb' as const, at: ewb.history[ewb.history.length - 1]?.at ?? ewb.generatedAt, ewb })),
     ];
     return items.sort((a, b) => b.at.localeCompare(a.at)).slice(0, 6);
-  }, [invoices, ewbs]);
+  }, [invoices, purchases, ewbs]);
 
   const sandbox = store.config?.ewbProvider?.sandbox;
   const lastSync = store.lastSyncAt ?? store.ewbsFetchedAt;
