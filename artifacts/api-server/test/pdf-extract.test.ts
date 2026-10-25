@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { extractInvoiceFields, type PdfRow } from "../src/lib/pdf-extract";
+import { extractInvoiceFields, unspaceLetters, type PdfRow } from "../src/lib/pdf-extract";
 
 const row = (page: number, cells: [number, number, string][]): PdfRow => ({ page, cells: cells.map(([x, width, text]) => ({ x, width, text })) });
 const textOf = (rows: PdfRow[]) => rows.map((item) => item.cells.map((cell) => cell.text).join(" ")).join("\n");
@@ -197,5 +197,64 @@ describe("PDF line items from the item table", () => {
     assert.equal(fields.lines[39]!.description, "Product 40");
     assert.equal(fields.lines[0]!.taxablePaise, 10_000);
     assert.equal(fields.lines[0]!.taxRate, 5);
+  });
+});
+
+describe("PDF fields from letter-spaced and unlabelled layouts", () => {
+  // The app's own printed invoice: letter-spaced labels, the number and date at the top right without labels.
+  const printed = [
+    row(1, [[535, 49, "TAX INVOICE"]]),
+    row(1, [[21, 144, "ASIAN POLY PLAST"]]),
+    row(1, [[21, 339, "SURVEY NO 124, MORBI ROAD, Hadala"], [585, 6, "2"]]),
+    row(1, [[21, 175, "Gujarat 360003 · GSTIN 24ABAFA4878K1Z9"]]),
+    row(1, [[542, 49, "25 Oct 2026"]]),
+    row(1, [[31, 28, "B I L L TO"], [322, 30, "S H I P TO"]]),
+    row(1, [[31, 93, "IRON AGE INDUSTRIES"], [322, 93, "IRON AGE INDUSTRIES"]]),
+    row(1, [[31, 61, "Gujarat 360022"], [322, 61, "Gujarat 360022"]]),
+    row(1, [[31, 28, "GSTIN:"], [61, 81, "24CCNPR0179J1Z6"], [322, 28, "GSTIN:"], [352, 81, "24CCNPR0179J1Z6"]]),
+    row(1, [[27, 4, "#"], [54, 52, "DESCRIPTION"], [179, 16, "HSN"], [281, 15, "QTY"], [345, 19, "RATE"], [418, 34, "TAXABLE"], [482, 15, "GST"], [551, 33, "AMOUNT"]]),
+    row(1, [[27, 5, "1"], [54, 56, "Brass Elbow 1"], [179, 20, "7881"], [263, 34, "100 Nos"], [338, 27, "₹10.00"], [414, 39, "₹1,000.00"], [481, 17, "18%"], [546, 39, "₹1,180.00"]]),
+    row(1, [[27, 5, "2"], [54, 69, "2 Cocealed Valve"], [179, 20, "7881"], [263, 34, "100 Nos"], [333, 32, "₹300.00"], [409, 44, "₹30,000.00"], [481, 17, "18%"], [541, 44, "₹35,400.00"]]),
+    row(1, [[21, 72, "A M O U NT I N W O R D S"]]),
+    row(1, [[21, 190, "Thirty Six Thousand Five Hundred Eighty Rupees Only"]]),
+    row(1, [[318, 54, "Taxable value"], [541, 44, "₹31,000.00"]]),
+  ];
+
+  it("does not add the amount in words to the last product", () => {
+    const fields = extractInvoiceFields(textOf(printed), 1, printed);
+    assert.equal(fields.lines.length, 2);
+    assert.equal(fields.lines[1]!.description, "2 Cocealed Valve");
+  });
+
+  it("reads the number and date printed without labels, and the name under a letter-spaced BILL TO", () => {
+    const fields = extractInvoiceFields(textOf(printed), 1, printed);
+    assert.deepEqual(fields.invoiceNumber, { value: "2", confidence: "low" });
+    assert.equal(fields.invoiceDate?.value, "2026-10-25");
+    assert.equal(fields.buyerName?.value, "IRON AGE INDUSTRIES");
+  });
+
+  it("stops the table at an amount in words even without its label", () => {
+    const rows = [printed[9]!, printed[10]!, row(1, [[54, 190, "One Thousand One Hundred Eighty Rupees Only"]])];
+    assert.equal(extractInvoiceFields(textOf(rows), 1, rows).lines[0]!.description, "Brass Elbow 1");
+  });
+
+  it("keeps the invoice number box out of an M/s. name on the same line", () => {
+    const rows = [
+      row(1, [[222, 151, "J. K. INDUSTRIES"]]),
+      row(1, [[33, 27, "M/s. :"], [69, 101, "ROYAL ENTERPRISE"], [350, 51, "Invoice No."], [413, 3, ":"], [425, 6, "5"]]),
+      row(1, [[350, 21, "Date"], [413, 3, ":"], [425, 56, "21/08/2026"]]),
+      row(1, [[34, 43, "GSTIN No."], [95, 3, ":"]]),
+      row(1, [[104, 79, "24AHVPA6592R1ZE"]]),
+      row(1, [[35, 56, "GSTIN No.:"], [96, 95, "24CRIPP6801K1ZJ"]]),
+    ];
+    const fields = extractInvoiceFields(textOf(rows), 1, rows);
+    assert.equal(fields.buyerName?.value, "ROYAL ENTERPRISE");
+    assert.equal(fields.invoiceNumber?.value, "5");
+  });
+
+  it("joins letter-spaced labels and leaves short names alone", () => {
+    assert.equal(unspaceLetters("A M O U NT I N W O R D S"), "AMOUNT IN WORDS");
+    assert.equal(unspaceLetters("B I L L TO S H I P TO"), "BILL TO SHIP TO");
+    assert.equal(unspaceLetters("J K INDUSTRIES"), "J K INDUSTRIES");
   });
 });

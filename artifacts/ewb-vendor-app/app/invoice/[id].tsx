@@ -34,6 +34,7 @@ import {
   formatDate,
   formatInr,
   formatRoundOff,
+  importIssues,
   invoiceIssues,
   invoiceTotals,
   STATES,
@@ -186,7 +187,7 @@ export default function InvoiceEditorScreen() {
   const released = useMemo(() => releasedInvoiceIds(store.invoices, store.ewbs), [store.invoices, store.ewbs]);
   // Transport is not needed to save an invoice (it is often unknown then): its
   // problems show only after Generate EWB was tapped.
-  const issues = useMemo(() => (invoice ? [...invoiceIssues(invoice, store.invoices, released), ...(ewbAttempted ? transportIssues(invoice) : [])] : []), [invoice, store.invoices, released, ewbAttempted]);
+  const issues = useMemo(() => (invoice ? [...(invoice.sourceFileName ? importIssues : invoiceIssues)(invoice, store.invoices, released), ...(ewbAttempted ? transportIssues(invoice) : [])] : []), [invoice, store.invoices, released, ewbAttempted]);
   // The first invoice of a GSTIN and document type is numbered by the user; later ones continue from it.
   const firstInvoice = useMemo(() => Boolean(invoice) && !purchase && !store.invoices.some((other) => other.id !== invoice!.id && !isPurchase(other) && sameDocumentType(other, invoice!.documentType) && other.sellerGstin.toUpperCase() === invoice!.sellerGstin.toUpperCase() && !other.unsaved && other.invoiceNumber.trim()), [invoice, purchase, store.invoices]);
 
@@ -201,6 +202,8 @@ export default function InvoiceEditorScreen() {
   // fill it once the earlier invoices arrive, unless the user has typed one.
   // A purchase keeps the number on the party's bill.
   const numberTyped = useRef(false);
+  // The PDF number the user chose to keep outside the series: not asked about again.
+  const keptPdfNumber = useRef('');
   useEffect(() => {
     if (!invoice?.unsaved || purchase || invoice.invoiceNumber.trim() || numberTyped.current) return;
     const next = nextNumberForSeller(store.invoices.filter((other) => other.id !== invoice.id), invoice.sellerGstin, store.ewbs, invoice.documentType);
@@ -320,10 +323,29 @@ export default function InvoiceEditorScreen() {
     dialog.toast(message, 'danger');
   };
 
-  /** A number outside the latest invoice's series (GR-01 after INV-05): offer the right one. Null to stop. */
+  /**
+   * A number outside the latest invoice's series (GR-01 after INV-05): offer the right one. Null to stop.
+   * An invoice imported from a PDF may keep the PDF's number: a warning, asked once for that number.
+   */
   const checkSeries = async (base: Invoice) => {
-    const series = invoiceSeriesProblem(base, store.invoices, released);
+    const series = invoiceSeriesProblem(base, store.invoices, released, { imported: Boolean(base.sourceFileName) });
     if (!series) return base;
+    if (base.sourceFileName) {
+      if (keptPdfNumber.current === base.invoiceNumber) return base;
+      const useNext = await dialog.confirm({
+        title: 'Number is not in your series',
+        message: `${base.invoiceNumber} is the number on the PDF. Your last invoice is ${series.latest}, so the next number is ${series.next}. Keep the PDF's number, or use the next one?`,
+        confirmLabel: `Use ${series.next}`,
+        cancelLabel: `Keep ${base.invoiceNumber}`,
+        tone: 'warning',
+        icon: 'alert-triangle',
+      });
+      if (!useNext) {
+        keptPdfNumber.current = base.invoiceNumber;
+        return base;
+      }
+      return { ...base, invoiceNumber: series.next };
+    }
     const useNext = await dialog.confirm({
       title: 'Invoice number is wrong',
       message: `${base.invoiceNumber} does not follow your last invoice ${series.latest}. The next number is ${series.next}.`,
@@ -415,13 +437,31 @@ export default function InvoiceEditorScreen() {
     if (fixed && fixed.invoiceNumber !== invoice.invoiceNumber) patch({ invoiceNumber: fixed.invoiceNumber });
   };
 
+  /** Missing details of an invoice or purchase made from a PDF are filled in before its preview (transport can wait). */
+  const openPreview = async () => {
+    Keyboard.dismiss();
+    if (!invoice) return;
+    if (invoice.sourceFileName) {
+      const problems = importIssues(invoice, store.invoices, released);
+      if (problems.length) {
+        showProblems(problems, `Fill in ${problems.length} missing detail${problems.length === 1 ? '' : 's'} highlighted in red before the preview`);
+        return;
+      }
+      const checked = await checkSeries(invoice);
+      if (!checked) return;
+      if (checked.invoiceNumber !== invoice.invoiceNumber) patch({ invoiceNumber: checked.invoiceNumber });
+    }
+    setViewOnly(false);
+    setPreviewing(true);
+  };
+
   /** Save: check the invoice, then ask whether it needs an e-way bill. */
   const finishInvoice = async () => {
     Keyboard.dismiss();
     if (!invoice) return;
     const checked = await checkSeries(invoice);
     if (!checked) return;
-    const problems = invoiceIssues(checked, store.invoices, released);
+    const problems = checked.sourceFileName ? importIssues(checked, store.invoices, released) : invoiceIssues(checked, store.invoices, released);
     setInvoice(checked);
     if (problems.length) {
       setPreviewing(false);
@@ -744,7 +784,7 @@ export default function InvoiceEditorScreen() {
           <TextBlock size={10} weight="semibold" color={colors.mutedForeground} style={{ letterSpacing: 0.8 }}>TOTAL</TextBlock>
           <TextBlock size={19} weight="bold" numberOfLines={1}>{formatInr(totals.total)}</TextBlock>
         </View>
-        <Button title={purchase ? 'Preview' : 'Preview invoice'} icon="eye" size="sm" onPress={() => { Keyboard.dismiss(); setViewOnly(false); setPreviewing(true); }} testID="preview-invoice" />
+        <Button title={purchase ? 'Preview' : 'Preview invoice'} icon="eye" size="sm" onPress={() => void openPreview()} testID="preview-invoice" />
       </View>
 
       <Modal visible={previewing && !viewOnly} animationType="slide" onRequestClose={() => setPreviewing(false)}>

@@ -560,6 +560,20 @@ export function invoiceIssues(invoice: Invoice, all: Invoice[] = [], released: S
   return issues;
 }
 
+/**
+ * What an invoice or purchase made from a PDF must have before its preview: everything
+ * `invoiceIssues` asks for, plus a rate on every product (a PDF can leave it out).
+ * Transport details are not needed: they are added later for the e-way bill.
+ */
+export function importIssues(invoice: Invoice, all: Invoice[] = [], released: Set<string> = new Set()): Issue[] {
+  const issues = invoiceIssues(invoice, all, released);
+  for (const line of invoice.lines) {
+    if (!line.description.trim() && !line.taxablePaise) continue;
+    if (!line.unitPricePaise) issues.push({ section: 'items', field: `line.${line.id}.unitPricePaise`, message: 'Enter the rate.' });
+  }
+  return issues;
+}
+
 /** Additional transport rules required for an e-way bill. */
 export function transportIssues(invoice: Invoice): Issue[] {
   const issues: Issue[] = [];
@@ -705,9 +719,10 @@ export function sameDocumentType(invoice: Pick<Invoice, 'documentType'>, documen
  * same document type (e.g. GR-01 after INV-05): the message and the number that would follow.
  * Each document type has its own series.
  */
-export function invoiceSeriesProblem(invoice: Invoice, others: Invoice[], released: Set<string> = new Set()) {
-  // An invoice imported from a PDF keeps the number printed on it, as does a purchase.
-  if (invoice.sourceFileName || isPurchase(invoice)) return null;
+export function invoiceSeriesProblem(invoice: Invoice, others: Invoice[], released: Set<string> = new Set(), { imported = false } = {}) {
+  // A purchase keeps the number on the party's bill. An invoice imported from a PDF may keep
+  // the number printed on it: only `imported` asks, to warn without blocking.
+  if ((invoice.sourceFileName && !imported) || isPurchase(invoice)) return null;
   const counted = others.filter((other) => other.id !== invoice.id && !isPurchase(other) && sameDocumentType(other, invoice.documentType) && !other.unsaved && !released.has(other.id) && other.invoiceNumber.trim() && sameSeller(other, invoice.sellerGstin));
   const latest = latestOfSeries(counted);
   if (!latest || !invoice.invoiceNumber.trim()) return null;

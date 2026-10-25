@@ -148,7 +148,9 @@ export default function LoginScreen() {
     go('register', { text: 'Enter your password again and we will email you a new code.', tone: 'info' });
   };
 
-  if (auth.isLoading) {
+  // Signed in: the loader stays while this phone's saved data loads and the routing effect
+  // opens the app, so the sign-in form never flashes on the way to the dashboard.
+  if (auth.isLoading || (auth.signedIn && (!store.isHydrated || store.business || store.accountLoaded))) {
     return <View style={[styles.loading, { backgroundColor: colors.background }]}><ActivityIndicator color={colors.primary} /></View>;
   }
   if (auth.signedIn && store.isHydrated && !store.business && !store.accountLoaded) {

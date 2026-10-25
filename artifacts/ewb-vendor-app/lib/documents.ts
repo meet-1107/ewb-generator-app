@@ -46,6 +46,12 @@ const baseCss = (accent: string, compact: boolean) => `
   .watermark { position: fixed; top: 40%; left: 0; right: 0; text-align: center; font-size: 46px; font-weight: 800; color: rgba(184,63,50,.12); transform: rotate(-24deg); pointer-events: none; }
 `;
 
+/** Label printed before the number, so the PDF reads back with its number (and stays clear to people). */
+function numberLabel(invoice: Invoice) {
+  const type = (invoice.documentType || '').toLowerCase();
+  return type.includes('challan') ? 'Challan No.' : type.includes('note') ? 'Note No.' : isPurchase(invoice) ? 'Bill No.' : 'Invoice No.';
+}
+
 /** `signature`: the business's saved signature, printed above "Authorised signatory". */
 export function invoiceHtml(invoice: Invoice, signature?: Signature) {
   const template = templates.find((item) => item.id === invoice.templateId) ?? templates[0];
@@ -95,7 +101,7 @@ export function invoiceHtml(invoice: Invoice, signature?: Signature) {
     <div class="muted">${esc(invoice.sellerAddress)}</div><div class="muted">${esc(invoice.sellerState)} ${esc(invoice.sellerPincode)} · GSTIN ${esc(invoice.sellerGstin)}</div>
     ${hasDispatch(invoice) ? `<div class="muted">Dispatch from: ${esc(invoice.dispatchFrom || invoice.sellerAddress)}, ${esc(invoice.dispatchState)} ${esc(invoice.dispatchPincode)}</div>` : ''}</div>
     <div style="text-align:right"><div class="copy-label">${label}</div><span class="badge">${esc(invoice.documentType.toUpperCase())}</span>
-    <div style="margin-top:8px;font-size:14px"><strong>${esc(invoice.invoiceNumber || 'Draft')}</strong></div>
+    <div style="margin-top:8px;font-size:14px"><span class="muted" style="font-size:10px">${numberLabel(invoice)} </span><strong>${esc(invoice.invoiceNumber || 'Draft')}</strong></div>
     <div class="muted">${formatDate(invoice.invoiceDate)}</div></div></div>
   ${template.id === 'dispatch' ? transport : ''}
   <div class="row" style="margin-top:${template.id === 'dispatch' ? 12 : 0}px">

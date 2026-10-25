@@ -81,6 +81,62 @@ function amountAfter(text: string, labels: string[]) {
   return null;
 }
 
+/** Common labels, to put the spaces back between the words of a letter-spaced one ("B I L L TO"). */
+const SPACED_LABELS = ["amount in words", "bill to", "billed to", "ship to", "shipped to", "invoice no", "invoice number", "invoice date", "tax invoice", "bill of supply", "place of supply", "description", "total"];
+
+/**
+ * Text printed with letter spacing comes out as single letters ("A M O U NT I N W O R D S").
+ * A run of 3+ short letter groups (mostly single letters) is joined back into words, so
+ * labels match and the run is not read as a product.
+ */
+export function unspaceLetters(text: string) {
+  return text.replace(/\b[A-Za-z]{1,2}(?: [A-Za-z]{1,2}){2,}\b/g, (run) => {
+    const groups = run.split(" ");
+    if (groups.filter((group) => group.length === 1).length < 3) return run;
+    const joined = groups.join("");
+    // One label or several side by side ("BILLTOSHIPTO" → "BILL TO SHIP TO").
+    const labels = splitLabels(joined.toLowerCase());
+    if (!labels) return joined;
+    const words = labels.join(" ");
+    return joined === joined.toUpperCase() ? words.toUpperCase() : words;
+  });
+}
+
+function splitLabels(compact: string): string[] | null {
+  if (!compact) return [];
+  for (const label of SPACED_LABELS) {
+    const key = label.replace(/ /g, "");
+    if (!compact.startsWith(key)) continue;
+    const rest = splitLabels(compact.slice(key.length));
+    if (rest) return [label, ...rest];
+  }
+  return null;
+}
+
+/**
+ * Invoice number printed without a label (a bare "2" at the top right, above the date):
+ * a short code with a digit in the right part of a row above the item table, within two
+ * rows of a date. Dates, PIN codes, GSTINs and amounts are not numbers of the bill.
+ */
+function unlabelledInvoiceNumber(rows: PdfRow[]): string | null {
+  const firstPage = rows.filter((row) => row.page === (rows[0]?.page ?? 1));
+  const tableAt = firstPage.findIndex((row) => row.cells.some((cell) => /hsn|sac|qty|quantity/i.test(cell.text)));
+  const top = tableAt >= 0 ? firstPage.slice(0, tableAt) : firstPage.slice(0, 12);
+  const right = Math.max(0, ...firstPage.flatMap((row) => row.cells.map((cell) => cell.x + cell.width)));
+  if (!right) return null;
+  const isDate = (text: string) => /\b\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\b|\b\d{1,2}[\s-]+[A-Za-z]{3,9}[\s,-]+\d{4}\b/.test(text);
+  for (const [index, row] of top.entries()) {
+    for (const cell of row.cells) {
+      const text = cell.text.trim();
+      if (cell.x < right * 0.6 || !/^[A-Za-z0-9][A-Za-z0-9/-]{0,15}$/.test(text) || !/\d/.test(text)) continue;
+      if (isDate(text) || /^\d{6}$/.test(text) || /^\d{2}[A-Z]{5}\d{4}/i.test(text) || /^\d+\.\d{2}$/.test(text)) continue;
+      const nearby = top.slice(Math.max(0, index - 2), index + 3).flatMap((other) => other.cells).filter((other) => other !== cell && other.x >= right * 0.5);
+      if (nearby.some((other) => isDate(other.text))) return text.toUpperCase();
+    }
+  }
+  return null;
+}
+
 /** The issuer's name printed as the bill's heading: the first plain text line at the top. */
 function headerName(lines: string[]) {
   for (const line of lines.slice(0, 4)) {
@@ -108,7 +164,8 @@ function nameUnderLabel(lines: string[], index: number) {
     const label = BUYER_LABEL.exec(line);
     if (!label) continue;
     // Name after the label on the same line ("Bill To: XYZ"), else the next line.
-    const rest = line.slice(label.index + label[0].length).replace(/^[\s:()\-]+|(?:\s*(?:ship(?:ped)? to|consignee).*)$/gi, "").replace(/^(m\/s\.?|name:?)\s*/i, "").trim();
+    // A box beside the name on the same line ("M/s. : ROYAL ENTERPRISE  Invoice No. : 5") is not part of it.
+    const rest = line.slice(label.index + label[0].length).replace(/^[\s.:()\-]+|(?:\s*(?:ship(?:ped)? to|consignee).*)$/gi, "").replace(/\s+(?:(?:invoice|inv|bill)\s*(?:no|number|#|date)|date\s*:).*$/i, "").replace(/^(m\/s\.?|name:?)\s*/i, "").trim();
     const value = singleName(rest.length >= 3 && /[a-z]/i.test(rest) ? rest : lines[at + 1] ?? "");
     if (value.length >= 3 && value.length < 80 && /[a-z]/i.test(value) && !/gstin|address|state\s*:|mobile|phone/i.test(value)) return value.replace(/^(m\/s\.?|name:?)\s*/i, "");
     return null;
@@ -257,7 +314,9 @@ function rowRate(cells: { text: string }[]) {
   if (percents.length === 1 && GST_RATES.includes(percents[0]!)) return percents[0]!;
   return null;
 }
-const STOP_ROW = /\b(sub ?total|grand total|total|amount chargeable|amount in words)\b/i;
+const STOP_ROW = /\b(sub ?total|grand total|total|amount chargeable|amount in words|in words)\b/i;
+/** An amount written out ("Sixty Four Thousand Nine Hundred Rupees Only"): below the table, never a product. */
+const AMOUNT_IN_WORDS = /\b(?:rupees|paise|thousand|lakhs?|crores?|hundred)\b.*\bonly\b/i;
 const TAX_ROW = /\b(cgst|sgst|utgst|igst|output|round(ed)? off|less|freight|packing)\b/i;
 
 /**
@@ -338,7 +397,7 @@ export function tableLines(rows: PdfRow[], fallbackRate: number): ExtractedLine[
     const description = descCells.join(" ").trim().replace(/^\d+[.)]?\s+/, "").trim();
     const rowText = row.cells.map((cell) => cell.text).join(" ");
 
-    if (!hsn && STOP_ROW.test(rowText)) {
+    if (!hsn && (STOP_ROW.test(rowText) || AMOUNT_IN_WORDS.test(rowText))) {
       header = null;
       last = null;
       continue;
@@ -411,8 +470,9 @@ function transporterId(lines: string[]) {
  * them is the seller and never the buyer. Transport details (vehicle, transporter)
  * are not read: the user fills them in for each e-way bill.
  */
-export function extractInvoiceFields(text: string, pageCount: number, rows: PdfRow[] = [], ownGstins: string[] = []): ExtractedInvoice {
-  const normalized = text.replace(/\r/g, "").replace(/[ \t]+/g, " ");
+export function extractInvoiceFields(text: string, pageCount: number, spacedRows: PdfRow[] = [], ownGstins: string[] = []): ExtractedInvoice {
+  const normalized = unspaceLetters(text.replace(/\r/g, "").replace(/[ \t]+/g, " "));
+  const rows = spacedRows.map((row) => ({ ...row, cells: row.cells.map((cell) => ({ ...cell, text: unspaceLetters(cell.text) })) }));
   const lines = normalized.split("\n").map((line) => line.trim()).filter(Boolean);
   const result: ExtractedInvoice = { lines: [], pageCount, characters: normalized.length };
 
@@ -467,12 +527,18 @@ export function extractInvoiceFields(text: string, pageCount: number, rows: PdfR
     }
   }
 
-  const invoiceNo = /(?:invoice|inv|bill)\s*(?:no|number|#)\.?\s*[:\-]?\s*([A-Za-z0-9/-]{1,20})/i.exec(normalized);
+  const invoiceNo = /(?:invoice|inv|bill|challan|note)\s*(?:no|number|#)\.?\s*[:\-]?\s*([A-Za-z0-9/-]{1,20})/i.exec(normalized);
   if (invoiceNo && /\d/.test(invoiceNo[1]!)) result.invoiceNumber = { value: invoiceNo[1]!.toUpperCase(), confidence: "high" };
+  else {
+    const bare = unlabelledInvoiceNumber(rows);
+    if (bare) result.invoiceNumber = { value: bare, confidence: "low" };
+  }
 
   const datePatterns = [
     /(?:invoice\s*date|inv\.?\s*date|bill\s*date|dated?)\s*[:\-]?\s*([0-9]{1,2}[./-][0-9]{1,2}[./-][0-9]{2,4}|[0-9]{1,2}[\s-]*[A-Za-z]{3,9}[\s,-]*[0-9]{2,4}|[0-9]{4}-[0-9]{2}-[0-9]{2})/i,
     /\b([0-9]{1,2}[./-][0-9]{1,2}[./-][0-9]{4})\b/,
+    // Unlabelled "25 Oct 2026" (the app's own printed invoice).
+    /\b([0-9]{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*,?\s+[0-9]{4})\b/i,
   ];
   for (const [index, pattern] of datePatterns.entries()) {
     const match = pattern.exec(normalized);
