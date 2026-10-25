@@ -538,7 +538,11 @@ export function invoiceIssues(invoice: Invoice, all: Invoice[] = [], released: S
   if (!invoice.invoiceNumber.trim()) add('invoice', 'invoiceNumber', 'Invoice number is required.');
   else if (!/^[A-Za-z0-9/-]{1,16}$/.test(invoice.invoiceNumber.trim())) add('invoice', 'invoiceNumber', 'Use up to 16 letters, digits, / or -.');
   else if (!purchase && invoiceSeriesProblem(invoice, others, released)) add('invoice', 'invoiceNumber', invoiceSeriesProblem(invoice, others, released)!.message);
-  else if (sameBuyerAndNumber(invoice, others)) add('invoice', 'invoiceNumber', `Invoice ${invoice.invoiceNumber.trim()} for ${invoice.buyerName.trim()} already exists. Open it from the invoice list instead.`);
+  else if (sameBuyerAndNumber(invoice, others)) {
+    add('invoice', 'invoiceNumber', purchase
+      ? `Bill ${invoice.invoiceNumber.trim()} from ${invoice.sellerName.trim()} is already saved. Open it from the purchase list instead.`
+      : `Invoice ${invoice.invoiceNumber.trim()} for ${invoice.buyerName.trim()} already exists. Open it from the invoice list instead.`);
+  }
   else if (others.some((other) => other.id !== invoice.id && !other.unsaved && !released.has(other.id) && other.invoiceNumber.trim().toLowerCase() === invoice.invoiceNumber.trim().toLowerCase() && other.sellerGstin.toUpperCase() === invoice.sellerGstin.toUpperCase())) {
     add('invoice', 'invoiceNumber', purchase ? 'A purchase with this bill number from this party is already saved.' : `This number is already used for a ${invoice.documentType.toLowerCase()} of this GSTIN.`);
   }

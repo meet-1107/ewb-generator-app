@@ -500,9 +500,12 @@ export function extractInvoiceFields(text: string, pageCount: number, spacedRows
     ?? gstins.find((item) => item !== buyerLabeled && /sold by|seller|supplier|consignor/i.test(near(item)))
     ?? gstins.find((item) => item !== buyerLabeled);
   const buyer = buyerLabeled && buyerLabeled !== seller ? buyerLabeled : others.find((item) => item !== seller);
+  // A name goes with its GSTIN: the one under a "Bill to" label is that block's name, the
+  // other is the issuer heading the bill (an own GSTIN can be the one billed, on a purchase).
+  const underBuyerLabel = (item: { line: number }) => BUYER_LABEL.test(near(item));
   if (seller) {
     result.sellerGstin = { value: seller.value, confidence: seller.checksum ? "high" : "low" };
-    const name = headerName(lines) ?? nameNear(lines, seller.line);
+    const name = underBuyerLabel(seller) ? nameUnderLabel(lines, seller.line) ?? nameNear(lines, seller.line) : headerName(lines) ?? nameNear(lines, seller.line);
     if (name) result.sellerName = { value: name, confidence: "medium" };
     const state = STATES.find((item) => item.code === seller.value.slice(0, 2))?.name ?? stateNear(lines, seller.line);
     if (state) result.sellerState = { value: state, confidence: "high" };
@@ -511,7 +514,9 @@ export function extractInvoiceFields(text: string, pageCount: number, spacedRows
   }
   if (buyer) {
     result.buyerGstin = { value: buyer.value, confidence: buyer.checksum ? "high" : "low" };
-    const name = nameUnderLabel(lines, buyer.line) ?? nameNear(lines, buyer.line) ?? labelledName(lines, buyer.line);
+    const name = !underBuyerLabel(buyer) && underBuyerLabel(seller ?? { line: -99 })
+      ? headerName(lines) ?? nameNear(lines, buyer.line)
+      : nameUnderLabel(lines, buyer.line) ?? nameNear(lines, buyer.line) ?? labelledName(lines, buyer.line);
     if (name) result.buyerName = { value: name, confidence: "medium" };
     const state = STATES.find((item) => item.code === buyer.value.slice(0, 2))?.name ?? stateNear(lines, buyer.line);
     if (state) result.buyerState = { value: state, confidence: "high" };

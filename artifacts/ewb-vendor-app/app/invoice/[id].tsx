@@ -444,7 +444,7 @@ export default function InvoiceEditorScreen() {
     if (invoice.sourceFileName) {
       const problems = importIssues(invoice, store.invoices, released);
       if (problems.length) {
-        showProblems(problems, `Fill in ${problems.length} missing detail${problems.length === 1 ? '' : 's'} highlighted in red before the preview`);
+        showProblems(problems, `Fix ${problems.length} detail${problems.length === 1 ? '' : 's'} highlighted in red before the preview`);
         return;
       }
       const checked = await checkSeries(invoice);
