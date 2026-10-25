@@ -247,7 +247,17 @@ export default function WalletScreen() {
               <KeyValue label={row.label} value={wallet ? (wallet.costs[row.action] ? `${wallet.costs[row.action]} credits` : 'Free') : '—'} strong />
             </React.Fragment>
           ))}
-          <TextBlock size={11} color={colors.mutedForeground}>Credits are taken only when the action succeeds. If the government portal rejects it, they are refunded automatically.</TextBlock>
+          {wallet?.gstLookups ? (
+            <>
+              <Divider />
+              <KeyValue
+                label={`Verify a new party GSTIN (first ${wallet.gstLookups.free} free · ${Math.max(0, wallet.gstLookups.free - wallet.gstLookups.used)} left)`}
+                value={wallet.costs.gst_verify ? `${wallet.costs.gst_verify} credit${wallet.costs.gst_verify === 1 ? '' : 's'}` : 'Free'}
+                strong
+              />
+            </>
+          ) : null}
+          <TextBlock size={11} color={colors.mutedForeground}>Credits are taken only when the action succeeds. If the government portal rejects it, they are refunded automatically. A GSTIN verified before is always free.</TextBlock>
         </Card>
 
         <Card style={{ padding: 0, gap: 0 }}>

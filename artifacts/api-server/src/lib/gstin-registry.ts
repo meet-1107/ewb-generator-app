@@ -85,6 +85,11 @@ function fromLookup(gstin: string, data: Awaited<ReturnType<typeof lookupGstin>>
   };
 }
 
+/** The GSTIN was looked up before (by any account): verifying it again is not a new paid lookup. */
+export async function isKnownGstin(gstin: string) {
+  return Boolean(await readCached(gstin));
+}
+
 /**
  * Returns the registered details: from the registry when fresh, otherwise
  * looked up (and saved). Concurrent calls for one GSTIN share one request.

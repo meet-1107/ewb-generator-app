@@ -7,11 +7,15 @@ import type { Wallet, WalletAction, WalletEntry, Workspace } from "./store";
  * (success) or refunded (rejection / error), so a failed call never costs the
  * user anything and two parallel calls cannot overspend the balance.
  *
- * Costs default to generate 5, Part-B 5, consolidate 5, cancel 5, extend 5;
- * override with CREDIT_COSTS_JSON, e.g. {"generate":5,"extend":5}.
+ * Costs default to generate 5, Part-B 5, consolidate 5, cancel 5, extend 5 and a
+ * GSTIN lookup past the free ones 1; override with CREDIT_COSTS_JSON, e.g. {"generate":5,"extend":5}.
  */
 
-const defaults: Record<WalletAction, number> = { generate: 5, part_b: 5, consolidate: 5, cancel: 5, extend: 5 };
+const defaults: Record<WalletAction, number> = { generate: 5, part_b: 5, consolidate: 5, cancel: 5, extend: 5, gst_verify: 1 };
+
+/** New GSTIN lookups on the GST network an account gets free (GSTIN_FREE_LOOKUPS, default 20); each later one costs gst_verify credits. */
+const freeLookups = Number(process.env["GSTIN_FREE_LOOKUPS"] ?? 20);
+export const FREE_GST_LOOKUPS = Number.isFinite(freeLookups) && freeLookups >= 0 ? Math.floor(freeLookups) : 20;
 
 export const creditCosts: Record<WalletAction, number> = {
   ...defaults,
@@ -24,6 +28,7 @@ export const ACTION_LABELS: Record<WalletEntry["kind"], string> = {
   consolidate: "Consolidated e-way bill",
   cancel: "E-way bill cancelled",
   extend: "Validity extended",
+  gst_verify: "GSTIN verified",
   grant: "Welcome credits",
   topup: "Credits added",
   adjust: "Adjusted by support",
@@ -133,7 +138,8 @@ export function walletSummary(workspace: Workspace) {
   return {
     balance: workspace.wallet.balance,
     costs: creditCosts,
-    counts: { generate: count("generate"), part_b: count("part_b"), consolidate: count("consolidate"), cancel: count("cancel"), extend: count("extend") },
+    counts: { generate: count("generate"), part_b: count("part_b"), consolidate: count("consolidate"), cancel: count("cancel"), extend: count("extend"), gst_verify: count("gst_verify") },
+    gstLookups: { free: FREE_GST_LOOKUPS, used: Object.keys(workspace.gstLookups ?? {}).length },
     creditsUsed: charged.reduce((sum, entry) => sum - entry.credits, 0),
     // The first page only; the rest loads as the user taps Show more.
     ledger: visible(workspace).slice(-HISTORY_PAGE).reverse().map(labelled),

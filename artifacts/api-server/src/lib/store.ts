@@ -125,7 +125,7 @@ export type CewbRecord = {
   createdAt: string;
 };
 
-export type WalletAction = "generate" | "part_b" | "consolidate" | "cancel" | "extend";
+export type WalletAction = "generate" | "part_b" | "consolidate" | "cancel" | "extend" | "gst_verify";
 export type WalletEntry = {
   id: string;
   at: string;
@@ -178,6 +178,8 @@ export type Workspace = {
   purchases: Record<string, CreditPurchase>;
   /** GSTIN whose free trial credits this account received (lib/welcome.ts). */
   welcomeGstin?: string;
+  /** GSTINs this account was first to look up on the GST network, and when (routes/gstin.ts): the free ones and the paid ones. */
+  gstLookups?: Record<string, string>;
   audit: { at: string; actor: string; action: string; targetId: string; outcome: string }[];
   sync: Record<string, Record<string, SyncRecord>>;
 };

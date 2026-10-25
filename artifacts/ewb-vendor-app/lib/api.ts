@@ -79,7 +79,7 @@ async function request<T>(path: string, init: { method?: string; body?: unknown;
 }
 
 export type ProviderInfo = { id: string; label: string; sandbox: boolean } | null;
-export type WalletAction = 'generate' | 'part_b' | 'consolidate' | 'cancel' | 'extend';
+export type WalletAction = 'generate' | 'part_b' | 'consolidate' | 'cancel' | 'extend' | 'gst_verify';
 export type CreditCosts = Record<WalletAction, number>;
 export type ServiceConfig = {
   authMode: string;
@@ -128,7 +128,7 @@ export type WalletEntry = {
 export type WalletPricing = { creditPricePaise: number; packs: number[]; min: number; max: number; payments: 'razorpay' | 'sandbox' | 'off' };
 /** A month (YYYY-MM, India time) with wallet activity: entries, credits added and used. */
 export type WalletMonth = { month: string; count: number; added: number; used: number };
-export type WalletSummary = { balance: number; costs: CreditCosts; counts: Record<WalletAction, number>; creditsUsed: number; ledger: WalletEntry[]; ledgerMore?: boolean; historyMonths?: WalletMonth[]; pricing?: WalletPricing; /** Free trial credits still to come (after the first portal login is saved). */ welcomeCredits?: number };
+export type WalletSummary = { balance: number; costs: CreditCosts; counts: Record<WalletAction, number>; creditsUsed: number; ledger: WalletEntry[]; ledgerMore?: boolean; historyMonths?: WalletMonth[]; pricing?: WalletPricing; /** Free trial credits still to come (after the first portal login is saved). */ welcomeCredits?: number; /** New GSTIN lookups free for this account, and how many are used. */ gstLookups?: { free: number; used: number } };
 export type CreditPurchase = { id: string; provider: 'razorpay' | 'sandbox'; credits: number; amountPaise: number; status: 'created' | 'paid' | 'expired' | 'cancelled'; shortUrl?: string; createdAt: string; paidAt?: string; paymentId?: string; invoiceNumber?: string };
 /** Invoice for a credit purchase, numbered per financial year (EWE/2026-27/0001). */
 export type BillingInvoice = {
@@ -194,7 +194,8 @@ export const api = {
   deleteEwbCredential: (gstin: string) => request<{ ok: true }>(`/ewb-credentials/${encodeURIComponent(gstin)}`, { method: 'DELETE' }),
   /** Road distance between two PIN codes (Google Routes, looked up once per pair on the server). */
   distance: (from: string, to: string) => request<{ from: string; to: string; km: number; cached: boolean }>(`/distance?from=${from}&to=${to}`, { timeoutMs: 20_000 }),
-  verifyGstin: (gstin: string) => request<{ gstin: VerifiedGstin; cached: boolean; stale?: boolean }>('/gstin/verify', { body: { gstin }, timeoutMs: 30_000 }),
+  /** `pay`: the user agreed to spend credits on a new lookup past the free ones (402 credit_needed asks). */
+  verifyGstin: (gstin: string, pay = false) => request<{ gstin: VerifiedGstin; cached: boolean; stale?: boolean; charged?: number; freeLeft?: number }>('/gstin/verify', { body: { gstin, ...(pay ? { pay: true } : {}) }, timeoutMs: 30_000 }),
   /** The app was opened: counted for daily active users in the admin panel. */
   appOpened: (platform: 'android' | 'ios' | 'web', appVersion: string) => request<Record<string, never>>('/activity/open', { body: { platform, appVersion }, timeoutMs: 10_000 }),
   wallet: () => request<WalletSummary>('/wallet'),
