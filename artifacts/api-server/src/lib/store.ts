@@ -548,7 +548,7 @@ export async function peekWorkspace(id: string, spec: PeekSpec = {}): Promise<Wo
 }
 
 /** Append-only logs. Records are never updated or deleted by the app. */
-export type LogCollection = "api_calls" | "payment_events" | "admin_audit" | "app_opens";
+export type LogCollection = "api_calls" | "payment_events" | "admin_audit" | "app_opens" | "payment_steps";
 export type LogRecord = Record<string, unknown> & { at: string };
 
 export async function appendLog(collection: LogCollection, record: LogRecord): Promise<void> {

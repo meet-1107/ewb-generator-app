@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import * as WebBrowser from 'expo-web-browser';
+import Constants from 'expo-constants';
 import { router } from 'expo-router';
 import { ActivityIndicator, AppState, Linking, Platform, Pressable, RefreshControl, Share, StyleSheet, TextInput, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
@@ -9,7 +10,7 @@ import { Button, Card, Chip, ChipRow, Divider, EmptyState, Field, KeyValue, List
 import { useDialog } from '@/components/Dialog';
 import { useColors } from '@/hooks/useColors';
 import { useWelcomeCredits } from '@/hooks/useWelcomeCredits';
-import { api, ApiError, SUPPORT_EMAIL, type CreditPurchase, type WalletAction, type WalletEntry, type WalletSummary } from '@/lib/api';
+import { api, ApiError, SUPPORT_EMAIL, type CreditPurchase, type PaymentStep, type WalletAction, type WalletEntry, type WalletSummary } from '@/lib/api';
 import { formatDate } from '@/lib/domain';
 import { useAppStore } from '@/state/app-store';
 
@@ -47,6 +48,7 @@ export default function WalletScreen() {
 
   useEffect(() => {
     void store.refreshWallet();
+    logStep('wallet_opened');
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -61,6 +63,11 @@ export default function WalletScreen() {
   /** A payment being confirmed with Razorpay after the user came back from it. */
   const [confirming, setConfirming] = useState<CreditPurchase | null>(null);
 
+  /** Reports a step buying credits to the admin panel's payment log; never blocks or fails the purchase. */
+  const logStep = (step: PaymentStep, details: { credits?: number; purchaseId?: string; note?: string } = {}) => {
+    void api.paymentStep(step, { ...details, appVersion: Constants.expoConfig?.version }).catch(() => undefined);
+  };
+
   /** Paid: straight to Home, which shows the new balance and what was added. */
   const paid = (credits: number, balance: number | undefined) => {
     store.setWalletBalance(balance);
@@ -74,12 +81,17 @@ export default function WalletScreen() {
     try {
       for (let attempt = 0; attempt < 6; attempt++) {
         const { purchase: latest, balance } = await api.purchaseStatus(purchase.id);
-        if (latest.status === 'paid') return paid(latest.credits, balance);
+        if (latest.status === 'paid') {
+          logStep('returned_paid', { credits: latest.credits, purchaseId: latest.id });
+          return paid(latest.credits, balance);
+        }
         if (latest.status !== 'created') break;
         await new Promise((resolve) => setTimeout(resolve, 2500));
       }
+      logStep('returned_unpaid', { credits: purchase.credits, purchaseId: purchase.id });
       dialog.toast('Payment not confirmed yet. Credits are added automatically once it is.', 'default');
-    } catch {
+    } catch (error) {
+      logStep('payment_error', { purchaseId: purchase.id, note: `Status check failed: ${(error as Error)?.message ?? ''}`.slice(0, 200) });
       dialog.toast('Could not check the payment right now. If you paid, credits are added automatically within a few minutes.', 'default');
     } finally {
       setConfirming(null);
@@ -107,6 +119,7 @@ export default function WalletScreen() {
       return dialog.toast(`Choose between ${pricing.min} and ${pricing.max.toLocaleString('en-IN')} credits.`, 'danger');
     }
     setCheckout(credits);
+    logStep('checkout_opened', { credits });
   };
 
   /** "Pay securely" on the checkout sheet: opens Razorpay, then confirms the payment. */
@@ -118,9 +131,11 @@ export default function WalletScreen() {
     try {
       const { purchase, balance } = await api.buyCredits(credits);
       if (purchase.status === 'paid') {
+        logStep('returned_paid', { credits, purchaseId: purchase.id, note: 'Paid at once (test workspace)' });
         paid(credits, balance);
         return;
       } else if (purchase.shortUrl) {
+        logStep('payment_page_opened', { credits, purchaseId: purchase.id });
         if (Platform.OS === 'android') awaitingPayment.current = purchase;
         await WebBrowser.openBrowserAsync(purchase.shortUrl).catch(() => Linking.openURL(purchase.shortUrl!));
         if (Platform.OS !== 'android') await confirmPaid(purchase);
@@ -128,6 +143,7 @@ export default function WalletScreen() {
       await store.refreshWallet();
       setCustom('');
     } catch (error) {
+      logStep('payment_error', { credits, note: (error instanceof ApiError ? error.message : 'Could not start the payment').slice(0, 200) });
       dialog.toast(error instanceof ApiError ? error.message : 'Could not start the payment', 'danger');
     } finally {
       buyGuard.current = false;
@@ -303,7 +319,11 @@ export default function WalletScreen() {
 
       <Sheet
         visible={checkout !== null}
-        onClose={() => setCheckout(null)}
+        onClose={() => {
+          // Closed without tapping Pay: the user went back at checkout.
+          if (checkout !== null) logStep('checkout_closed', { credits: checkout });
+          setCheckout(null);
+        }}
         title="Secure checkout"
         subtitle="Check your order before paying"
         footer={checkout !== null ? (

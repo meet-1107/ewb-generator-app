@@ -234,6 +234,39 @@ describe("admin panel API", () => {
     assert.equal((await call("GET", "/wallet", T.b())).status, 200);
   });
 
+  it("shows each step buying credits with the account's email, in payments and active users", async () => {
+    // Customer B reaches the payment page and comes back without paying; customer A goes back at checkout.
+    for (const [auth, step, extra] of [
+      [T.b(), "checkout_opened", { credits: 50 }], [T.b(), "payment_page_opened", { credits: 50, purchaseId: pendingLink }], [T.b(), "returned_unpaid", { credits: 50, purchaseId: pendingLink }],
+      [T.a(), "checkout_opened", { credits: 250 }], [T.a(), "checkout_closed", { credits: 250 }],
+    ] as const) assert.equal((await call("POST", "/activity/payment", auth, { step, ...extra, appVersion: "1.3.11" })).status, 204);
+    assert.equal((await call("POST", "/activity/payment", T.b(), { step: "made_up" })).status, 400);
+    await call("POST", "/activity/open", T.b(), { platform: "android", appVersion: "1.3.11" });
+
+    const log = await call("GET", "/admin/payment-log", T.fin());
+    assert.equal(log.status, 200, log.text);
+    assert.equal(log.body.summary.checkouts, 2);
+    assert.equal(log.body.summary.closedAtCheckout, 1);
+    assert.equal(log.body.summary.cameBackUnpaid, 1);
+    assert.ok(log.body.items.some((row: any) => row.email === "b@shop.in" && row.step === "returned_unpaid" && row.purchaseId === pendingLink));
+
+    const payments = await call("GET", "/admin/payments?provider=razorpay&fresh=1", T.fin());
+    const outcome = (id: string) => payments.body.items.find((row: any) => row.id === id)?.outcome;
+    assert.equal(outcome(pendingLink), "Came back without paying");
+    assert.equal(outcome(paidLink), "Paid");
+    const detail = await call("GET", `/admin/payments/custbbb1/${pendingLink}`, T.fin());
+    // The steps on this link (a checkout is listed only when it came before the link, as in the app).
+    assert.deepEqual(detail.body.appSteps.map((row: any) => row.step).sort(), ["payment_page_opened", "returned_unpaid"]);
+    assert.equal(detail.body.outcome, "Came back without paying");
+
+    const active = await call("GET", "/admin/activity", T.boss());
+    const row = active.body.users.find((user: any) => user.uid === "custbbb1");
+    assert.equal(row.email, "b@shop.in");
+    assert.equal(row.lastPaymentStep, "returned_unpaid");
+    assert.equal(row.cameBackUnpaid, 1);
+    assert.equal(row.pendingPayments, 1);
+  });
+
   it("re-checks an unpaid payment with the gateway and credits it once", async () => {
     links.get(pendingLink)!.status = "paid";
     links.get(pendingLink)!.amount_paid = 5_000;

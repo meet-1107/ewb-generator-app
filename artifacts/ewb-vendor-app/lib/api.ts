@@ -79,6 +79,7 @@ async function request<T>(path: string, init: { method?: string; body?: unknown;
 }
 
 export type ProviderInfo = { id: string; label: string; sandbox: boolean } | null;
+export type PaymentStep = 'wallet_opened' | 'checkout_opened' | 'checkout_closed' | 'payment_page_opened' | 'returned_paid' | 'returned_unpaid' | 'payment_error';
 export type WalletAction = 'generate' | 'part_b' | 'consolidate' | 'cancel' | 'extend' | 'gst_verify';
 export type CreditCosts = Record<WalletAction, number>;
 export type ServiceConfig = {
@@ -198,6 +199,8 @@ export const api = {
   verifyGstin: (gstin: string, pay = false) => request<{ gstin: VerifiedGstin; cached: boolean; stale?: boolean; charged?: number; freeLeft?: number }>('/gstin/verify', { body: { gstin, ...(pay ? { pay: true } : {}) }, timeoutMs: 30_000 }),
   /** The app was opened: counted for daily active users in the admin panel. */
   appOpened: (platform: 'android' | 'ios' | 'web', appVersion: string) => request<Record<string, never>>('/activity/open', { body: { platform, appVersion }, timeoutMs: 10_000 }),
+  /** A step buying credits, for the admin panel's payment log. */
+  paymentStep: (step: PaymentStep, details: { credits?: number; purchaseId?: string; note?: string; appVersion?: string } = {}) => request<Record<string, never>>('/activity/payment', { body: { step, ...details }, timeoutMs: 10_000 }),
   wallet: () => request<WalletSummary>('/wallet'),
   /** One page of history, newest first: a month (YYYY-MM) or every month (''), after the entry `before`. */
   walletHistory: (month: string, limit: number, before?: string) =>

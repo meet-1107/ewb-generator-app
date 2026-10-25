@@ -134,6 +134,23 @@ router.post("/activity/open", rateLimit({ windowMs: 60_000, max: 6, by: "workspa
   return res.status(204).end();
 });
 
+/** Steps of buying credits in the app, for the admin panel: who opened checkout, reached the payment page, came back without paying, or paid. */
+export const PAYMENT_STEPS = ["wallet_opened", "checkout_opened", "checkout_closed", "payment_page_opened", "returned_paid", "returned_unpaid", "payment_error"] as const;
+
+router.post("/activity/payment", rateLimit({ windowMs: 60_000, max: 30, by: "workspace" }), async (req, res) => {
+  const parsed = z.object({
+    step: z.enum(PAYMENT_STEPS),
+    credits: z.number().int().min(0).max(1_000_000).optional(),
+    purchaseId: z.string().max(80).optional(),
+    note: z.string().max(200).optional(),
+    appVersion: z.string().max(20).optional(),
+  }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "bad_request", message: "Payment step could not be read." });
+  const { step, credits, purchaseId, note, appVersion } = parsed.data;
+  await appendLog("payment_steps", { at: new Date().toISOString(), workspaceId: req.workspaceId, step, ...(credits !== undefined ? { credits } : {}), ...(purchaseId ? { purchaseId } : {}), ...(note ? { note } : {}), ...(appVersion ? { appVersion } : {}) });
+  return res.status(204).end();
+});
+
 router.get("/audit", async (req, res) => {
   const events = await withWorkspace(req.workspaceId, (workspace) => workspace.audit.slice(-100).reverse());
   res.json({ events });

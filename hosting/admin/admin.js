@@ -63,6 +63,15 @@
   const LABELS = { part_b_pending: "Part-B pending", created: "pending", provider_down: "provider down", rate_limited: "rate limited", not_found: "not found" };
   const badge = (value, label) => h("span", { class: `badge ${TONES[value] ?? ""}` }, label ?? LABELS[value] ?? value ?? "—");
 
+  /** Steps of buying credits the app reports, in words and tone. */
+  const STEP_LABELS = {
+    wallet_opened: ["Opened wallet", ""], checkout_opened: ["Opened checkout", "info"], checkout_closed: ["Closed checkout (went back)", "warn"],
+    payment_page_opened: ["Opened payment page", "info"], returned_paid: ["Came back · paid", "good"], returned_unpaid: ["Came back without paying", "bad"], payment_error: ["Payment error", "bad"],
+  };
+  const stepBadge = (step) => h("span", { class: `badge ${(STEP_LABELS[step] ?? [])[1] ?? ""}` }, (STEP_LABELS[step] ?? [])[0] ?? step ?? "—");
+  const OUTCOME_TONES = { Paid: "good", "Came back without paying": "bad", "Expired unpaid": "warn", Cancelled: "", "On payment page (no result yet)": "warn", "Link created": "warn" };
+  const outcomeBadge = (outcome) => h("span", { class: `badge ${OUTCOME_TONES[outcome] ?? ""}` }, outcome || "—");
+
   /* ---------- Date range (India time) ---------- */
 
   function istDate(offsetDays = 0) {
@@ -370,6 +379,17 @@
             { label: "Last opened", render: (r) => when(r.lastOpenAt) },
             { label: "App", render: (r) => [r.platform, r.appVersion].filter(Boolean).join(" ") || "—" },
           ], a.users, { onRow: (r) => go(`users/${r.uid}`), empty: "No one opened the app in this period." }))),
+        h("div", { class: "card section" }, h("h2", {}, "Active users: payments and credits"),
+          h("p", { class: "note", style: "margin-top:0" }, "Paid and bought are all time; the last step buying credits is in this period (from app 1.3.11)."),
+          table([
+            { label: "Name / email", wrap: true, render: (r) => h("div", {}, h("div", { style: "font-weight:600" }, r.name || r.businessName || "—"), h("div", { class: "note", style: "margin:0" }, r.email || r.uid)) },
+            { label: "Paid", num: true, render: (r) => (r.paidPayments ? `${inr(r.paidPaise)} (${r.paidPayments})` : "Never paid") },
+            { label: "Credits bought", num: true, render: (r) => num(r.purchasedCredits) },
+            { label: "Credits left", num: true, render: (r) => num(r.balance) },
+            { label: "Pending links", num: true, render: (r) => num(r.pendingPayments) },
+            { label: "Went back", num: true, render: (r) => (r.closedAtCheckout || r.cameBackUnpaid ? `${num(r.closedAtCheckout)} at checkout · ${num(r.cameBackUnpaid)} from payment` : "—") },
+            { label: "Last step buying credits", wrap: true, render: (r) => (r.lastPaymentStep ? h("div", {}, stepBadge(r.lastPaymentStep), h("div", { class: "note", style: "margin:0" }, when(r.lastPaymentStepAt))) : "—") },
+          ], a.users, { onRow: (r) => go(`users/${r.uid}`), empty: "No one opened the app in this period." })),
       );
     },
 
@@ -489,11 +509,45 @@
               { label: "Customer", wrap: true, render: (r) => h("div", {}, r.userName || "—", h("div", { class: "note", style: "margin:0" }, r.userEmail || r.uid)) },
               { label: "Link / order", mono: true, key: "id" }, { label: "Payment ID", mono: true, render: (r) => r.paymentId || "—" },
               { label: "Credits", num: true, render: (r) => num(r.credits) }, { label: "Amount", num: true, render: (r) => inr(r.amountPaise) },
-              { label: "Created", render: (r) => when(r.createdAt) }, { label: "Paid", render: (r) => when(r.paidAt) }, { label: "Status", render: (r) => badge(r.status) }, { label: "Gateway", key: "provider" },
+              { label: "Created", render: (r) => when(r.createdAt) }, { label: "Paid", render: (r) => when(r.paidAt) }, { label: "Status", render: (r) => badge(r.status) }, { label: "Outcome", render: (r) => outcomeBadge(r.outcome) }, { label: "Gateway", key: "provider" },
             ], result.items, { onRow: (r) => go(`payments/${r.uid}/${r.id}`), empty: "No payments in this period." }), pager(result, (p) => { state.page = p; load(); }));
         } catch (error) { put(list, errorBox(error, load)); }
       }
       await load();
+
+      // The app's log of each step buying credits: who opened checkout, went back, reached the payment page, came back unpaid or paid.
+      const logState = { q: "", step: "", page: 1, ...(pages.payments.logState || {}) };
+      pages.payments.logState = logState;
+      const log = h("div", {}, loading());
+      view.append(h("div", { class: "card section" },
+        h("h2", {}, "Buying credits in the app, step by step"),
+        h("p", { class: "note", style: "margin-top:0" }, "Reported by the app (from version 1.3.11). A step without a payment link is a checkout the user closed before paying."),
+        h("div", { class: "filters" },
+          h("input", { class: "input", type: "search", placeholder: "Search email, user ID, link ID", value: logState.q, "aria-label": "Search payment steps", onchange: (e) => { logState.q = e.target.value; logState.page = 1; loadLog(); } }),
+          select("Step", logState.step, [["", "All steps"], ...Object.entries(STEP_LABELS).map(([value, [label]]) => [value, label])], (v) => { logState.step = v; logState.page = 1; loadLog(); })),
+        log));
+      async function loadLog() {
+        put(log, loading());
+        try {
+          const data = await api(`/payment-log?${rangeQuery()}&${filterQuery(logState)}&page=${logState.page}`);
+          const s = data.summary;
+          put(log,
+            data.capped ? h("div", { class: "notice warn" }, "Showing the latest 50,000 steps in this period; narrow the dates for exact totals.") : null,
+            h("div", { class: "grid kpis", style: "margin-bottom:12px" },
+              tile("Wallet opened", num(s.walletOpens)), tile("Checkout opened", num(s.checkouts), `${num(s.checkoutAccounts)} accounts`), tile("Went back at checkout", num(s.closedAtCheckout)),
+              tile("Payment page opened", num(s.paymentPages)), tile("Came back without paying", num(s.cameBackUnpaid)), tile("Came back paid", num(s.cameBackPaid)), tile("Errors", num(s.errors))),
+            table([
+              { label: "Time", render: (r) => when(r.at) },
+              { label: "User", wrap: true, render: (r) => h("div", {}, r.name || "—", h("div", { class: "note", style: "margin:0" }, r.email || r.uid)) },
+              { label: "Step", render: (r) => stepBadge(r.step) },
+              { label: "Credits", num: true, render: (r) => num(r.credits) },
+              { label: "Link", mono: true, render: (r) => (r.purchaseId ? h("a", { href: `#/payments/${encodeURIComponent(r.uid)}/${encodeURIComponent(r.purchaseId)}` }, r.purchaseId) : "—") },
+              { label: "Note", wrap: true, render: (r) => r.note || "" },
+              { label: "App", render: (r) => r.appVersion || "—" },
+            ], data.items, { onRow: (r) => go(`users/${r.uid}`), empty: "No payment steps in this period." }), pager(data, (p) => { logState.page = p; loadLog(); }));
+        } catch (error) { put(log, errorBox(error, loadLog)); }
+      }
+      await loadLog();
     },
 
     async credits(view) {
@@ -693,12 +747,13 @@
     const credited = d.credits.reduce((sum, entry) => sum + entry.credits, 0);
     const consistent = (p.status === "paid" && credited === p.credits) || (p.status !== "paid" && credited === 0);
     view.append(h("div", { class: "page-head" }, h("div", {}, h("h1", {}, `${inr(p.amountPaise)} · ${num(p.credits)} credits`), h("p", { class: "mono" }, p.id)),
-      h("div", { class: "filters", style: "margin:0" }, badge(p.status), canDo("payments.recheck") && p.provider === "razorpay" && p.status !== "paid" ? h("button", { class: "btn primary", onclick: recheck }, "Re-check with Razorpay") : null)),
+      h("div", { class: "filters", style: "margin:0" }, badge(p.status), outcomeBadge(d.outcome), canDo("payments.recheck") && p.provider === "razorpay" && p.status !== "paid" ? h("button", { class: "btn primary", onclick: recheck }, "Re-check with Razorpay") : null)),
       h("div", { class: `notice ${consistent ? "" : "bad"}` }, consistent ? (p.status === "paid" ? `Reconciled: paid, and ${num(credited)} credits were added once.` : "Not paid, and no credits were added.") : `Mismatch: status ${p.status}, ${num(credited)} credits added for a ${num(p.credits)}-credit purchase.`),
       h("div", { class: "grid two" },
         h("div", { class: "card" }, h("h2", {}, "Order"), h("dl", { class: "kv" }, h("dt", {}, "Customer"), h("dd", {}, h("a", { href: `#/users/${encodeURIComponent(uid)}` }, uid)), h("dt", {}, "Gateway"), h("dd", {}, p.provider), h("dt", {}, "Payment ID"), h("dd", { class: "mono" }, p.paymentId || "—"),
           h("dt", {}, "Amount"), h("dd", {}, `${inr(p.amountPaise)} INR (gross; fees and GST not recorded)`), h("dt", {}, "Created"), h("dd", {}, when(p.createdAt)), h("dt", {}, "Paid"), h("dd", {}, when(p.paidAt)), h("dt", {}, "Receipt"), h("dd", {}, "Not issued by the app"), h("dt", {}, "Refunds"), h("dd", {}, "Not tracked by the app"))),
         h("div", { class: "card" }, h("h2", {}, "Credits added"), table([{ label: "Time", render: (r) => when(r.at) }, { label: "Credits", num: true, key: "credits" }, { label: "Entry", mono: true, key: "id" }], d.credits, { empty: "None." }))),
+      h("div", { class: "card section" }, h("h2", {}, "In the app"), table([{ label: "Time", render: (r) => when(r.at) }, { label: "Step", render: (r) => stepBadge(r.step) }, { label: "Credits", num: true, render: (r) => num(r.credits) }, { label: "Note", wrap: true, render: (r) => r.note || "" }, { label: "App", render: (r) => r.appVersion || "—" }], d.appSteps || [], { empty: "No steps reported (app before 1.3.11, or a payment made elsewhere)." })),
       h("div", { class: "card section" }, h("h2", {}, "Webhook deliveries"), table([{ label: "Received", render: (r) => when(r.at) }, { label: "Event", key: "event" }, { label: "Amount paid", num: true, render: (r) => inr(r.amountPaid) }, { label: "Credited", render: (r) => (r.credited ? "yes" : "no (already settled or short)") }], d.events, { empty: "No webhook received for this link." })));
     async function recheck() {
       try { const result = await api(`/payments/${encodeURIComponent(uid)}/${encodeURIComponent(id)}/recheck`, { body: {} }); toast(result.credited ? "Paid: credits added." : `Razorpay says: ${result.gateway.status}. No change.`); render(); } catch (error) { toast(error.message); }

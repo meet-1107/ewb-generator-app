@@ -328,6 +328,65 @@ export async function activity(range: Range) {
   };
 }
 
+export type PaymentStepRow = { at: string; uid: string; email: string | null; name: string | null; step: string; credits: number | null; purchaseId: string | null; note: string | null; appVersion: string | null };
+export type PaymentJourney = { lastStep: string; lastStepAt: string; checkouts: number; closedAtCheckout: number; paymentPages: number; cameBackUnpaid: number; cameBackPaid: number };
+
+/**
+ * Buying credits as the app reported it (the `payment_steps` log): each step with the
+ * account's email, per payment link, per account, and how many reached each step.
+ */
+export async function paymentJourneys(range: Range) {
+  const [records, snap] = await Promise.all([queryLogs("payment_steps", { ...range, limit: OPENS_LOG_CAP }), snapshot()]);
+  const accounts = new Map(snap.users.map((user) => [user.uid, user]));
+  const steps: PaymentStepRow[] = records.map((record) => {
+    const uid = String(record["workspaceId"] ?? "");
+    const account = accounts.get(uid);
+    const value = (key: string) => (record[key] === undefined || record[key] === null ? null : String(record[key]));
+    return { at: record.at, uid, email: account?.email ?? null, name: account?.name ?? null, step: String(record["step"] ?? ""), credits: typeof record["credits"] === "number" ? record["credits"] : null, purchaseId: value("purchaseId"), note: value("note"), appVersion: value("appVersion") };
+  });
+  const byPurchase = new Map<string, PaymentStepRow[]>();
+  const byUser = new Map<string, PaymentJourney>();
+  // Records come newest first: the first step seen for an account is its latest.
+  for (const row of steps) {
+    if (row.purchaseId) byPurchase.set(row.purchaseId, [...(byPurchase.get(row.purchaseId) ?? []), row]);
+    const journey = byUser.get(row.uid) ?? { lastStep: row.step, lastStepAt: row.at, checkouts: 0, closedAtCheckout: 0, paymentPages: 0, cameBackUnpaid: 0, cameBackPaid: 0 };
+    if (row.step === "checkout_opened") journey.checkouts += 1;
+    if (row.step === "checkout_closed") journey.closedAtCheckout += 1;
+    if (row.step === "payment_page_opened") journey.paymentPages += 1;
+    if (row.step === "returned_unpaid") journey.cameBackUnpaid += 1;
+    if (row.step === "returned_paid") journey.cameBackPaid += 1;
+    byUser.set(row.uid, journey);
+  }
+  const count = (step: string) => steps.filter((row) => row.step === step).length;
+  const accountsAt = (step: string) => new Set(steps.filter((row) => row.step === step).map((row) => row.uid)).size;
+  return {
+    capped: records.length >= OPENS_LOG_CAP,
+    steps,
+    byPurchase,
+    byUser,
+    summary: {
+      walletOpens: count("wallet_opened"),
+      checkouts: count("checkout_opened"),
+      checkoutAccounts: accountsAt("checkout_opened"),
+      closedAtCheckout: count("checkout_closed"),
+      paymentPages: count("payment_page_opened"),
+      cameBackUnpaid: count("returned_unpaid"),
+      cameBackPaid: count("returned_paid"),
+      errors: count("payment_error"),
+    },
+  };
+}
+
+/** What happened to a payment link, in words: from its status and the app's steps. */
+export function paymentOutcome(purchase: Pick<CreditPurchase, "status">, steps: PaymentStepRow[] = []) {
+  if (purchase.status === "paid") return "Paid";
+  if (purchase.status === "expired") return "Expired unpaid";
+  if (purchase.status === "cancelled") return "Cancelled";
+  if (steps.some((row) => row.step === "returned_unpaid")) return "Came back without paying";
+  if (steps.some((row) => row.step === "payment_page_opened")) return "On payment page (no result yet)";
+  return "Link created";
+}
+
 /* ---------- Overview ---------- */
 
 export async function overview(range: Range) {

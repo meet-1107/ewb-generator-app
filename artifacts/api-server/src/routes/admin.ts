@@ -1,7 +1,7 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import { adminAudit, ADMIN_ROLES, allow, bootstrapEmails, can, forgetRole, maskEmail, maskGstin, PERMISSIONS, recentSignIn, requireAdmin, ROLE_LABELS, type AdminIdentity } from "../lib/admin-auth";
-import { activity, apiCalls, inRange, invalidateSnapshot, overview, providerQuota, reconcile, snapshot, summarizeApi, type EwbRow, type PurchaseRow, type Range, type UserRow } from "../lib/admin-data";
+import { activity, apiCalls, inRange, invalidateSnapshot, overview, paymentJourneys, paymentOutcome, providerQuota, reconcile, snapshot, summarizeApi, type EwbRow, type PaymentStepRow, type PurchaseRow, type Range, type UserRow } from "../lib/admin-data";
 import { directory } from "../lib/admin-directory";
 import { authMode } from "../lib/auth";
 import { distanceConfigured } from "../lib/distance";
@@ -120,11 +120,40 @@ router.get("/overview", allow("overview"), async (req, res) => {
 /* ---------- App activity ---------- */
 
 router.get("/activity", allow("users"), async (req, res) => {
-  const data = await activity(rangeOf(req));
+  const range = rangeOf(req);
+  const [data, journeys, snap] = await Promise.all([activity(range), paymentJourneys(range), snapshot()]);
+  const accounts = userIndex(snap.users);
   const pii = can(req.admin!, "pii");
   res.json({
     ...data,
-    users: data.users.map((user) => (pii ? user : { ...user, email: maskEmail(user.email), name: user.name ? `${user.name.slice(0, 1)}•••` : null, gstin: maskGstin(user.gstin) })),
+    // Each active account's payments (all time) and its latest step buying credits (in the period).
+    users: data.users.map((row) => {
+      const account = accounts.get(row.uid);
+      const journey = journeys.byUser.get(row.uid);
+      const user = {
+        ...row,
+        paidPayments: account?.paidPayments ?? 0, paidPaise: account?.paidPaise ?? 0, purchasedCredits: account?.purchasedCredits ?? 0, pendingPayments: account?.pendingPayments ?? 0, balance: account?.balance ?? 0,
+        lastPaymentStep: journey?.lastStep ?? null, lastPaymentStepAt: journey?.lastStepAt ?? null, cameBackUnpaid: journey?.cameBackUnpaid ?? 0, closedAtCheckout: journey?.closedAtCheckout ?? 0,
+      };
+      return pii ? user : { ...user, email: maskEmail(user.email), name: user.name ? `${user.name.slice(0, 1)}•••` : null, gstin: maskGstin(user.gstin) };
+    }),
+  });
+});
+
+/* ---------- Buying credits, step by step (the app's payment log) ---------- */
+
+router.get("/payment-log", allow("payments"), async (req, res) => {
+  const journeys = await paymentJourneys(rangeOf(req));
+  const pii = can(req.admin!, "pii");
+  const step = text(req, "step");
+  const q = text(req, "q").toLowerCase();
+  const rows = journeys.steps.filter((row) => (!step || row.step === step) && (!q || [row.uid, row.email, row.name, row.purchaseId].some((value) => value?.toLowerCase().includes(q))));
+  const result = page(req, rows);
+  res.json({
+    ...result,
+    items: result.items.map((row: PaymentStepRow) => (pii ? row : { ...row, email: maskEmail(row.email), name: row.name ? `${row.name.slice(0, 1)}•••` : null })),
+    summary: journeys.summary,
+    capped: journeys.capped,
   });
 });
 
@@ -325,7 +354,7 @@ router.get("/api-usage", allow("api"), async (req, res) => {
 /* ---------- Payments and credits ---------- */
 
 router.get("/payments", allow("payments"), async (req, res) => {
-  const snap = await snapshot(req.query["fresh"] === "1");
+  const [snap, journeys] = await Promise.all([snapshot(req.query["fresh"] === "1"), paymentJourneys(rangeOf(req))]);
   const users = userIndex(snap.users);
   const status = text(req, "status");
   const provider = text(req, "provider");
@@ -342,7 +371,7 @@ router.get("/payments", allow("payments"), async (req, res) => {
   const result = page(req, sortBy(rows, (purchase) => purchase.paidAt ?? purchase.createdAt, "desc"));
   res.json({
     ...result,
-    items: result.items.map((purchase) => purchaseView(purchase, users)),
+    items: result.items.map((purchase) => ({ ...purchaseView(purchase, users), outcome: paymentOutcome(purchase, journeys.byPurchase.get(purchase.id)) })),
     totals: {
       paidCount: real.filter((purchase) => purchase.status === "paid").length,
       grossPaise: real.filter((purchase) => purchase.status === "paid").reduce((total, purchase) => total + purchase.amountPaise, 0),
@@ -358,8 +387,14 @@ router.get("/payments/:uid/:id", allow("payments"), async (req, res) => {
   const purchase = workspace?.purchases[param(req, "id")];
   if (!workspace || !purchase) return res.status(404).json({ error: "not_found", message: "No such payment." });
   const events = (await queryLogs("payment_events", { from: purchase.createdAt, limit: 5000 })).filter((event) => event["linkId"] === purchase.id);
+  // What the app reported around this payment: from the checkout before it to the return after it.
+  const appSteps = (await queryLogs("payment_steps", { from: new Date(Date.parse(purchase.createdAt) - 30 * 60_000).toISOString(), limit: 5000 }))
+    .filter((step) => step["workspaceId"] === param(req, "uid") && (step["purchaseId"] === purchase.id || (!step["purchaseId"] && step.at <= purchase.createdAt)))
+    .slice(0, 50);
   return res.json({
     purchase: { ...purchase, shortUrl: undefined },
+    outcome: paymentOutcome(purchase, appSteps.filter((step) => step["purchaseId"] === purchase.id).map((step) => ({ step: String(step["step"]) }) as PaymentStepRow)),
+    appSteps,
     credits: workspace.wallet.ledger.filter((entry) => entry.kind === "topup" && (entry.targetId === purchase.id || (purchase.paymentId && entry.note?.includes(purchase.paymentId)))),
     events,
   });
