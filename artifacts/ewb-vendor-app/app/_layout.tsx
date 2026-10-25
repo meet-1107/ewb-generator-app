@@ -18,6 +18,7 @@ import { AuthProvider, useAuth } from '@/state/auth';
 import { AppStoreProvider, useAppStore } from '@/state/app-store';
 import { DialogProvider } from '@/components/Dialog';
 import ConsentGate from '@/components/ConsentGate';
+import UpdateGate from '@/components/UpdateGate';
 import { loadThemePreference } from '@/state/theme';
 import { useColors } from '@/hooks/useColors';
 
@@ -49,6 +50,7 @@ function RootLayoutNav() {
   return (
     <>
       <StatusBar style={colors.isDark ? 'light' : 'dark'} />
+      <UpdateGate>
       <ConsentGate>
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background }, animation: 'slide_from_right' }}>
         <Stack.Screen name="index" options={{ animation: 'fade' }} />
@@ -77,6 +79,7 @@ function RootLayoutNav() {
         <Stack.Screen name="help" />
       </Stack>
       </ConsentGate>
+      </UpdateGate>
     </>
   );
 }

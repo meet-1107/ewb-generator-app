@@ -96,6 +96,8 @@ export type ServiceConfig = {
   creditCosts?: CreditCosts;
   /** The server can look up road distances between PIN codes. */
   distanceLookup?: boolean;
+  /** Android version codes: below `minVersionCode` the app must update; below `latestVersionCode` it is offered (0 = off). */
+  androidUpdate?: { minVersionCode: number; latestVersionCode: number; message: string; storeUrl: string };
 };
 /** Registered details for a GSTIN, from the server's verified-GSTIN registry. */
 export type VerifiedGstin = {

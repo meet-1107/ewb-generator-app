@@ -644,7 +644,38 @@
         h("div", { class: "card" }, h("h2", {}, "Prices"), h("dl", { class: "kv" }, h("dt", {}, "1 credit"), h("dd", {}, inr(health.pricing.creditPricePaise)), h("dt", {}, "Packs"), h("dd", {}, health.pricing.packs.join(", ")),
           h("dt", {}, "Costs"), h("dd", {}, Object.entries(health.creditCosts).map(([action, cost]) => `${action} ${cost}`).join(" · ")))),
         subs ? h("div", { class: "card" }, h("h2", {}, "Plans"), h("p", { class: "note", style: "margin-top:0" }, subs.sold ? "Paid plans are on sale." : "Paid plans are not sold (display only); customers pay with credits."),
-          table([{ label: "Plan · state", key: "key" }, { label: "Accounts", num: true, key: "count" }], Object.entries(subs.counts).map(([key, count]) => ({ key, count })))) : null));
+          table([{ label: "Plan · state", key: "key" }, { label: "Accounts", num: true, key: "count" }], Object.entries(subs.counts).map(([key, count]) => ({ key, count })))) : null,
+        await appVersionCard()));
+
+      // Android app updates: apps older than the minimum must update from the Play Store before they open.
+      async function appVersionCard() {
+        const { setting, storeUrl } = await api("/app-version");
+        const edit = async () => {
+          const values = await formDialog({
+            title: "Android app updates",
+            intro: "Use the version code from the Play Console (not the version name). Set the minimum only after that version is live on the Play Store, or older apps cannot open until they can download it.",
+            fields: [
+              { name: "minVersionCode", label: "Minimum version code (older apps must update)", type: "number", required: false, min: 0, value: String(setting.minVersionCode || "") },
+              { name: "latestVersionCode", label: "Latest version code (older apps are offered the update)", type: "number", required: false, min: 0, value: String(setting.latestVersionCode || "") },
+              { name: "message", label: "Message on the update screen (optional)", required: false, value: setting.message || "" },
+            ],
+            submit: "Save",
+          });
+          if (!values) return;
+          try {
+            await api("/app-version", { body: { minVersionCode: Number(values.minVersionCode) || 0, latestVersionCode: Number(values.latestVersionCode) || 0, message: values.message || "" } });
+            toast("Saved: apps pick it up within a minute.");
+            render();
+          } catch (error) { toast(error.message); }
+        };
+        return h("div", { class: "card" }, h("h2", {}, "Android app updates"), h("dl", { class: "kv" },
+          h("dt", {}, "Must update below"), h("dd", {}, setting.minVersionCode ? `version code ${setting.minVersionCode}` : "Off (no forced update)"),
+          h("dt", {}, "Offer update below"), h("dd", {}, setting.latestVersionCode ? `version code ${setting.latestVersionCode}` : "Off"),
+          h("dt", {}, "Message"), h("dd", {}, setting.message || "Default"),
+          h("dt", {}, "Play Store"), h("dd", {}, h("a", { href: storeUrl, target: "_blank", rel: "noopener" }, "Open listing")),
+          h("dt", {}, "Last changed"), h("dd", {}, setting.updatedAt ? `${when(setting.updatedAt)}${setting.updatedBy ? ` by ${setting.updatedBy}` : ""}` : "never")),
+          canDo("admins") ? h("button", { class: "btn primary", onclick: edit }, "Change") : h("p", { class: "note" }, "Only a super admin can change this."));
+      }
     },
 
     async admins(view) {

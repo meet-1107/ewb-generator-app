@@ -3,6 +3,7 @@ import { Router, type IRouter } from "express";
 import { z } from "zod";
 import { appendLog, audit, currentPeriod, withWorkspace } from "../lib/store";
 import { rateLimit } from "../lib/rate-limit";
+import { appVersionSetting, PLAY_STORE_URL } from "../lib/app-version";
 import { billingMode, planById, plans, plansAreSamples } from "../lib/plans";
 import { ewbProvider } from "../providers/ewb-provider";
 import { gstProvider } from "../providers/gst-provider";
@@ -30,7 +31,8 @@ router.post("/consent", async (req, res) => {
   return res.json({ version: record.version, acceptedAt: record.acceptedAt });
 });
 
-router.get("/config", (_req, res) => {
+router.get("/config", async (_req, res) => {
+  const version = await appVersionSetting();
   res.json({
     authMode,
     ewbProvider: ewbProvider ? { id: ewbProvider.id, label: ewbProvider.label, sandbox: ewbProvider.sandbox } : null,
@@ -42,6 +44,8 @@ router.get("/config", (_req, res) => {
     ewbCredentialsRequired: Boolean(ewbProvider?.needsCredentials),
     creditCosts,
     distanceLookup: distanceConfigured,
+    // Android versions still allowed (older ones must update from the Play Store), and the latest one.
+    androidUpdate: { minVersionCode: version.minVersionCode, latestVersionCode: version.latestVersionCode, message: version.message, storeUrl: PLAY_STORE_URL },
     // Link for "Video tutorial" in Help & data (e.g. a YouTube video or playlist); changed without an app update.
     tutorialVideoUrl: /^https:\/\/\S+$/.test(process.env["TUTORIAL_VIDEO_URL"]?.trim() ?? "") ? process.env["TUTORIAL_VIDEO_URL"]!.trim() : null,
   });

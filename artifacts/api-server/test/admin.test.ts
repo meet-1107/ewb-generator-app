@@ -267,6 +267,18 @@ describe("admin panel API", () => {
     assert.equal(row.pendingPayments, 1);
   });
 
+  it("sets the Android versions apps must update from, for super admins only, and tells the app", async () => {
+    assert.equal((await call("GET", "/config", T.a())).body.androidUpdate.minVersionCode, 0);
+    assert.equal((await call("POST", "/admin/app-version", T.fin(), { minVersionCode: 15, latestVersionCode: 16, message: "" })).status, 403);
+    assert.equal((await call("POST", "/admin/app-version", T.boss(), { minVersionCode: 17, latestVersionCode: 16, message: "" })).status, 400);
+    const saved = await call("POST", "/admin/app-version", T.boss(), { minVersionCode: 15, latestVersionCode: 16, message: "New GST rates" });
+    assert.equal(saved.status, 200, saved.text);
+    const update = (await call("GET", "/config", T.a())).body.androidUpdate;
+    assert.deepEqual({ min: update.minVersionCode, latest: update.latestVersionCode, message: update.message }, { min: 15, latest: 16, message: "New GST rates" });
+    assert.match(update.storeUrl, /play\.google\.com\/store\/apps\/details\?id=com\.ewayeasy\.app/);
+    assert.equal((await call("GET", "/admin/app-version", T.tec())).body.setting.minVersionCode, 15);
+  });
+
   it("re-checks an unpaid payment with the gateway and credits it once", async () => {
     links.get(pendingLink)!.status = "paid";
     links.get(pendingLink)!.amount_paid = 5_000;

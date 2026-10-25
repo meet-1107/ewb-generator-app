@@ -15,6 +15,7 @@ import { adjustCredits, creditCosts, walletSummary } from "../lib/wallet";
 import { ewbProvider, ewbProviderSetting } from "../providers/ewb-provider";
 import { settlePurchase } from "./wallet";
 import { issueBillingInvoice } from "../lib/billing";
+import { appVersionSetting, PLAY_STORE_URL, setAppVersionSetting } from "../lib/app-version";
 
 /**
  * Admin panel API, under /api/admin (the panel itself is /admin on Hosting).
@@ -485,6 +486,24 @@ router.get("/health", allow("health"), async (_req, res) => {
     quota: await providerQuota(),
     snapshotBuiltAt: snap.builtAt,
   });
+});
+
+/* ---------- App updates ---------- */
+
+router.get("/app-version", allow("health"), async (_req, res) => {
+  res.json({ setting: await appVersionSetting(), storeUrl: PLAY_STORE_URL });
+});
+
+/** After a release is live on the Play Store: older apps must update (min) or are offered it (latest). */
+router.post("/app-version", allow("admins"), recentSignIn(), sensitive, async (req, res) => {
+  const parsed = z.object({ minVersionCode: z.number().int().min(0).max(100_000), latestVersionCode: z.number().int().min(0).max(100_000), message: z.string().trim().max(300).default("") }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "bad_request", message: "Enter whole version codes (the Play Console's version code), and a short message." });
+  const { minVersionCode, latestVersionCode, message } = parsed.data;
+  if (latestVersionCode && minVersionCode > latestVersionCode) return res.status(400).json({ error: "bad_request", message: "The minimum version cannot be newer than the latest version." });
+  const before = await appVersionSetting();
+  const setting = await setAppVersionSetting({ minVersionCode, latestVersionCode, message, updatedBy: req.admin!.email });
+  await adminAudit(req, { action: "admin.app_version.set", outcome: "ok", before, after: setting });
+  return res.json({ setting });
 });
 
 /* ---------- Admins ---------- */
