@@ -1,10 +1,9 @@
 import { readDoc, withDoc } from "./store";
 
 /**
- * Which Android app versions may still be used. An app older than `minVersionCode`
- * shows a full-screen "Update required" and opens the Play Store; one older than
- * `latestVersionCode` offers the update once. Set from the admin panel after a
- * release is live on the Play Store (ANDROID_MIN_VERSION_CODE until it is set there).
+ * The latest Android release on the Play Store, set from the admin panel once it is live:
+ * older apps show an "update available" alert once (Update or Later); updating is never
+ * forced. `minVersionCode` is kept for settings saved before and is treated the same way.
  */
 export type AppVersionSetting = { minVersionCode: number; latestVersionCode: number; message: string; updatedAt?: string; updatedBy?: string };
 

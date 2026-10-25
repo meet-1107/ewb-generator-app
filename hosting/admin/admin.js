@@ -647,30 +647,28 @@
           table([{ label: "Plan · state", key: "key" }, { label: "Accounts", num: true, key: "count" }], Object.entries(subs.counts).map(([key, count]) => ({ key, count })))) : null,
         await appVersionCard()));
 
-      // Android app updates: apps older than the minimum must update from the Play Store before they open.
+      // Android app updates: apps older than the latest version are told once that an update is out (never forced).
       async function appVersionCard() {
         const { setting, storeUrl } = await api("/app-version");
         const edit = async () => {
           const values = await formDialog({
             title: "Android app updates",
-            intro: "Use the version code from the Play Console (not the version name). Set the minimum only after that version is live on the Play Store, or older apps cannot open until they can download it.",
+            intro: "Use the version code from the Play Console (not the version name), and set it only once that version is live on the Play Store. Apps older than it show an alert once: Update or Later. Updating is never forced.",
             fields: [
-              { name: "minVersionCode", label: "Minimum version code (older apps must update)", type: "number", required: false, min: 0, value: String(setting.minVersionCode || "") },
-              { name: "latestVersionCode", label: "Latest version code (older apps are offered the update)", type: "number", required: false, min: 0, value: String(setting.latestVersionCode || "") },
-              { name: "message", label: "Message on the update screen (optional)", required: false, value: setting.message || "" },
+              { name: "latestVersionCode", label: "Latest version code on the Play Store", type: "number", required: false, min: 0, value: String(setting.latestVersionCode || "") },
+              { name: "message", label: "Message in the update alert (optional)", required: false, value: setting.message || "" },
             ],
             submit: "Save",
           });
           if (!values) return;
           try {
-            await api("/app-version", { body: { minVersionCode: Number(values.minVersionCode) || 0, latestVersionCode: Number(values.latestVersionCode) || 0, message: values.message || "" } });
+            await api("/app-version", { body: { minVersionCode: 0, latestVersionCode: Number(values.latestVersionCode) || 0, message: values.message || "" } });
             toast("Saved: apps pick it up within a minute.");
             render();
           } catch (error) { toast(error.message); }
         };
         return h("div", { class: "card" }, h("h2", {}, "Android app updates"), h("dl", { class: "kv" },
-          h("dt", {}, "Must update below"), h("dd", {}, setting.minVersionCode ? `version code ${setting.minVersionCode}` : "Off (no forced update)"),
-          h("dt", {}, "Offer update below"), h("dd", {}, setting.latestVersionCode ? `version code ${setting.latestVersionCode}` : "Off"),
+          h("dt", {}, "Latest version"), h("dd", {}, setting.latestVersionCode ? `version code ${setting.latestVersionCode} (older apps get an update alert)` : "Not set (no update alert)"),
           h("dt", {}, "Message"), h("dd", {}, setting.message || "Default"),
           h("dt", {}, "Play Store"), h("dd", {}, h("a", { href: storeUrl, target: "_blank", rel: "noopener" }, "Open listing")),
           h("dt", {}, "Last changed"), h("dd", {}, setting.updatedAt ? `${when(setting.updatedAt)}${setting.updatedBy ? ` by ${setting.updatedBy}` : ""}` : "never")),
