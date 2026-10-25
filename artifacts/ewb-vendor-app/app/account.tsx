@@ -12,7 +12,7 @@ import { Button, Card, Divider, Field, Heading, ListRow, Notice, Page, Segmented
 import { useDialog } from '@/components/Dialog';
 import { BrandBar } from '@/components/Brand';
 import { SUPPORT_EMAIL } from '@/lib/api';
-import { openPlayStore } from '@/lib/play-store';
+import { requestStoreReview } from '@/lib/play-store';
 
 const stateOptions = STATES.map((state) => ({ value: state.name, label: state.name }));
 
@@ -293,7 +293,7 @@ export default function AccountScreen() {
         <Divider inset={64} />
         <ListRow icon="help-circle" title="Help & support" detail="Guides, FAQs and contact" onPress={() => router.push('/help')} />
         <Divider inset={64} />
-        <ListRow icon="star" title="Rate us" detail="Rate and review E-Way Easy on the Play Store" onPress={() => void openPlayStore(store.config?.androidUpdate?.storeUrl).catch(() => dialog.toast('Could not open the Play Store', 'danger'))} testID="rate-us" />
+        <ListRow icon="star" title="Rate us" detail="Give E-Way Easy stars on the Play Store, right here" onPress={() => void requestStoreReview(store.config?.androidUpdate?.storeUrl).catch(() => dialog.toast('Could not open the Play Store', 'danger'))} testID="rate-us" />
         <Divider inset={64} />
         <ListRow icon="lock" title="Privacy & terms" detail="How your data is handled" onPress={() => router.push({ pathname: '/help', params: { section: 'privacy' } })} />
         <Divider inset={64} />
