@@ -450,6 +450,13 @@ export default function InvoiceEditorScreen() {
       const checked = await checkSeries(invoice);
       if (!checked) return;
       if (checked.invoiceNumber !== invoice.invoiceNumber) patch({ invoiceNumber: checked.invoiceNumber });
+    } else {
+      // An invoice or purchase needs at least one product before its preview.
+      const noProduct = invoiceIssues(invoice, store.invoices, released).filter((issue) => issue.field === 'lines');
+      if (noProduct.length) {
+        showProblems(noProduct, 'Add at least one product before the preview');
+        return;
+      }
     }
     setViewOnly(false);
     setPreviewing(true);
