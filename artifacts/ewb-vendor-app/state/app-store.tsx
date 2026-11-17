@@ -24,6 +24,7 @@ import {
   type Transporter,
 } from '@/lib/domain';
 import { api, ApiError, setApiIdentity, type Plan, type ServiceConfig, type Subscription, type SyncEnvelope, type WalletSummary } from '@/lib/api';
+import type { Entry } from '@/lib/ledger';
 import { useAuth } from '@/state/auth';
 
 /**
@@ -34,13 +35,15 @@ import { useAuth } from '@/state/auth';
  */
 
 type SyncState = 'idle' | 'syncing' | 'offline' | 'error';
-type Collections = 'invoices' | 'parties' | 'products' | 'transporters';
+type Collections = 'invoices' | 'parties' | 'products' | 'transporters' | 'entries';
 type Persisted = {
   business: Business | null;
   invoices: Invoice[];
   parties: Party[];
   products: Product[];
   transporters: Transporter[];
+  /** Bank, cash and expense entries (see lib/ledger). */
+  entries: Entry[];
   activeGstin: string;
   ewbs: EwbRecord[];
   ewbsFetchedAt: string | null;
@@ -78,6 +81,8 @@ type StoreValue = Omit<Persisted, 'tombstones'> & {
   removeProduct: (id: string) => Promise<void>;
   saveTransporter: (transporter: Omit<Transporter, 'id' | 'updatedAt'> & { id?: string }) => Promise<Transporter>;
   removeTransporter: (id: string) => Promise<void>;
+  saveEntry: (entry: Omit<Entry, 'id' | 'createdAt' | 'updatedAt'> & { id?: string; createdAt?: string }) => Promise<Entry>;
+  removeEntry: (id: string) => Promise<void>;
   upsertEwb: (ewb: EwbRecord) => void;
   /** `full`: the whole list (pull to refresh); otherwise only the bills changed since the last list. */
   refreshEwbs: (options?: { full?: boolean }) => Promise<void>;
@@ -105,6 +110,7 @@ const EMPTY: Persisted = {
   parties: [],
   products: [],
   transporters: [],
+  entries: [],
   activeGstin: '',
   ewbs: [],
   ewbsFetchedAt: null,
@@ -253,6 +259,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         parties: changed(current.parties),
         products: changed(current.products),
         transporters: changed(current.transporters),
+        entries: changed(current.entries),
         business: current.business && (!pushedAt || (current.business.updatedAt ?? '') >= pushedAt) ? [{ id: 'profile', updatedAt: current.business.updatedAt ?? new Date(0).toISOString(), data: current.business }] : [],
       };
       for (const [name, ids] of Object.entries(current.tombstones)) {
@@ -290,6 +297,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
         merge<Party>('parties', (raw) => raw as Party);
         merge<Product>('products', (raw) => raw as Product);
         merge<Transporter>('transporters', (raw) => raw as Transporter);
+        merge<Entry>('entries', (raw) => raw as Entry);
         const remoteBusiness = result.changes.business?.find((item) => item.id === 'profile');
         if (remoteBusiness?.data && (!next.business || (next.business.updatedAt ?? '') < remoteBusiness.updatedAt)) {
           next.business = remoteBusiness.data as Business;
@@ -393,7 +401,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   }, [ready, countOpen, refreshEwbs, refreshServices, refreshSubscription, refreshWallet, syncNow]);
 
   // Debounced background sync after local edits.
-  const syncKey = `${data.invoices.length}:${data.invoices[0]?.updatedAt}:${data.parties.length}:${data.products.length}:${data.transporters.length}:${data.business?.updatedAt}:${Object.keys(data.tombstones).length}`;
+  const syncKey = `${data.invoices.length}:${data.invoices[0]?.updatedAt}:${data.parties.length}:${data.products.length}:${data.transporters.length}:${data.entries.length}:${data.entries[0]?.updatedAt}:${data.business?.updatedAt}:${Object.keys(data.tombstones).length}`;
   useEffect(() => {
     if (!ready) return;
     const timer = setTimeout(() => void syncNow(), 2500);
@@ -458,6 +466,18 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const removeTransporter = useCallback(removeFactory('transporters'), [update]);
 
+  const saveEntry = useCallback(async (item: Omit<Entry, 'id' | 'createdAt' | 'updatedAt'> & { id?: string; createdAt?: string }) => {
+    const now = new Date().toISOString();
+    const saved: Entry = { ...item, id: item.id ?? uid('en_'), createdAt: item.createdAt ?? now, updatedAt: now };
+    update((state) => ({ ...state, entries: [saved, ...state.entries.filter((existing) => existing.id !== saved.id)] }));
+    return saved;
+  }, [update]);
+
+  const removeEntry = useCallback(async (id: string) => {
+    update((state) => ({ ...state, entries: state.entries.filter((item) => item.id !== id), tombstones: tombstone(state, 'entries', id) }));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [update]);
+
   const setActiveGstin = useCallback(async (gstin: string) => update((state) => ({ ...state, activeGstin: gstin })), [update]);
 
   const upsertEwb = useCallback((ewb: EwbRecord) => {
@@ -487,6 +507,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     parties: data.parties,
     products: data.products,
     transporters: data.transporters,
+    entries: data.entries,
     activeGstin: data.activeGstin,
     ewbs: data.ewbs,
     ewbsFetchedAt: data.ewbsFetchedAt,
@@ -511,6 +532,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     removeProduct,
     saveTransporter,
     removeTransporter,
+    saveEntry,
+    removeEntry,
     upsertEwb,
     refreshEwbs,
     setGstCache,
@@ -522,7 +545,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     syncNow,
     clearLocalData,
     exportData,
-  }), [data, scope, hydratedScope, previewMode, storageError, workspaceId, online, syncState, config, subscription, wallet, saveBusiness, setActiveGstin, saveInvoice, removeInvoice, saveParty, removeParty, saveProduct, removeProduct, saveTransporter, removeTransporter, upsertEwb, refreshEwbs, setGstCache, refreshServices, refreshSubscription, refreshWallet, setWalletBalance, syncNow, clearLocalData, exportData]);
+  }), [data, scope, hydratedScope, previewMode, storageError, workspaceId, online, syncState, config, subscription, wallet, saveBusiness, setActiveGstin, saveInvoice, removeInvoice, saveParty, removeParty, saveProduct, removeProduct, saveTransporter, removeTransporter, saveEntry, removeEntry, upsertEwb, refreshEwbs, setGstCache, refreshServices, refreshSubscription, refreshWallet, setWalletBalance, syncNow, clearLocalData, exportData]);
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }

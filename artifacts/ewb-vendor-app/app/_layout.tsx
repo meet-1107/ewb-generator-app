@@ -69,6 +69,11 @@ function RootLayoutNav() {
         <Stack.Screen name="ewb/bulk" />
         <Stack.Screen name="account" />
         <Stack.Screen name="bank-details" />
+        <Stack.Screen name="bank-entry" />
+        <Stack.Screen name="cash-entry" />
+        <Stack.Screen name="expenses" />
+        <Stack.Screen name="ledger/index" />
+        <Stack.Screen name="ledger/[key]" />
         <Stack.Screen name="signature" />
         <Stack.Screen name="reports" />
         <Stack.Screen name="wallet" />

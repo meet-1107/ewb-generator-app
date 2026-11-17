@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Linking, Pressable, Share, StyleSheet, View } from 'react-native';
 import { Feather } from '@expo/vector-icons';
 import { router } from 'expo-router';
@@ -7,7 +7,8 @@ import { useColors } from '@/hooks/useColors';
 import { useAppStore, useScopedRecords } from '@/state/app-store';
 import { useAuth } from '@/state/auth';
 import { setThemePreference, useThemePreference, type ThemePreference } from '@/state/theme';
-import { defaultBank, gstinProblem, relativeTime, STATES, stateForGstin, templates, type Business } from '@/lib/domain';
+import { defaultBank, formatInr, gstinProblem, relativeTime, STATES, stateForGstin, templates, type Business } from '@/lib/domain';
+import { accountBook, accountLabel, CASH, inPeriod, partySummaries, periodRange, scopedEntries } from '@/lib/ledger';
 import { Button, Card, Divider, Field, Heading, ListRow, Notice, Page, Segmented, SectionTitle, SelectField, Sheet, StatusPill, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
 import { BrandBar } from '@/components/Brand';
@@ -34,6 +35,21 @@ export default function AccountScreen() {
 
   const business = store.business;
   const registrations = business?.gstRegistrations ?? [];
+  // One-line summaries for the Bank entry, Cash entry, Expenses and Party ledger rows.
+  const books = useMemo(() => {
+    const entries = scopedEntries(store.entries, store.activeGstin);
+    const banks = business?.bankAccounts ?? [];
+    const bank = banks.find((item) => item.id === business?.defaultBankId) ?? banks[0];
+    const month = periodRange('month');
+    const parties = partySummaries([...records.invoices, ...records.purchases], entries);
+    return {
+      bankDetail: bank ? `${accountLabel(bank.id, banks)} · ${formatInr(accountBook(entries, bank.id).balance)}` : 'Add a bank account to start',
+      cash: accountBook(entries, CASH).balance,
+      expenses: entries.filter((entry) => entry.kind === 'expense' && inPeriod(entry.date, month)).reduce((sum, entry) => sum + entry.amountPaise, 0),
+      receive: parties.reduce((sum, party) => sum + Math.max(0, party.balance), 0),
+      pay: parties.reduce((sum, party) => sum + Math.max(0, -party.balance), 0),
+    };
+  }, [store.entries, store.activeGstin, business, records.invoices, records.purchases]);
   const name = auth.user?.displayName || (auth.previewMode ? 'Preview workspace' : auth.user?.email) || 'Your account';
   const initials = name.split(/\s+/).map((part) => part[0]).join('').slice(0, 2).toUpperCase();
 
@@ -233,6 +249,14 @@ export default function AccountScreen() {
         <ListRow icon="trending-up" title="Sales" detail={`${records.invoices.length} sales invoice${records.invoices.length === 1 ? '' : 's'}`} onPress={() => router.push('/sales')} testID="my-business-sales" />
         <Divider inset={64} />
         <ListRow icon="shopping-cart" title="Purchase" detail={`${records.purchases.length} purchase bill${records.purchases.length === 1 ? '' : 's'}`} onPress={() => router.push('/purchases')} testID="my-business-purchases" />
+        <Divider inset={64} />
+        <ListRow icon="credit-card" title="Bank entry" detail={books.bankDetail} onPress={() => router.push('/bank-entry')} testID="my-business-bank" />
+        <Divider inset={64} />
+        <ListRow icon="dollar-sign" title="Cash entry" detail={`Cash in hand ${formatInr(books.cash)}`} onPress={() => router.push('/cash-entry')} testID="my-business-cash" />
+        <Divider inset={64} />
+        <ListRow icon="file-minus" title="Expenses" detail={`${formatInr(books.expenses)} this month`} onPress={() => router.push('/expenses')} testID="my-business-expenses" />
+        <Divider inset={64} />
+        <ListRow icon="book-open" title="Party ledger" detail={`To receive ${formatInr(books.receive)} · To pay ${formatInr(books.pay)}`} onPress={() => router.push('/ledger')} testID="my-business-ledger" />
       </Card>
 
       <SectionTitle title="Saved details" />
