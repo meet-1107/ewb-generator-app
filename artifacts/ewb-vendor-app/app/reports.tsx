@@ -6,6 +6,8 @@ import { useColors } from '@/hooks/useColors';
 import { usePdfActions } from '@/hooks/usePdfActions';
 import { DOCUMENT_TYPES, formatInr, formatRupees } from '@/lib/domain';
 import { partyOf, reportEwbs, reportHtml, reportInvoices, salesSummary, type ReportFilter } from '@/lib/reports';
+import { accountsReportCount, accountsReportHtml, bookFor, type AccountsReportKind } from '@/lib/account-reports';
+import { accountLabel, CASH, partySummaries, scopedEntries } from '@/lib/ledger';
 import { useAppStore, useScopedRecords } from '@/state/app-store';
 
 /** India-time calendar date, YYYY-MM-DD. */
@@ -59,6 +61,16 @@ export default function ReportsScreen() {
   /** One document type ('' = every type); tax invoices unless the user picks another. */
   const [documentType, setDocumentType] = useState('Tax invoice');
   const [busy, setBusy] = useState<'download' | 'share' | null>(null);
+  /** GST reports (sales, purchase, e-way bills) or the books (bank, cash, expenses, party ledger). */
+  const [group, setGroup] = useState<'gst' | 'accounts'>('gst');
+  const [book, setBook] = useState<AccountsReportKind>('bank');
+  const [bankId, setBankId] = useState('');
+  const [ledgerParty, setLedgerParty] = useState('');
+  const [ledgerPicker, setLedgerPicker] = useState(false);
+  const banks = store.business?.bankAccounts ?? [];
+  const entries = useMemo(() => scopedEntries(store.entries, store.activeGstin), [store.entries, store.activeGstin]);
+  const ledgerParties = useMemo(() => partySummaries([...sales, ...purchases], entries), [sales, purchases, entries]);
+  const accounts = group === 'accounts';
   // The purchase report lists your purchase bills; the others, your sales invoices.
   const purchase = kind === 'purchase';
   const invoices = purchase ? purchases : sales;
@@ -87,10 +99,17 @@ export default function ReportsScreen() {
   const showEwbs = kind === 'ewb' || kind === 'both';
   const chosenEwbs = useMemo(() => (rangeOk && showEwbs ? reportEwbs(ewbs, filter) : []), [ewbs, rangeOk, showEwbs, filter.from, filter.to, filter.party, filter.documentType]);
   const summary = salesSummary(chosenInvoices);
-  const empty = (kind !== 'ewb' ? chosenInvoices.length : 0) + chosenEwbs.length === 0;
+  const accountsFilter = { from: filter.from, to: filter.to, kind: book, bankId, partyKey: ledgerParty };
+  const accountsCount = accounts && rangeOk ? accountsReportCount(entries, [...sales, ...purchases], accountsFilter, banks) : 0;
+  const ledgerName = ledgerParties.find((item) => item.key === ledgerParty)?.name ?? '';
+  const empty = accounts ? accountsCount === 0 : (kind !== 'ewb' ? chosenInvoices.length : 0) + chosenEwbs.length === 0;
 
   // "Purchase Report-Oct 2026", "Sales Report-FY 2025-26", "EWB Report-24 Jul 2026 to 24 Oct 2026-J K INDUSTRIES".
   const fileLabel = () => {
+    if (accounts) {
+      const what = book === 'bank' ? 'Bank Book' : book === 'cash' ? 'Cash Book' : book === 'expenses' ? 'Expense Report' : 'Party Ledger';
+      return [what, periodFileLabel(filter.from, filter.to), book === 'bank' && bankId ? accountLabel(bankId, banks).replace(/•/g, '') : '', book === 'ledger' ? ledgerName : ''].filter(Boolean).join('-');
+    }
     const what = kind === 'sales' ? 'Sales Report' : purchase ? 'Purchase Report' : kind === 'ewb' ? 'EWB Report' : 'Sales & EWB Report';
     return [what, periodFileLabel(filter.from, filter.to), party, documentType].filter(Boolean).join('-');
   };
@@ -98,7 +117,10 @@ export default function ReportsScreen() {
   const run = async (action: 'download' | 'share') => {
     setBusy(action);
     try {
-      await pdf[action](reportHtml(store.business, chosenInvoices, chosenEwbs, filter, periodLabel), fileLabel());
+      const html = accounts
+        ? accountsReportHtml(store.business, entries, [...sales, ...purchases], accountsFilter, periodLabel)
+        : reportHtml(store.business, chosenInvoices, chosenEwbs, filter, periodLabel);
+      await pdf[action](html, fileLabel());
     } finally {
       setBusy(null);
     }
@@ -111,10 +133,13 @@ export default function ReportsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.background }}>
-      <ScreenHeader title="Reports" subtitle="Sales, purchases & e-way bills as PDF for your CA" />
+      <ScreenHeader title="Reports" subtitle="GST reports and account books as PDF for your CA" />
       <ScrollView contentContainerStyle={[styles.body, { paddingBottom: insets.bottom + 120 }]} keyboardShouldPersistTaps="handled">
+        <Segmented value={group} onChange={setGroup} options={[{ value: 'gst', label: 'GST reports' }, { value: 'accounts', label: 'Accounts' }]} />
         <SectionTitle title="Report" />
-        <Segmented value={kind} onChange={(value) => { setKind(value); setParty(''); }} options={[{ value: 'both', label: 'Both' }, { value: 'sales', label: 'Sales' }, { value: 'purchase', label: 'Purchase' }, { value: 'ewb', label: 'E-way bills' }]} />
+        {accounts ? (
+          <Segmented value={book} onChange={setBook} options={[{ value: 'bank', label: 'Bank' }, { value: 'cash', label: 'Cash' }, { value: 'expenses', label: 'Expenses' }, { value: 'ledger', label: 'Ledger' }]} />
+        ) : <Segmented value={kind} onChange={(value) => { setKind(value); setParty(''); }} options={[{ value: 'both', label: 'Both' }, { value: 'sales', label: 'Sales' }, { value: 'purchase', label: 'Purchase' }, { value: 'ewb', label: 'E-way bills' }]} />}
 
         <SectionTitle title="Period" />
         <Segmented value={mode} onChange={setMode} options={[{ value: 'month', label: 'Month' }, { value: 'range', label: 'Date range' }]} />
@@ -141,6 +166,58 @@ export default function ReportsScreen() {
           </Card>
         )}
 
+        {accounts ? (
+          <>
+            {book === 'bank' ? (
+              <>
+                <SectionTitle title="Bank account" />
+                {banks.length ? (
+                  <ChipRow>
+                    <Chip label="All banks" icon="credit-card" selected={!bankId} onPress={() => setBankId('')} />
+                    {banks.map((bank) => <Chip key={bank.id} label={accountLabel(bank.id, banks)} selected={bankId === bank.id} onPress={() => setBankId(bank.id)} />)}
+                  </ChipRow>
+                ) : <TextBlock size={12} color={colors.mutedForeground}>Add a bank account in Account → Bank details first.</TextBlock>}
+              </>
+            ) : null}
+            {book === 'ledger' ? (
+              <>
+                <SectionTitle title="Party" />
+                <ChipRow>
+                  <Chip label={ledgerName || 'All parties (outstanding)'} icon="users" selected={Boolean(ledgerParty)} onPress={() => setLedgerPicker(true)} />
+                  {ledgerParty ? <Chip label="All parties" icon="x" selected={false} onPress={() => setLedgerParty('')} /> : null}
+                </ChipRow>
+              </>
+            ) : null}
+            <SectionTitle title="Summary" />
+            <Card style={{ gap: 8 }}>
+              <TextBlock size={13} weight="semibold">{periodLabel}{book === 'bank' ? ` · ${bankId ? accountLabel(bankId, banks) : 'All banks'}` : book === 'ledger' ? ` · ${ledgerName || 'All parties'}` : ''}</TextBlock>
+              {book === 'bank' || book === 'cash' ? (() => {
+                const books = (book === 'cash' ? [CASH] : bankId ? [bankId] : banks.map((bank) => bank.id)).map((id) => (rangeOk ? bookFor(entries, id, filter) : { opening: 0, moneyIn: 0, moneyOut: 0, closing: 0, rows: [] }));
+                const sum = (key: 'opening' | 'moneyIn' | 'moneyOut' | 'closing') => books.reduce((total, item) => total + item[key], 0);
+                const money = (paise: number) => `${paise < 0 ? '−' : ''}${formatInr(Math.abs(paise))}`;
+                return (
+                  <>
+                    <KeyValue label="Opening balance" value={money(sum('opening'))} />
+                    <Divider />
+                    <KeyValue label="Money in" value={formatInr(sum('moneyIn'))} />
+                    <Divider />
+                    <KeyValue label="Money out" value={formatInr(sum('moneyOut'))} />
+                    <Divider />
+                    <KeyValue label="Closing balance" value={money(sum('closing'))} strong />
+                  </>
+                );
+              })() : <KeyValue label={book === 'expenses' ? 'Expenses' : 'Parties'} value={String(accountsCount)} />}
+              <TextBlock size={11} color={colors.mutedForeground}>
+                {book === 'bank' || book === 'cash' ? 'The PDF lists every entry with the opening balance, money in, money out and the running balance.'
+                  : book === 'expenses' ? 'The PDF lists every expense with GST, paid from cash or bank, and a category-wise summary.'
+                  : ledgerParty ? 'The PDF is this party’s statement: opening balance, every invoice, bill and payment, and the closing balance.'
+                  : 'The PDF lists every party with opening, debit, credit and closing balance (to receive / to pay).'}
+              </TextBlock>
+            </Card>
+          </>
+        ) : null}
+
+        {!accounts ? (<>
         <SectionTitle title="Party" />
         <ChipRow>
           <Chip label={party || 'All parties'} icon="users" selected={Boolean(party)} onPress={() => setPicker(true)} />
@@ -174,6 +251,7 @@ export default function ReportsScreen() {
           ) : null}
           <TextBlock size={11} color={colors.mutedForeground}>{purchase ? 'The PDF lists every purchase bill with totals, and document type-wise, GST rate-wise and party-wise summaries.' : 'The PDF lists every invoice and e-way bill with totals, and document type-wise, GST rate-wise and party-wise summaries.'} Drafts are not included.</TextBlock>
         </Card>
+        </>) : null}
       </ScrollView>
 
       <View style={[styles.footer, { backgroundColor: colors.card, borderColor: colors.border, paddingBottom: insets.bottom + 10 }]}>
@@ -189,6 +267,15 @@ export default function ReportsScreen() {
         emptyText={purchase ? 'No purchases with a party yet.' : 'No invoices with a buyer yet.'}
         options={[{ value: '', label: 'All parties' }, ...parties.map((name) => ({ value: name, label: name }))]}
         onSelect={(value) => { setParty(value); setPicker(false); }}
+      />
+      <SelectSheet
+        visible={ledgerPicker}
+        onClose={() => setLedgerPicker(false)}
+        title="Ledger of which party?"
+        value={ledgerParty}
+        emptyText="No parties yet."
+        options={[{ value: '', label: 'All parties (outstanding)' }, ...ledgerParties.map((item) => ({ value: item.key, label: item.name, detail: item.gstin || undefined }))]}
+        onSelect={(value) => { setLedgerParty(value); setLedgerPicker(false); }}
       />
     </View>
   );

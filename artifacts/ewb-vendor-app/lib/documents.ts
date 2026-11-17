@@ -111,7 +111,7 @@ export function invoiceHtml(invoice: Invoice, signature?: Signature) {
       : party('Ship to', invoice.buyerName, invoice.buyerGstin, invoice.buyerAddress, invoice.buyerState, invoice.buyerPincode)}
   </div>
   <div class="muted" style="margin-top:8px">Place of supply: <strong>${esc(invoice.placeOfSupply || invoice.buyerState)}</strong> · ${invoice.supplyType === 'intra' ? 'Intra-state (CGST + SGST)' : 'Inter-state (IGST)'}</div>
-  <table><tr><th>#</th><th>${service ? 'Service' : 'Description'}</th><th>${service ? 'SAC' : 'HSN'}</th><th class="num">${service ? 'Hrs/Qty' : 'Qty'}</th>${minimal ? '' : '<th class="num">Rate</th>'}${discounted ? '<th class="num">Disc.</th>' : ''}<th class="num">Taxable</th><th class="num">GST</th><th class="num">Amount</th></tr>
+  <table><tr><th>#</th><th>${service ? 'Product name' : 'Description'}</th><th>${service ? 'SAC' : 'HSN'}</th><th class="num">${service ? 'Hrs/Qty' : 'Qty'}</th>${minimal ? '' : '<th class="num">Rate</th>'}${discounted ? '<th class="num">Disc.</th>' : ''}<th class="num">Taxable</th><th class="num">GST</th><th class="num">Amount</th></tr>
   ${lines.map((line, index) => `<tr><td>${index + 1}</td><td>${esc(line.description)}</td><td>${esc(line.hsn)}</td><td class="num">${esc(line.quantity)} ${esc(line.unit)}</td>${minimal ? '' : `<td class="num">${line.unitPricePaise ? formatInr(line.unitPricePaise) : '—'}</td>`}${discounted ? `<td class="num">${line.discountPaise ? formatInr(line.discountPaise) : '—'}</td>` : ''}<td class="num">${formatInr(line.taxablePaise)}</td><td class="num">${line.taxRate}%</td><td class="num">${formatInr(line.taxablePaise + lineTax(line))}</td></tr>`).join('')}
   </table>
   ${template.id === 'tax-summary' ? hsnSummary : ''}
