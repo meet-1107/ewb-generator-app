@@ -170,6 +170,10 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   const dataRef = useRef(data);
   dataRef.current = data;
   const syncing = useRef(false);
+  /** The saved data could not be read: nothing is written back, so it is not wiped. */
+  const persistBlocked = useRef(false);
+  /** Changes on sign-out / account switch: a sync started before must not write into the new state. */
+  const generation = useRef(0);
 
   const update = useCallback((fn: (current: Persisted) => Persisted) => setData((current) => fn(current)), []);
 
@@ -199,6 +203,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     setHydratedScope(null);
     setStorageError('');
     setSubscription(null);
+    persistBlocked.current = false;
+    generation.current += 1;
     if (!scope) return;
     AsyncStorage.getItem(`${STORE_PREFIX}${scope}`)
       .then((stored) => {
@@ -216,7 +222,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       })
       .catch(() => {
         if (active) {
-          setStorageError('Could not read saved details from this device.');
+          persistBlocked.current = true;
+          setStorageError('Could not read saved details from this device. Restart the app; your synced data is safe in your account.');
           setHydratedScope(scope);
         }
       });
@@ -227,7 +234,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
 
   // Persist every change.
   useEffect(() => {
-    if (!scope || hydratedScope !== scope) return;
+    if (!scope || hydratedScope !== scope || persistBlocked.current) return;
     const timer = setTimeout(() => {
       AsyncStorage.setItem(`${STORE_PREFIX}${scope}`, JSON.stringify(data))
         .then(() => setStorageError(''))
@@ -237,7 +244,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   }, [scope, hydratedScope, data]);
 
   const handleError = useCallback((error: unknown) => {
-    if (error instanceof ApiError && error.offline) setOnline(false);
+    if (error instanceof ApiError && error.code === 'offline') setOnline(false);
   }, []);
 
   const syncNow = useCallback(async (): Promise<boolean> => {
@@ -246,6 +253,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
     while (syncing.current) await new Promise((resolve) => setTimeout(resolve, 200));
     syncing.current = true;
     setSyncState('syncing');
+    const startedIn = generation.current;
     try {
       const snapshotAt = new Date().toISOString();
       const current = dataRef.current;
@@ -267,6 +275,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       }
       const result = await api.sync(since, collections);
       setOnline(true);
+      // Signed out or switched account meanwhile: this answer belongs to the old state.
+      if (startedIn !== generation.current) { setSyncState('idle'); return false; }
       update((state) => {
         // Deletes made while this sync was in flight were not sent: keep them for the next sync.
         const pending: Persisted['tombstones'] = {};
@@ -291,7 +301,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
               else list.push(map(record.data));
             }
           }
-          next = { ...next, [key]: list.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)) };
+          next = { ...next, [key]: list.sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? '')) };
         };
         merge<Invoice>('invoices', (raw) => migrateInvoice(raw as Invoice));
         merge<Party>('parties', (raw) => raw as Party);
@@ -309,7 +319,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       return true;
     } catch (error) {
       handleError(error);
-      setSyncState(error instanceof ApiError && error.offline ? 'offline' : 'error');
+      setSyncState(error instanceof ApiError && error.code === 'offline' ? 'offline' : 'error');
       return false;
     } finally {
       syncing.current = false;
@@ -401,7 +411,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   }, [ready, countOpen, refreshEwbs, refreshServices, refreshSubscription, refreshWallet, syncNow]);
 
   // Debounced background sync after local edits.
-  const syncKey = `${data.invoices.length}:${data.invoices[0]?.updatedAt}:${data.parties.length}:${data.products.length}:${data.transporters.length}:${data.entries.length}:${data.entries[0]?.updatedAt}:${data.business?.updatedAt}:${Object.keys(data.tombstones).length}`;
+  const latest = (items: { updatedAt?: string }[]) => items.reduce((max, item) => ((item.updatedAt ?? '') > max ? item.updatedAt ?? '' : max), '');
+  const syncKey = `${data.invoices.length}:${data.invoices[0]?.updatedAt}:${data.parties.length}:${latest(data.parties)}:${data.products.length}:${latest(data.products)}:${data.transporters.length}:${latest(data.transporters)}:${data.entries.length}:${data.entries[0]?.updatedAt}:${data.business?.updatedAt}:${Object.keys(data.tombstones).length}`;
   useEffect(() => {
     if (!ready) return;
     const timer = setTimeout(() => void syncNow(), 2500);
@@ -428,7 +439,8 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
       const changed = JSON.stringify(strip(previous)) !== JSON.stringify(strip(next));
       if (!changed && previous.updatedAt === next.updatedAt) return state;
       const { revisionHistory: oldHistory, ...snapshot } = previous;
-      const revisionHistory = changed ? [...(oldHistory ?? []), snapshot].slice(-20) : oldHistory ?? [];
+      // Drafts change on every keystroke (autosave): no copies for them; a finished invoice keeps its last 3 versions.
+      const revisionHistory = changed && previous.status !== 'draft' ? [...(oldHistory ?? []), snapshot].slice(-3) : (oldHistory ?? []).slice(-3);
       const merged = { ...next, createdBy: previous.createdBy ?? actor, updatedBy: actor, revisionHistory };
       return { ...state, invoices: [merged, ...state.invoices.filter((item) => item.id !== next.id)] };
     });
@@ -492,6 +504,7 @@ export function AppStoreProvider({ children }: { children: ReactNode }) {
   }, [update]);
 
   const clearLocalData = useCallback(async () => {
+    generation.current += 1;
     if (scope) await AsyncStorage.removeItem(`${STORE_PREFIX}${scope}`);
     setData(EMPTY);
   }, [scope]);

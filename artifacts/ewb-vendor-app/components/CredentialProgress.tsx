@@ -32,8 +32,9 @@ export function CredentialProgress({ done = false }: { done?: boolean }) {
     spinning.start();
     pulsing.start();
     // Fills to about 90% over ~30 s; the last part waits for the answer.
-    Animated.timing(bar, { toValue: 0.9, duration: 30_000, easing: Easing.out(Easing.cubic), useNativeDriver: false }).start();
-    return () => { clearInterval(timer); spinning.stop(); pulsing.stop(); };
+    const filling = Animated.timing(bar, { toValue: 0.9, duration: 30_000, easing: Easing.out(Easing.cubic), useNativeDriver: false });
+    filling.start();
+    return () => { clearInterval(timer); spinning.stop(); pulsing.stop(); filling.stop(); };
   }, [spin, pulse, bar]);
 
   useEffect(() => {

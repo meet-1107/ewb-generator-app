@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { welcomeCredits } from "./welcome";
+import { bump } from "./metrics";
 import type { Wallet, WalletAction, WalletEntry, Workspace } from "./store";
 
 /**
@@ -58,6 +59,7 @@ export function settleCredits(workspace: Workspace, entryId: string | null, deta
   const entry = entryId ? workspace.wallet.ledger.find((item) => item.id === entryId) : undefined;
   if (!entry || entry.status !== "held") return;
   entry.status = "charged";
+  bump(workspace, "creditsConsumed", -entry.credits);
   Object.assign(entry, details);
 }
 
@@ -65,6 +67,7 @@ export function refundCredits(workspace: Workspace, entryId: string | null, note
   const entry = entryId ? workspace.wallet.ledger.find((item) => item.id === entryId) : undefined;
   if (!entry || entry.status !== "held") return;
   entry.status = "refunded";
+  bump(workspace, "creditsReturned", -entry.credits);
   entry.note = note;
   workspace.wallet.balance += -entry.credits;
 }
@@ -88,6 +91,7 @@ export function adjustCredits(workspace: Workspace, { credits, reason, actor, re
   if (existing) return { ok: true, entry: existing, replay: true, balance: workspace.wallet.balance };
   if (workspace.wallet.balance + credits < 0) return { ok: false, balance: workspace.wallet.balance };
   const entry: WalletEntry = { id, at: new Date().toISOString(), kind: "adjust", credits, status: "credited", note: reason, actor };
+  bump(workspace, credits > 0 ? "creditsAdjustedIn" : "creditsAdjustedOut", Math.abs(credits));
   workspace.wallet.balance += credits;
   workspace.wallet.ledger.push(entry);
   trim(workspace.wallet);

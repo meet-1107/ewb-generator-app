@@ -1,6 +1,7 @@
+import { createHash } from "node:crypto";
 import { Router, type IRouter } from "express";
 import { z } from "zod";
-import { withWorkspace } from "../lib/store";
+import { withDoc, withWorkspace } from "../lib/store";
 import { noticeList, saveToken } from "../lib/notify";
 
 /** The bell: the newest notifications, marking them read, and this phone's push token. */
@@ -37,7 +38,13 @@ const tokenSchema = z.object({ token: z.string().min(20).max(4096), platform: z.
 router.post("/push-token", async (req, res) => {
   const parsed = tokenSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "bad_request", message: "Could not read the device token." });
-  await withWorkspace(req.workspaceId, (workspace) => saveToken(workspace, parsed.data.token, parsed.data.platform));
+  const { token, platform } = parsed.data;
+  await withWorkspace(req.workspaceId, (workspace) => saveToken(workspace, token, platform));
+  // One phone, one account: if this phone was signed in to another account before (and
+  // its sign-out did not reach us), that account stops sending notifications to it.
+  const id = createHash("sha256").update(token).digest("hex");
+  const previous = await withDoc<{ uid: string; at: string }, string | null>("push_tokens", id, (current) => ({ next: { uid: req.workspaceId, at: new Date().toISOString() }, result: current && current.uid !== req.workspaceId ? current.uid : null }));
+  if (previous) await withWorkspace(previous, (workspace) => { delete workspace.pushTokens?.[token]; }).catch(() => undefined);
   return res.json({ ok: true });
 });
 

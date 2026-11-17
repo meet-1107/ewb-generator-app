@@ -324,7 +324,11 @@ export async function testCredentials(credentials: EwbCredentials): Promise<{ va
     // Kept short: a slow portal must not keep the user waiting. A login that cannot be
     // checked in time is saved anyway and checked on first use.
     const body = await ewaybillCall("/credentials/test", credentials, {}, { testMode: false, timeoutMs: 25_000 });
-    return { valid: body["valid"] !== false, message: typeof body["message"] === "string" ? body["message"] : "Login works." };
+    // The answer may carry `valid` at the top or under `data` (the API log reads both too).
+    const data = (body["data"] && typeof body["data"] === "object" ? body["data"] : {}) as Record<string, unknown>;
+    const valid = body["valid"] !== false && data["valid"] !== false;
+    const message = typeof body["message"] === "string" ? body["message"] : typeof data["message"] === "string" ? data["message"] : valid ? "Login works." : "Invalid username or password.";
+    return { valid, message };
   } catch (error) {
     if (error instanceof GstinApiError && error.code === "RATE_LIMITED") {
       return { valid: null, rateLimited: true, message: "Could not check the login right now; it was saved and will be checked on first use." };

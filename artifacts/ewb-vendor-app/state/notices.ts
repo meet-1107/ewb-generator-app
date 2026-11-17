@@ -21,13 +21,18 @@ export function useNotices() {
 }
 
 let inFlight: Promise<void> | null = null;
+/** Bumped by every change made on this phone; a list fetched before it is stale. */
+let version = 0;
 
 export function refreshNotices() {
   inFlight ??= (async () => {
     set({ loading: true });
+    const started = version;
     try {
       const list = await api.notifications();
-      set({ notices: list.notices, unread: list.unread, loaded: true, error: '' });
+      // A delete or mark-read made while this was loading wins over the older list.
+      if (started === version) set({ notices: list.notices, unread: list.unread, loaded: true, error: '' });
+      else set({ loaded: true, error: '' });
     } catch (error) {
       set({ error: (error as Error).message || 'Could not load notifications.' });
     } finally {
@@ -39,6 +44,7 @@ export function refreshNotices() {
 }
 
 export async function markNoticesRead(ids?: string[]) {
+  version += 1;
   // Shown as read at once; the server's answer replaces it.
   set({ notices: state.notices.map((notice) => (!ids || ids.includes(notice.id) ? { ...notice, read: true } : notice)) });
   set({ unread: state.notices.filter((notice) => !notice.read).length });
@@ -52,14 +58,19 @@ export async function markNoticesRead(ids?: string[]) {
 
 /** Removes them at once; on failure they come back and the error is thrown. Without ids, all. */
 export async function deleteNotices(ids?: string[]) {
-  const before = state;
+  version += 1;
+  const mine = version;
+  const removed = ids ? state.notices.filter((notice) => ids.includes(notice.id)) : state.notices;
   const notices = ids ? state.notices.filter((notice) => !ids.includes(notice.id)) : [];
   set({ notices, unread: notices.filter((notice) => !notice.read).length });
   try {
     const list = await api.deleteNotices(ids);
-    set({ notices: list.notices, unread: list.unread });
+    // Only the latest change takes the server's list (an older answer would undo a newer delete).
+    if (mine === version) set({ notices: list.notices, unread: list.unread });
   } catch (error) {
-    set({ notices: before.notices, unread: before.unread });
+    // Only these come back; other deletes made meanwhile stay.
+    const back = [...state.notices, ...removed.filter((item) => !state.notices.some((notice) => notice.id === item.id))].sort((a, b) => b.at.localeCompare(a.at));
+    set({ notices: back, unread: back.filter((notice) => !notice.read).length });
     throw error;
   }
 }

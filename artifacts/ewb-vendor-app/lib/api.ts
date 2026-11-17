@@ -52,6 +52,7 @@ async function request<T>(path: string, init: { method?: string; body?: unknown;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), init.timeoutMs ?? 20_000);
   let response: Response;
+  let text: string;
   try {
     response = await fetch(`${API_BASE}/api${path}`, {
       method: init.method ?? (init.body !== undefined ? 'POST' : 'GET'),
@@ -59,18 +60,24 @@ async function request<T>(path: string, init: { method?: string; body?: unknown;
       body: init.body !== undefined ? JSON.stringify(init.body) : undefined,
       signal: controller.signal,
     });
+    // Reading the body is inside the time limit too: a connection that stalls mid-answer must not hang.
+    text = await response.text();
   } catch (error) {
     const aborted = (error as Error).name === 'AbortError';
     throw new ApiError(aborted ? 'The server took too long to respond.' : 'You appear to be offline, or the service is unreachable.', 0, aborted ? 'timeout' : 'offline');
   } finally {
     clearTimeout(timer);
   }
-  const text = await response.text();
   let json: Record<string, unknown> = {};
+  let parsed = true;
   try {
     json = text ? (JSON.parse(text) as Record<string, unknown>) : {};
   } catch {
-    json = {};
+    parsed = false;
+  }
+  // A Wi-Fi sign-in page or a proxy can answer 200 with a web page: that is not our answer.
+  if (response.ok && (!parsed || typeof json !== 'object' || json === null)) {
+    throw new ApiError('The internet connection returned a web page instead of the app data. Open a browser to finish signing in to the Wi-Fi, then try again.', response.status, 'bad_response');
   }
   if (!response.ok) {
     throw new ApiError(typeof json.message === 'string' ? json.message : `Request failed (${response.status}).`, response.status, typeof json.error === 'string' ? json.error : 'error', json);

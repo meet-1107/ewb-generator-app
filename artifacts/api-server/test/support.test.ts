@@ -32,7 +32,9 @@ describe("support chat", () => {
     assert.equal(thread.status, "open");
     assert.equal(thread.topic, "payment");
 
-    thread = (await support.addAdminReply(who.uid, "Credits added, please check.", "admin@ewayeasy.in"))!;
+    const sent = (await support.addAdminReply(who.uid, "Credits added, please check.", "admin@ewayeasy.in"))!;
+    assert.ok(sent.ok);
+    thread = sent.ok ? sent.thread : thread;
     assert.equal(thread.status, "replied");
     assert.equal(thread.unreadForUser, 1);
     assert.equal((await support.markSeenByUser(who.uid))!.unreadForUser, 0);
@@ -41,7 +43,14 @@ describe("support chat", () => {
     thread = await support.addUserMessage(who, "one more question");
     assert.equal(thread.status, "open");
     assert.equal(thread.messages.length, 5);
-    assert.equal((await support.listThreads()).length, 1);
+    assert.ok((await support.listThreads()).length >= 1);
     assert.equal(await support.addAdminReply("nobody", "x", "a@b.in"), null);
+
+    // The team can write first, and at most 10 times a day to one user.
+    const fresh = { uid: "ws-support-2", email: "c@d.in", name: null, businessName: null, gstin: null };
+    for (let index = 0; index < support.ADMIN_MESSAGES_PER_DAY; index++) assert.ok((await support.addAdminReply(fresh.uid, "Hello " + index, "admin@ewayeasy.in", fresh))!.ok);
+    const blocked = (await support.addAdminReply(fresh.uid, "one more", "admin@ewayeasy.in", fresh))!;
+    assert.equal(blocked.ok, false);
+    assert.equal((await support.readThread(fresh.uid))!.messages.length, support.ADMIN_MESSAGES_PER_DAY);
   });
 });

@@ -18,22 +18,29 @@ export default function PushManager() {
   const active = Boolean(auth.signedIn && !auth.previewMode && store.workspaceId);
   const [pending, setPending] = useState<PushData | null>(null);
   const registeredFor = useRef<string | null>(null);
+  const openTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Taps are caught from the start; they open once the account is ready.
   useEffect(() => pushClient?.onOpen((data) => setPending(data)), []);
 
   useEffect(() => {
     if (!active || !pending || !store.business) return;
+    const target = pending;
     setPending(null);
     void refreshNotices();
-    // Leaves the dashboard underneath, so Back returns to it.
-    setTimeout(() => openNotice(pending), 300);
+    // Leaves the dashboard underneath, so Back returns to it. (Not cleared when `pending`
+    // resets just above; only when the manager goes away.)
+    openTimer.current = setTimeout(() => openNotice(target), 300);
   }, [active, pending, store.business]);
+  useEffect(() => () => { if (openTimer.current) clearTimeout(openTimer.current); }, []);
 
   useEffect(() => {
     if (!active) {
-      registeredFor.current = null;
       clearNotices();
+      // Signed out (any way): this phone stops getting the account's notifications.
+      // The account screen does this before sign-out; here it covers the other ways.
+      if (registeredFor.current && pushClient) void pushClient.unregister().catch(() => undefined);
+      registeredFor.current = null;
       return;
     }
     void refreshNotices();

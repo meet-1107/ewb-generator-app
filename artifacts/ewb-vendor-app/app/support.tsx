@@ -12,6 +12,7 @@ import { api, type SupportChat, type SupportMessage, type SupportTopic } from '@
 import { formatDate } from '@/lib/domain';
 import { useAppStore } from '@/state/app-store';
 import { refreshNotices } from '@/state/notices';
+import { pushClient } from '@/lib/push';
 
 const TOPICS: { value: SupportTopic; label: string; icon: React.ComponentProps<typeof Feather>['name']; ask: string }[] = [
   { value: 'ewb_login', label: 'E-way bill login', icon: 'key', ask: 'I need help with my e-way bill portal username and password.' },
@@ -47,9 +48,12 @@ export default function SupportScreen() {
   const scroll = useRef<ScrollView>(null);
   const input = useRef<TextInput>(null);
 
+  const sendingRef = useRef(false);
   const load = useCallback(async () => {
     try {
-      setChat(await api.supportChat(true));
+      const next = await api.supportChat(true);
+      if (sendingRef.current) return;
+      setChat(next);
       setFailed('');
     } catch (error) {
       setFailed((error as Error).message || 'Could not load the chat.');
@@ -63,16 +67,19 @@ export default function SupportScreen() {
     if (!ready) return;
     void load();
     void refreshNotices();
-    // New replies from the team while the chat is open.
-    const timer = setInterval(() => void load(), 30_000);
+    // New replies arrive as a push notification (PushManager refreshes on it) and on return to
+    // the app, so the chat is not polled: a poll every few seconds per open chat adds up.
+    const timer = setInterval(() => void load(), 120_000);
     const appState = AppState.addEventListener('change', (next) => { if (next === 'active') void load(); });
-    return () => { clearInterval(timer); appState.remove(); };
+    const stopPush = pushClient?.onForeground((_title, _body, data) => { if (data?.route === 'support') void load(); });
+    return () => { clearInterval(timer); appState.remove(); stopPush?.(); };
   }, [load, ready]);
 
   const send = async (message = text, chosen = topic) => {
     const body = message.trim();
     if (!body || sending || !ready) return;
     setSending(true);
+    sendingRef.current = true;
     // Shown at once; the server's copy (with the assistant's answer) replaces it.
     setChat((current) => ({ ...(current ?? { status: 'open', unread: 0, topics: [] }), messages: [...(current?.messages ?? []), { id: `local-${Date.now()}`, at: new Date().toISOString(), from: 'user', text: body }] }));
     setText('');
@@ -85,6 +92,7 @@ export default function SupportScreen() {
       dialog.toast((error as Error).message || 'Message not sent. Try again.', 'danger');
     } finally {
       setSending(false);
+      sendingRef.current = false;
     }
   };
 

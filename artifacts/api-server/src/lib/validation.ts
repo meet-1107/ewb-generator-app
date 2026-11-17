@@ -152,7 +152,7 @@ export function validateEwb(input: EwbInput, now = new Date()): { issues: FieldI
   const date = new Date(`${input.invoiceDate}T00:00:00+05:30`);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.invoiceDate) || Number.isNaN(date.getTime())) {
     push("invoice", "invoiceDate", "Invoice date must be a valid date.");
-  } else if (date.getTime() > now.getTime() + 86_400_000) {
+  } else if (input.invoiceDate > new Date(now.getTime() + 5.5 * 3_600_000).toISOString().slice(0, 10)) {
     push("invoice", "invoiceDate", "Invoice date cannot be in the future.");
   } else if (now.getTime() - date.getTime() > 180 * 86_400_000) {
     warnings.push("Invoice is older than 180 days. Confirm the document date with your provider.");
@@ -162,13 +162,15 @@ export function validateEwb(input: EwbInput, now = new Date()): { issues: FieldI
   if (!describedLines.length) push("items", "lines", "Add at least one product with a taxable value.");
   input.lines.forEach((line, index) => {
     if (!line.description.trim() && line.taxablePaise === 0) return;
+    if (!line.description.trim()) push("items", `lines.${index}.description`, `Line ${index + 1}: add the product name.`);
     if (!/^\d{4}(\d{2})?(\d{2})?$/.test(line.hsn.trim())) push("items", `lines.${index}.hsn`, `Line ${index + 1}: HSN must be 4, 6 or 8 digits.`);
     if (!(Number(line.quantity) > 0)) push("items", `lines.${index}.quantity`, `Line ${index + 1}: quantity must be more than zero.`);
   });
 
   const totals = computeTotals(input);
   // The bill reports the taxable value and the invoice total; both must follow from the lines.
-  if (totals.total !== input.totals.total || totals.taxable !== input.totals.taxable) push("items", "totals", "Totals changed since review. Re-open the invoice to recalculate.");
+  // The invoice total is rounded to the nearest rupee; the difference (up to ±₹1) is the round off.
+  if (Math.abs(totals.total - input.totals.total) > 100 || totals.taxable !== input.totals.taxable) push("items", "totals", "Totals changed since review. Re-open the invoice to recalculate.");
   if (totals.total < 50_000_00) warnings.push("Consignment value is below ₹50,000. An e-way bill is generally optional here, but you may still generate one.");
 
   const distance = Number(input.transport.distanceKm);

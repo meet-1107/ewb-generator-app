@@ -76,8 +76,13 @@ export function botReply(text: string, chosen?: SupportTopic): { topic: SupportT
 
 const message = (from: SupportMessage["from"], text: string, adminEmail?: string, guide?: SupportMessage["guide"]): SupportMessage => ({ id: randomUUID(), at: new Date().toISOString(), from, text, ...(adminEmail ? { adminEmail } : {}), ...(guide ? { guide } : {}) });
 
+/** A thread is one Firestore document (1 MiB at most): kept well under it, oldest messages first out. */
+const MAX_THREAD_BYTES = 600_000;
+
 const trim = (thread: SupportThread) => {
   if (thread.messages.length > MESSAGES_KEPT) thread.messages.splice(0, thread.messages.length - MESSAGES_KEPT);
+  // Indian scripts take 3 bytes a character, so a count alone is not enough.
+  while (thread.messages.length > 2 && Buffer.byteLength(JSON.stringify(thread), "utf8") > MAX_THREAD_BYTES) thread.messages.shift();
   return thread;
 };
 
@@ -99,14 +104,35 @@ export function addUserMessage(who: Who, text: string, topic?: SupportTopic) {
   });
 }
 
-export function addAdminReply(uid: string, text: string, adminEmail: string) {
-  return withDoc<SupportThread, SupportThread | null>("support_threads", uid, (current) => {
-    if (!current) return { next: null, result: null };
-    current.messages.push(message("admin", text, adminEmail));
-    current.status = "replied";
-    current.updatedAt = new Date().toISOString();
-    current.unreadForUser += 1;
-    return { next: trim(current), result: current };
+/** Messages the team may send one user per day (India time), replies and new messages together. */
+export const ADMIN_MESSAGES_PER_DAY = 10;
+
+const istDay = (iso: string) => new Date(Date.parse(iso) + 5.5 * 3_600_000).toISOString().slice(0, 10);
+
+/** Team messages sent to this thread today (India time). */
+export function adminMessagesToday(thread: SupportThread | null, now = new Date().toISOString()) {
+  const today = istDay(now);
+  return (thread?.messages ?? []).filter((item) => item.from === "admin" && istDay(item.at) === today).length;
+}
+
+export type AdminSend = { ok: true; thread: SupportThread } | { ok: false; reason: "limit"; sentToday: number };
+
+/**
+ * A reply, or a first message to a user who never wrote (`who` opens the thread).
+ * At most ADMIN_MESSAGES_PER_DAY per user per day.
+ */
+export function addAdminReply(uid: string, text: string, adminEmail: string, who?: Who) {
+  return withDoc<SupportThread, AdminSend | null>("support_threads", uid, (current) => {
+    if (!current && !who) return { next: null, result: null };
+    const now = new Date().toISOString();
+    const sentToday = adminMessagesToday(current, now);
+    if (sentToday >= ADMIN_MESSAGES_PER_DAY) return { next: current, result: { ok: false, reason: "limit", sentToday } };
+    const thread: SupportThread = current ?? { ...who!, topic: "other", status: "replied", messages: [], createdAt: now, updatedAt: now, lastUserAt: now, unreadForUser: 0 };
+    thread.messages.push(message("admin", text, adminEmail));
+    thread.status = "replied";
+    thread.updatedAt = now;
+    thread.unreadForUser += 1;
+    return { next: trim(thread), result: { ok: true, thread } };
   });
 }
 

@@ -19,12 +19,17 @@ const PATTERNS = [
 const START_C = 105;
 const STOP = '2331112';
 
+const CODE_B = 100;
+
 export function code128Digits(raw: string): number[] {
-  // E-way bill numbers have 12 digits; an odd count would need a code-set switch, so it is refused.
+  // E-way bill numbers have 12 digits, 14 from January 2027; any length works: pairs in code
+  // set C, and a last odd digit after a switch to code set B.
   const digits = raw.replace(/\D/g, '');
-  if (!digits.length || digits.length % 2) throw new Error('Code 128-C needs an even number of digits.');
+  if (!digits.length) throw new Error('A barcode needs at least one digit.');
   const values = [START_C];
-  for (let index = 0; index < digits.length; index += 2) values.push(Number(digits.slice(index, index + 2)));
+  const even = digits.length - (digits.length % 2);
+  for (let index = 0; index < even; index += 2) values.push(Number(digits.slice(index, index + 2)));
+  if (even < digits.length) values.push(CODE_B, digits.charCodeAt(even) - 32);
   const checksum = values.reduce((sum, value, index) => sum + value * (index === 0 ? 1 : index), 0) % 103;
   const widths = [...values, checksum].map((value) => PATTERNS[value]!).join('') + STOP;
   return widths.split('').map(Number);

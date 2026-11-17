@@ -49,6 +49,9 @@ app.use("/api", router);
 app.use((err: Error & { type?: string }, _req: Request, res: Response, _next: NextFunction) => {
   if (err.type === "entity.too.large") return res.status(413).json({ error: "too_large", message: "That upload is too large." });
   if (err.type === "entity.parse.failed") return res.status(400).json({ error: "bad_json", message: "Request could not be read." });
+  // A known refusal with its own status and message (e.g. an admin page too heavy for this many accounts).
+  const known = err as Error & { status?: number; code?: string };
+  if (known.status && known.status < 500 || known.status === 503) return res.status(known.status!).json({ error: known.code ?? "refused", message: err.message });
   logger.error({ err: err.message }, "Unhandled error");
   return res.status(500).json({ error: "server_error", message: "Something went wrong on our side. Try again." });
 });

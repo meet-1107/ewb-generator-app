@@ -114,7 +114,8 @@ export function EntrySheet({ draft, onClose, chooseAccount = false }: { draft: E
     if (form.kind === 'transfer' && (!form.toAccount || form.toAccount === form.account)) problems.toAccount = 'Choose where the money went';
     setErrors(problems);
     if (Object.keys(problems).length) return;
-    const linked = [...invoices, ...purchases].find((invoice) => invoice.id === form.invoiceId);
+    // Money received settles a sales invoice; money paid settles a purchase bill. Never the other way.
+    const linked = (form.kind === 'receipt' ? invoices : form.kind === 'payment' ? purchases : []).find((invoice) => invoice.id === form.invoiceId);
     const transfer = form.kind === 'transfer';
     await store.saveEntry({
       id: form.id,
@@ -161,7 +162,7 @@ export function EntrySheet({ draft, onClose, chooseAccount = false }: { draft: E
       )}
     >
       <View style={{ paddingHorizontal: 18, gap: 12 }}>
-        <Segmented options={kinds} value={form.kind} onChange={(kind) => set({ kind, toAccount: kind === 'transfer' ? accounts.find((item) => item.value !== form.account)?.value ?? '' : '' })} />
+        <Segmented options={kinds} value={form.kind} onChange={(kind) => set({ kind, invoiceId: '', toAccount:kind === 'transfer' ? accounts.find((item) => item.value !== form.account)?.value ?? '' : '' })} />
         {chooseAccount ? <SelectField label={form.kind === 'receipt' ? 'Received in' : 'Paid from'} value={form.account} placeholder="Cash or bank" options={accounts} onSelect={(account) => set({ account, mode: account === CASH ? '' : form.mode || 'NEFT' })} /> : null}
         <MoneyField label="Amount" required paise={form.amountPaise} onChange={(amountPaise) => set({ amountPaise })} error={errors.amountPaise} />
         <View style={{ flexDirection: 'row', gap: 10 }}>
@@ -182,7 +183,12 @@ export function EntrySheet({ draft, onClose, chooseAccount = false }: { draft: E
             <Field
               label="Party"
               value={form.partyName}
-              onChangeText={(partyName) => set({ partyName, partyGstin: '', invoiceId: '' })}
+              onChangeText={(partyName) => {
+                // A typed name that matches a known party joins that party (and its GSTIN),
+                // so the payment lands on the same ledger as its invoices.
+                const match = partyOptions.find((item) => item.label.trim().toLowerCase() === partyName.trim().toLowerCase());
+                set({ partyName, partyGstin: match?.gstin ?? '', invoiceId: '' });
+              }}
               placeholder="Optional · who paid or was paid"
               autoCapitalize="words"
               right={<Button title="List" icon="users" size="sm" variant="outline" onPress={() => setPartyPicker(true)} />}

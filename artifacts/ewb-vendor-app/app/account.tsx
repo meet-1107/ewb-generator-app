@@ -162,9 +162,10 @@ export default function AccountScreen() {
         });
         if (!discard) return;
       }
+      // While still signed in; never holds sign-out up for long when offline.
+      if (pushClient) await Promise.race([pushClient.unregister(), new Promise((resolve) => setTimeout(resolve, 3000))]).catch(() => undefined);
       await store.clearLocalData();
     }
-    if (!auth.previewMode) await pushClient?.unregister();
     await auth.signOut();
     router.replace('/sign-in');
   };

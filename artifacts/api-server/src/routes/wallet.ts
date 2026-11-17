@@ -8,6 +8,7 @@ import { appendLog, audit, withWorkspace, type Workspace } from "../lib/store";
 import { addCredits, walletHistory, walletSummary } from "../lib/wallet";
 import { billingInvoiceHtml, emailBillingInvoice, issueBillingInvoice, type BillingInvoice } from "../lib/billing";
 import { readDoc } from "../lib/store";
+import { bump } from "../lib/metrics";
 import { noticeCreditsBought, noticeCreditsChanged, noticePaymentFailed, pushNotices } from "../lib/notify";
 
 const paymentsMode = razorpayConfigured ? "razorpay" : authMode === "sandbox" ? "sandbox" : "off";
@@ -26,6 +27,9 @@ export function settlePurchase(workspace: Workspace, purchaseId: string, payment
   addCredits(workspace, purchase.credits, `Bought for ₹${(purchase.amountPaise / 100).toFixed(2)}${paymentId ? ` · ${paymentId}` : purchase.provider === "sandbox" ? " · test purchase" : ""}`, purchaseId);
   audit(workspace, "payments", "wallet.purchase", purchaseId, "paid");
   noticeCreditsBought(workspace, purchase.amountPaise, purchase.credits);
+  bump(workspace, "paymentsPaid");
+  bump(workspace, "paidPaise", purchase.amountPaise);
+  bump(workspace, "creditsSold", purchase.credits);
   return true;
 }
 
@@ -179,6 +183,7 @@ adminRouter.post("/admin/wallet/topup", async (req, res) => {
     addCredits(workspace, credits, note);
     audit(workspace, "admin", "wallet.topup", String(credits), "ok");
     noticeCreditsChanged(workspace, credits, note);
+    bump(workspace, "creditsAdjustedIn", credits);
     return walletSummary(workspace);
   });
   await pushNotices(workspaceId);
@@ -201,6 +206,13 @@ adminRouter.post("/payments/razorpay/webhook", async (req, res) => {
   const workspaceId = link?.notes?.["workspace_id"];
   if (!link?.id || !workspaceId || !/^[A-Za-z0-9_-]{6,80}$/.test(workspaceId)) return res.json({ ok: true, ignored: "no workspace" });
   const credited = await withWorkspace(workspaceId, (workspace) => {
+    // The link was made but its record was never saved (the server stopped in between):
+    // rebuild it from the link, which only we create (the webhook signature is verified above).
+    const noted = Number(link.notes?.["credits"]);
+    if (!workspace.purchases[link.id!] && Number.isInteger(noted) && noted >= MIN_PURCHASE && noted <= MAX_PURCHASE && (link.amount_paid ?? 0) >= noted * creditPricePaise) {
+      workspace.purchases[link.id!] = { id: link.id!, provider: "razorpay", credits: noted, amountPaise: noted * creditPricePaise, status: "created", createdAt: new Date().toISOString() };
+      audit(workspace, "payments", "wallet.purchase", link.id!, "rebuilt_from_webhook");
+    }
     const purchase = workspace.purchases[link.id!];
     // Trust our own record for the amount, never the webhook's notes.
     if (!purchase || (link.amount_paid ?? 0) < purchase.amountPaise) return false;

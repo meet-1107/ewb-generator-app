@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { logger } from "./logger";
 import { withDoc, withWorkspace } from "./store";
+import { bump } from "./metrics";
 
 /**
  * Free trial credits (WELCOME_CREDITS, default 10), given once per GSTIN and once per
@@ -31,6 +32,7 @@ export async function grantWelcomeCredits(workspaceId: string, gstin: string): P
       if (workspace.welcomeGstin) return { granted: 0, reason: "account_used" as const };
       workspace.welcomeGstin = gstin;
       workspace.wallet.balance += credits;
+      bump(workspace, "creditsGranted", credits);
       workspace.wallet.ledger.push({ id: randomUUID(), at: new Date().toISOString(), kind: "grant", credits, status: "credited", note: `Free trial credits for ${gstin}` });
       return { granted: credits, balance: workspace.wallet.balance };
     });

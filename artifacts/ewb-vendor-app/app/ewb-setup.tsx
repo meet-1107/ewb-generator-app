@@ -91,7 +91,8 @@ export default function EwbSetupScreen() {
       setCredits(result.welcomeCredits ?? 0);
       await new Promise((resolve) => setTimeout(resolve, 900));
       setPassword('');
-      go(DONE);
+      setError('');
+      setStep(DONE);
     } catch (failure) {
       setError(credentialError(failure));
     } finally {

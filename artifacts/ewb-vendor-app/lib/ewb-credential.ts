@@ -7,7 +7,8 @@ export type SaveResult = Awaited<ReturnType<typeof api.saveEwbCredential>>;
  * be slow: if the wait runs out, the saved list is checked before calling it a failure.
  */
 export async function saveEwbLogin(gstin: string, username: string, password: string): Promise<SaveResult> {
-  const startedAt = new Date().toISOString();
+  // Two minutes early, in case the phone's clock is ahead of the server's.
+  const startedAt = new Date(Date.now() - 2 * 60_000).toISOString();
   try {
     return await api.saveEwbCredential(gstin, username, password);
   } catch (error) {

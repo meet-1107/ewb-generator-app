@@ -404,10 +404,11 @@
       if (params[0]) return supportThread(view, params[0]);
       const state = { status: "open", ...(pages.support.state || {}) };
       pages.support.state = state;
-      view.append(head("Support", "Messages users send from the app's support chat. The assistant answers at once; reply here and the user gets a notification."));
+      view.append(head("Support", "Messages users send from the app's support chat. The assistant answers at once; reply here and the user gets a notification. To write to any user first, open them in Users & businesses → Send message (up to 10 messages per user per day)."));
       const body = h("div", {}, loading());
       view.append(body);
-      const d = await api(`/support${state.status ? `?status=${state.status}` : ""}`);
+      let d;
+      try { d = await api(`/support${state.status ? `?status=${state.status}` : ""}`); } catch (error) { return put(body, errorBox(error, render)); }
       const seg = h("div", { class: "seg", role: "group", "aria-label": "Status" });
       for (const [value, label] of [["open", `Waiting for reply (${d.counts.open})`], ["replied", `Replied (${d.counts.replied})`], ["closed", `Closed (${d.counts.closed})`], ["", `All (${d.counts.total})`]]) {
         seg.append(h("button", { type: "button", "aria-pressed": state.status === value ? "true" : "false", onclick: () => { state.status = value; render(); } }, label));
@@ -429,7 +430,7 @@
       pages.users.state = state;
       view.append(head("Users & businesses", "Every registered account, with its business, bills, credits and payments.", canDo("export") ? h("button", { class: "btn", onclick: () => download(`/export/users?${filterQuery(state)}`, "users.csv") }, "Export CSV") : null));
       const list = h("div", {}, loading());
-      const reload = () => { state.page = 1; load(); };
+      const reload = () => { state.page = 1; state.cursors = [""]; load(); };
       view.append(h("div", { class: "filters" },
         h("input", { class: "input", type: "search", placeholder: "Search name, email, user ID, business, GSTIN, bill no., payment ID", value: state.q, "aria-label": "Search users", onchange: (e) => { state.q = e.target.value; reload(); } }),
         select("Status", state.status, [["", "Any status"], ["active", "Active"], ["suspended", "Suspended"]], (v) => { state.status = v; reload(); }),
@@ -439,10 +440,20 @@
         select("Invoices", state.invoices, [["", "Any invoices"], ["yes", "Made invoices"], ["recent", "Invoices in last 30 days"], ["no", "No invoices"]], (v) => { state.invoices = v; reload(); }),
         select("Credits", state.credits, [["", "Any balance"], ["low", "Low credits"], ["zero", "Zero credits"]], (v) => { state.credits = v; reload(); }),
         select("Sort", state.sort, [["createdAt", "Newest"], ["lastSignInAt", "Last sign-in"], ["invoiceCount", "Most invoices"], ["lastInvoiceAt", "Latest invoice"], ["ewbTotal", "Most bills"], ["paidPaise", "Most paid"], ["balance", "Highest balance"]], (v) => { state.sort = v; reload(); })), list);
+      function cursorPager(result) {
+        state.cursors = state.cursors || [""];
+        if (result.next) state.cursors[state.page] = result.next;
+        const from = (state.page - 1) * 50 + 1;
+        return h("div", { class: "pager" }, `${num(result.total)} result${result.total === 1 ? "" : "s"} · showing ${result.items.length ? `${num(from)}–${num(from + result.items.length - 1)}` : "none"}`,
+          h("div", { class: "filters", style: "margin:0" },
+            h("button", { class: "btn small", disabled: state.page <= 1, onclick: () => { state.page -= 1; load(); } }, "Previous"),
+            h("button", { class: "btn small", disabled: !result.next, onclick: () => { state.page += 1; load(); } }, "Next")));
+      }
       async function load() {
         put(list, loading());
         try {
-          const result = await api(`/users?${filterQuery(state)}&page=${state.page}`);
+          const cursor = (state.cursors || [])[state.page - 1] || "";
+          const result = await api(`/users?${filterQuery(state)}&page=${state.page}${cursor ? `&after=${encodeURIComponent(cursor)}` : ""}`);
           put(list, table([
             { label: "Name / email", wrap: true, render: (r) => h("div", {}, h("div", { style: "font-weight:600" }, r.name || "—"), h("div", { class: "note", style: "margin:0" }, r.email || r.uid)) },
             { label: "Status", render: (r) => h("div", { class: "filters", style: "margin:0;gap:4px" }, badge(r.suspended || r.disabled ? "suspended" : "active", r.suspended || r.disabled ? "suspended" : "active"), badge(r.emailVerified ? "verified" : "unverified")) },
@@ -456,7 +467,9 @@
             { label: "Bought", num: true, render: (r) => num(r.purchasedCredits) },
             { label: "Paid", num: true, render: (r) => (r.paidPayments ? `${inr(r.paidPaise)} (${r.paidPayments})` : "—") },
             { label: "Plan", render: (r) => `${r.planId} · ${r.planState}` },
-          ], result.items, { onRow: (r) => go(`users/${r.uid}`), empty: "No users match these filters." }), pager(result, (p) => { state.page = p; load(); }), h("div", { class: "note" }, `Data as of ${when(result.builtAt)} (refreshed every minute).`));
+          ], result.items, { onRow: (r) => go(`users/${r.uid}`), empty: "No users match these filters." }),
+            result.paged === "cursor" ? cursorPager(result) : pager(result, (p) => { state.page = p; load(); }),
+            h("div", { class: "note" }, result.paged === "cursor" ? "From the user index (50 per page). One filter at a time; search finds an exact user ID, email or GSTIN." : `Data as of ${when(result.builtAt)} (refreshed every minute).`));
         } catch (error) { put(list, errorBox(error, load)); }
       }
       await load();
@@ -660,8 +673,26 @@
       view.append(head("Settings & health", "How the server is configured right now. Secrets are never shown; change settings in functions/.env and deploy."));
       const body = h("div", {}, loading());
       view.append(body);
-      const [health, subs] = await Promise.all([api("/health"), canDo("payments") ? api("/subscriptions") : Promise.resolve(null)]);
+      const [health, subs, metrics] = await Promise.all([api("/health"), canDo("payments") ? api("/subscriptions") : Promise.resolve(null), canDo("admins") ? api("/metrics/status").catch(() => null) : Promise.resolve(null)]);
       const yes = (value, label = "Configured") => badge(value ? "ok" : "unknown", value ? label : "Not set");
+      if (metrics) {
+        const status = h("p", { class: "note", style: "margin:0" }, metrics.ready ? "On: the Overview and Users pages read the counters and the user index (a few hundred small documents, whatever the number of accounts)." : "Off: the panel still reads every account for each view. Build the counters once to switch.");
+        const run = h("button", { class: `btn ${metrics.ready ? "" : "primary"}`, onclick: async () => {
+          if (!(await confirmDialog({ title: "Build the counters now?", body: "Reads every account once, a page at a time (keep this tab open). Afterwards the Overview and Users pages stop reading every account.", confirm: "Build" }))) return;
+          run.disabled = true;
+          let next; let done = 0; let first = true;
+          try {
+            do {
+              const result = await api("/metrics/rebuild", { body: { after: next, reset: first } });
+              first = false; next = result.next; done += result.processed;
+              status.textContent = `Working… ${num(done)} accounts done`;
+            } while (next);
+            status.textContent = `Done: ${num(done)} accounts. The Overview and Users pages now use the counters.`;
+            toast("Counters built");
+          } catch (error) { status.textContent = `Stopped: ${error.message}. Run it again to start over.`; run.disabled = false; }
+        } }, metrics.ready ? "Rebuild counters" : "Build counters");
+        body.after(h("div", { class: "card section" }, h("h2", {}, "Low-cost admin panel"), status, h("div", { class: "filters", style: "margin:10px 0 0" }, run)));
+      }
       put(body, h("div", { class: "grid two" },
         h("div", { class: "card" }, h("h2", {}, "Services"), h("dl", { class: "kv" },
           h("dt", {}, "Environment"), h("dd", {}, health.environment), h("dt", {}, "Sign-in"), h("dd", {}, health.authMode), h("dt", {}, "Database"), h("dd", {}, `${health.store} · `, badge("ok", "reachable")),
@@ -740,6 +771,7 @@
     const u = d.user;
     const suspended = u.suspended || u.disabled;
     const actions = h("div", { class: "filters", style: "margin:0" },
+      canDo("support") ? h("button", { class: "btn", onclick: () => go(`support/${encodeURIComponent(uid)}`) }, "Send message") : null,
       canDo("credits.adjust") ? h("button", { class: "btn primary", onclick: adjust }, "Adjust credits") : null,
       canDo("users.suspend") ? h("button", { class: `btn ${suspended ? "" : "danger"}`, onclick: suspend }, suspended ? "Reactivate account" : "Suspend account") : null);
     const tabs = [
@@ -806,9 +838,12 @@
     view.append(h("p", {}, h("a", { href: "#/support" }, "← All messages")));
     const body = h("div", {}, loading());
     view.append(body);
-    let t = (await api(`/support/${encodeURIComponent(uid)}`)).thread;
+    let t;
+    try { t = (await api(`/support/${encodeURIComponent(uid)}`)).thread; } catch (error) { return put(body, errorBox(error, render)); }
     const draw = () => {
-      const log = h("div", { class: "chat" }, t.messages.map((m) => h("div", { class: `bubble ${m.from}` },
+      const left = Math.max(0, (t.dailyLimit ?? 10) - (t.sentToday ?? 0));
+      const log = t.messages.length ? null : h("div", { class: "empty" }, "No messages yet. Write the first message below; the user gets a notification and sees it in the app chat.");
+      const chat = h("div", { class: "chat" }, t.messages.map((m) => h("div", { class: `bubble ${m.from}` },
         h("div", { class: "who" }, m.from === "user" ? (t.name || t.email || "User") : m.from === "bot" ? "Assistant (automatic)" : `Support · ${m.adminEmail || ""}`),
         h("div", { class: "text" }, m.text), h("div", { class: "at" }, when(m.at)))));
       const input = h("textarea", { class: "input", rows: 4, maxlength: 4000, placeholder: "Write your reply. The user gets a notification and sees it in the chat.", "aria-label": "Reply" });
@@ -816,20 +851,23 @@
         const text = input.value.trim();
         if (!text) return toast("Write a reply first.");
         sendBtn.disabled = true;
-        try { t = (await api(`/support/${encodeURIComponent(uid)}/reply`, { body: { text } })).thread; toast("Reply sent. The user was notified."); draw(); } catch (error) { toast(error.message); sendBtn.disabled = false; }
+        try { t = (await api(`/support/${encodeURIComponent(uid)}/reply`, { body: { text } })).thread; toast("Message sent. The user was notified."); draw(); } catch (error) { toast(error.message); sendBtn.disabled = false; }
       } }, "Send reply");
-      const statusBtn = t.status === "closed"
-        ? h("button", { class: "btn", onclick: () => setStatus("open") }, "Reopen")
-        : h("button", { class: "btn", onclick: () => setStatus("closed") }, "Mark as resolved");
+      const statusBtn = !t.messages.length ? null : t.status === "closed"
+        ? h("button", { class: "btn", onclick: (e) => setStatus("open", e.currentTarget) }, "Reopen")
+        : h("button", { class: "btn", onclick: (e) => setStatus("closed", e.currentTarget) }, "Mark as resolved");
       put(body,
         h("div", { class: "page-head" }, h("div", {}, h("h1", {}, t.name || t.businessName || t.email || uid), h("p", {}, [t.email, t.businessName, t.gstin, t.topicLabel].filter(Boolean).join(" · "))),
           h("div", { class: "filters", style: "margin:0" }, badge(t.status === "open" ? "pending" : t.status === "replied" ? "active" : "cancelled", t.status === "open" ? "waiting for reply" : t.status), statusBtn, canDo("users") ? h("a", { class: "btn", href: `#/users/${encodeURIComponent(uid)}` }, "Open user") : null)),
-        h("div", { class: "card" }, log),
-        h("div", { class: "card section" }, h("h2", {}, "Reply"), input, h("div", { class: "filters", style: "margin:10px 0 0" }, sendBtn)));
-      log.scrollTop = log.scrollHeight;
+        h("div", { class: "card" }, log || chat),
+        h("div", { class: "card section" }, h("h2", {}, t.messages.length ? "Reply" : "Message"),
+          left ? input : h("div", { class: "notice warn" }, `${t.dailyLimit ?? 10} messages already sent to this user today. You can write again tomorrow.`),
+          h("div", { class: "filters", style: "margin:10px 0 0;align-items:center" }, left ? sendBtn : null, h("span", { class: "note", style: "margin:0" }, `${t.sentToday ?? 0} of ${t.dailyLimit ?? 10} messages sent today`))));
+      chat.scrollTop = chat.scrollHeight;
     };
-    async function setStatus(status) {
-      try { t = (await api(`/support/${encodeURIComponent(uid)}/status`, { body: { status } })).thread; toast(status === "closed" ? "Marked as resolved" : "Reopened"); draw(); } catch (error) { toast(error.message); }
+    async function setStatus(status, button) {
+      if (button) button.disabled = true;
+      try { t =(await api(`/support/${encodeURIComponent(uid)}/status`, { body: { status } })).thread; toast(status === "closed" ? "Marked as resolved" : "Reopened"); draw(); } catch (error) { toast(error.message); if (button) button.disabled = false; }
     }
     draw();
   }
@@ -841,14 +879,20 @@
     win.document.write("<p style='font-family:sans-serif;padding:24px'>Loading invoice…</p>");
     try {
       const d = await api(`/users/${encodeURIComponent(uid)}/invoices/${encodeURIComponent(id)}`);
+      if (win.closed) return;
       win.document.open();
       win.document.write(d.html);
       win.document.title = `Invoice ${d.invoice.number}`;
       win.document.close();
-      // Images (the logo) get a moment to load before the print dialog opens.
-      if (print) setTimeout(() => { win.focus(); win.print(); }, 700);
+      if (print) {
+        // After the logo has loaded (or at most 2 s), so it is in the PDF.
+        let printed = false;
+        const go = () => { if (printed || win.closed) return; printed = true; win.focus(); win.print(); };
+        win.addEventListener("load", () => setTimeout(go, 200));
+        setTimeout(go, 2000);
+      }
     } catch (error) {
-      win.close();
+      if (!win.closed) win.close();
       toast(error.message);
     }
   }

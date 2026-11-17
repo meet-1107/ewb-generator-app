@@ -157,7 +157,7 @@ export function amountInWords(paise: number) {
   return `${words ? `${words} Rupees` : ""}${remainder ? `${words ? " and " : ""}${belowHundred(remainder)} Paise` : ""} Only`;
 }
 
-const esc = (value: string) => value.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
+const esc = (value: unknown) => String(value ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]!);
 const inr = (paise: number) => `₹${(paise / 100).toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const date = (iso: string, time = false) => new Date(iso).toLocaleString("en-IN", { day: "2-digit", month: "short", year: "numeric", ...(time ? { hour: "2-digit", minute: "2-digit" } : {}), timeZone: "Asia/Kolkata" });
 

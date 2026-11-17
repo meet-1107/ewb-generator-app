@@ -109,6 +109,7 @@ export default function InvoiceEditorScreen() {
   const [showShipTo, setShowShipTo] = useState(false);
   const [distanceState, setDistanceState] = useState<'idle' | 'loading' | 'error'>('idle');
   const loaded = useRef(false);
+  const tapLock = useRef(false);
 
   useEffect(() => {
     if (loaded.current || !store.isHydrated) return;
@@ -346,14 +347,15 @@ export default function InvoiceEditorScreen() {
       }
       return { ...base, invoiceNumber: series.next };
     }
-    const useNext = await dialog.confirm({
-      title: 'Invoice number is wrong',
-      message: `${base.invoiceNumber} does not follow your last invoice ${series.latest}. The next number is ${series.next}.`,
-      confirmLabel: `Use ${series.next}`,
-      cancelLabel: 'Edit number',
-      tone: 'warning',
-      icon: 'alert-triangle',
+    const keep = `Start a new series with ${base.invoiceNumber}`;
+    const answer = await dialog.prompt({
+      title: 'Number is not in your series',
+      message: `${base.invoiceNumber} does not follow your last invoice ${series.latest}. The next number is ${series.next}. Starting a new series (for example a new financial year) is fine too.`,
+      choices: [`Use ${series.next}`, keep, 'Edit number'],
+      confirmLabel: 'Continue',
     });
+    if (answer?.choice === keep) return { ...base, newSeriesNumber: base.invoiceNumber };
+    const useNext = answer?.choice.startsWith('Use ');
     if (!useNext) {
       setPreviewing(false);
       setAttempted(true);
@@ -435,6 +437,7 @@ export default function InvoiceEditorScreen() {
     if (!invoice || !invoiceSeriesProblem(invoice, store.invoices, released)) return;
     const fixed = await checkSeries(invoice);
     if (fixed && fixed.invoiceNumber !== invoice.invoiceNumber) patch({ invoiceNumber: fixed.invoiceNumber });
+    else if (fixed?.newSeriesNumber) patch({ newSeriesNumber: fixed.newSeriesNumber });
   };
 
   /** Missing details of an invoice or purchase made from a PDF are filled in before its preview (transport can wait). */
@@ -464,6 +467,10 @@ export default function InvoiceEditorScreen() {
 
   /** Save: check the invoice, then ask whether it needs an e-way bill. */
   const finishInvoice = async () => {
+    // A double tap must not save twice (two copies of a new party) or open two review screens.
+    if (tapLock.current) return;
+    tapLock.current = true;
+    setTimeout(() => { tapLock.current = false; }, 1500);
     Keyboard.dismiss();
     if (!invoice) return;
     const checked = await checkSeries(invoice);
@@ -507,6 +514,12 @@ export default function InvoiceEditorScreen() {
   };
 
   const continueToReview = async (from?: Invoice) => {
+    // A double tap must not open two review screens (`from`: called right after saving, already guarded).
+    if (!from) {
+      if (tapLock.current) return;
+      tapLock.current = true;
+      setTimeout(() => { tapLock.current = false; }, 1500);
+    }
     Keyboard.dismiss();
     if (!invoice) return;
     const checked = from ?? (await checkSeries(invoice));

@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { Router, type IRouter } from "express";
 import { z } from "zod";
-import { appendLog, audit, currentPeriod, withWorkspace } from "../lib/store";
+import { appendLog, audit, currentPeriod, withWorkspace, type SyncRecord, type Workspace } from "../lib/store";
+import { adjustAccount, bump } from "../lib/metrics";
 import { rateLimit } from "../lib/rate-limit";
 import { appVersionSetting, PLAY_STORE_URL } from "../lib/app-version";
 import { billingMode, planById, plans, plansAreSamples } from "../lib/plans";
@@ -102,6 +103,18 @@ const syncSchema = z.object({
   })).max(2000)),
 });
 
+/** A saved (not draft) invoice or purchase bill, counted once for the admin panel; a deleted one leaves the account's count. */
+type InvoiceData = { kind?: string; status?: string; unsaved?: boolean; createdAt?: string } | undefined;
+const counted = (record: { deleted?: boolean; data?: unknown } | undefined) => {
+  const data = record?.data as InvoiceData;
+  return Boolean(record && !record.deleted && data && !data.unsaved && data.status !== "draft");
+};
+function countInvoice(workspace: Workspace, before: SyncRecord | undefined, after: { deleted?: boolean; data?: unknown; updatedAt: string }) {
+  const kind = ((after.data ?? before?.data) as InvoiceData)?.kind === "purchase" ? "purchaseBills" : "invoices";
+  if (counted(after) && !counted(before)) bump(workspace, kind, 1, ((after.data as InvoiceData)?.createdAt) ?? after.updatedAt);
+  else if (!counted(after) && counted(before) && after.deleted) adjustAccount(workspace, kind, -1);
+}
+
 router.post("/sync", async (req, res) => {
   const parsed = syncSchema.safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "bad_request", message: "Sync payload could not be read." });
@@ -113,7 +126,14 @@ router.post("/sync", async (req, res) => {
       const target = (workspace.sync[name] ??= {});
       for (const record of records) {
         const existing = target[record.id];
-        if (!existing || existing.updatedAt < record.updatedAt) target[record.id] = { ...record, receivedAt: serverTime };
+        if (!existing || existing.updatedAt < record.updatedAt) {
+          if (name === "invoices") countInvoice(workspace, existing, record);
+          if (name === "business" && record.id === "profile" && !record.deleted) {
+            const profile = record.data as { name?: string; gstin?: string } | undefined;
+            workspace.profile = { businessName: profile?.name?.trim() || null, gstin: profile?.gstin?.trim().toUpperCase() || null };
+          }
+          target[record.id] = { ...record, receivedAt: serverTime };
+        }
       }
     }
     const out: Record<string, unknown[]> = {};

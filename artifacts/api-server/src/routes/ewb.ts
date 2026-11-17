@@ -10,6 +10,7 @@ import { audit, currentPeriod, withWorkspace, type CewbRecord, type EwbRecord, t
 import { decryptSecret, encryptSecret, loginFingerprint, secretsConfigured } from "../lib/secrets";
 import { holdCredits, refundCredits, settleCredits, walletSummary } from "../lib/wallet";
 import { noticeEwbGenerated, pushNotices } from "../lib/notify";
+import { bump } from "../lib/metrics";
 import { gstinProblem, stateFromName, VEHICLE_PATTERN, type EwbInput } from "../lib/validation";
 
 const router: IRouter = Router();
@@ -62,7 +63,35 @@ function contextFor(workspace: Workspace, gstin: string): ProviderContext | { mi
   if (!ewbProvider?.needsCredentials) return { credentials: null };
   const saved = workspace.ewbCredentials[gstin];
   if (!saved) return { missing: true };
-  return { credentials: { gstin, username: saved.username, password: decryptSecret(saved.passwordEnc) } };
+  // A login that can no longer be read (secret changed, damaged record) has to be entered again.
+  try {
+    return { credentials: { gstin, username: saved.username, password: decryptSecret(saved.passwordEnc) } };
+  } catch {
+    return { missing: true };
+  }
+}
+
+/** A change to one bill (or one consolidation) still running: its credits are held under `targetId`. */
+const ACTION_LOCK_MS = 2 * 60_000;
+
+/**
+ * Before holding credits for an action: refuses a second one on the same target while the
+ * first is running (a double tap would change the bill twice and charge twice), and returns
+ * the credits of an earlier attempt that never finished.
+ */
+function claimTarget(workspace: Workspace, targetId: string, actor: string): "busy" | "free" {
+  const now = Date.now();
+  for (const entry of workspace.wallet.ledger) {
+    if (entry.status !== "held" || entry.targetId !== targetId || entry.kind === "generate") continue;
+    if (now - Date.parse(entry.at) < ACTION_LOCK_MS) return "busy";
+    refundCredits(workspace, entry.id, "Previous attempt did not finish");
+    audit(workspace, actor, "ewb.action", targetId, "stale_hold_returned");
+  }
+  return "free";
+}
+
+function busy(res: Response) {
+  return res.status(409).json({ error: "pending", message: "This change is already being sent to the portal. Wait a moment and refresh." });
 }
 
 function credentialsMissing(res: Response, gstin: string) {
@@ -102,6 +131,7 @@ function normalize(input: EwbInput): EwbInput {
   const upper = (value: string) => value.trim().toUpperCase();
   return {
     ...input,
+    invoiceNumber: input.invoiceNumber.trim(),
     seller: { ...input.seller, gstin: upper(input.seller.gstin) },
     buyer: { ...input.buyer, gstin: upper(input.buyer.gstin) || "URP" },
     transport: {
@@ -144,7 +174,9 @@ router.post("/ewb/generate", async (req, res) => {
       audit(workspace, req.actor, "ewb.generate", input.invoiceId, "stale_pending_reclaimed");
     }
     // Only an attempt whose outcome is unknown may have created a bill at the portal; a refused one did not.
-    const retry = existing?.state === "unknown" || existing?.state === "pending";
+    // That attempt may have used another key for the same document number (a second phone, a reset key).
+    const docLock = workspace.requests[lockKey];
+    const retry = existing?.state === "unknown" || existing?.state === "pending" || docLock?.state === "unknown" || docLock?.state === "pending";
     const live = Object.values(workspace.ewbs).filter((ewb) => refreshStatus(ewb).status !== "cancelled");
     const duplicate = live.find((ewb) => ewb.invoiceId === input.invoiceId);
     if (duplicate) return { kind: "duplicate" as const, ewb: duplicate };
@@ -155,6 +187,11 @@ router.post("/ewb/generate", async (req, res) => {
     const lock = workspace.requests[lockKey];
     if (lock?.state === "pending" && lock.idempotencyKey !== requestKey && Date.now() - Date.parse(lock.claimedAt ?? lock.createdAt) < STALE_PENDING_MS) {
       return { kind: "pending" as const };
+    }
+    // A stale attempt under another key never finished: return the credits it held.
+    if (lock?.state === "pending" && lock.idempotencyKey !== requestKey) {
+      refundCredits(workspace, lock.holdId ?? null, "Previous attempt did not finish");
+      audit(workspace, req.actor, "ewb.generate", input.invoiceId, "stale_lock_reclaimed");
     }
     rollUsage(workspace);
     const ctx = contextFor(workspace, input.seller.gstin);
@@ -167,7 +204,7 @@ router.post("/ewb/generate", async (req, res) => {
     request.claimedAt = now;
     request.holdId = hold.entryId ?? undefined;
     workspace.requests[requestKey] = request;
-    workspace.requests[lockKey] = { id: request.id, idempotencyKey: requestKey, invoiceId: input.invoiceId, state: "pending", createdAt: now, claimedAt: now };
+    workspace.requests[lockKey] = { id: request.id, idempotencyKey: requestKey, invoiceId: input.invoiceId, state: "pending", createdAt: now, claimedAt: now, holdId: hold.entryId ?? undefined };
     // A retry of this request may get back the bill its lost first attempt created; a first attempt may not.
     return { kind: "claimed" as const, requestId: request.id, holdId: hold.entryId, ctx, knownNumbers, retry };
   }, { requests: [requestKey, lockKey], ewbs: "all" });
@@ -192,6 +229,8 @@ router.post("/ewb/generate", async (req, res) => {
       request.safeErrorCode = "PROVIDER_ERROR";
       workspace.requests[lockKey]!.state = "unknown";
       refundCredits(workspace, claim.holdId, "Provider outcome unknown");
+      bump(workspace, "ewbAttempts");
+      bump(workspace, "ewbFailed");
     }, { requests: [requestKey, lockKey] });
     return outcomeUnknown(res, claim.requestId.slice(0, 8));
   }
@@ -208,6 +247,8 @@ router.post("/ewb/generate", async (req, res) => {
       request.safeErrorCode = result.code;
       // Not charged while unknown: the retry that recovers the bill pays for it, once.
       refundCredits(workspace, claim.holdId, unknown ? `Outcome unknown: ${result.code}` : `Rejected: ${result.code}`);
+      bump(workspace, "ewbAttempts");
+      bump(workspace, "ewbFailed");
       audit(workspace, req.actor, "ewb.generate", input.invoiceId, `${unknown ? "unknown" : "rejected"}:${result.code}`);
       return { ok: false as const, unknown, result };
     }
@@ -269,6 +310,8 @@ router.post("/ewb/generate", async (req, res) => {
     settleCredits(workspace, claim.holdId, { ewbNumber: record.ewbNumber, targetId: record.id });
     audit(workspace, req.actor, "ewb.generate", record.id, "generated");
     noticeEwbGenerated(workspace, record);
+    bump(workspace, "ewbAttempts");
+    bump(workspace, "ewbsGenerated");
     return { ok: true as const, record, wallet: walletSummary(workspace).balance };
   }, { requests: [requestKey, lockKey], ewbs: [] });
 
@@ -321,8 +364,8 @@ router.get("/ewb/:id", async (req, res) => {
 const movement = { fromPlace: z.string().max(50).optional(), fromState: z.string().max(60).optional() };
 const actionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("cancel"), reason: z.string().min(1).max(100) }),
-  z.object({ action: z.literal("extend"), reason: z.string().min(1).max(100), remainingKm: z.number().int(), fromPincode: z.string().max(6).optional(), ...movement }),
-  z.object({ action: z.literal("update_vehicle"), reason: z.string().min(1).max(100), vehicleNumber: z.string().max(15), ...movement }),
+  z.object({ action: z.literal("extend"), reason: z.string().min(1).max(100), remainingKm: z.number().int().min(1).max(4000), fromPincode: z.string().max(6).optional(), ...movement }),
+  z.object({ action: z.literal("update_vehicle"), reason: z.string().min(1).max(100), vehicleNumber: z.string().min(1).max(15), ...movement }),
 ]);
 const WALLET_ACTION = { cancel: "cancel", extend: "extend", update_vehicle: "part_b" } as const;
 const ACTION_NAME = { cancel: "Cancelling an e-way bill", extend: "Extending validity", update_vehicle: "Updating Part-B" } as const;
@@ -343,14 +386,26 @@ router.post("/ewb/:id/actions", async (req, res) => {
     return res.status(409).json({ error: "consolidated", message: `This bill moves under consolidated bill ${current.consolidatedInto}. Change the vehicle on that trip instead.` });
   }
 
+  if (body.action === "update_vehicle" && current.transport.mode === "Road" && !VEHICLE_PATTERN.test(body.vehicleNumber.replace(/[\s-]/g, "").toUpperCase())) {
+    return res.status(400).json({ error: "vehicle_format", message: "Vehicle number format looks wrong (example: MH12AB1234)." });
+  }
+  if (body.action === "extend") {
+    // The portal extends only from 8 hours before to 8 hours after the bill expires.
+    const toExpiry = Date.parse(current.validUntil) - Date.now();
+    if (toExpiry > 8 * 3_600_000) return res.status(409).json({ error: "too_early", message: "A bill can be extended only in the 8 hours before it expires." });
+    if (toExpiry < -8 * 3_600_000) return res.status(409).json({ error: "too_late", message: "This bill expired more than 8 hours ago, so it can no longer be extended." });
+  }
+
   const hold = await withWorkspace(req.workspaceId, (workspace) => {
     const ctx = contextFor(workspace, current.sellerGstin);
     if ("missing" in ctx) return { kind: "credentials" as const };
+    if (claimTarget(workspace, current.id, req.actor) === "busy") return { kind: "busy" as const };
     const held = holdCredits(workspace, WALLET_ACTION[body.action], current.id);
     if (!held.ok) return { kind: "credits" as const, cost: held.cost, balance: held.balance };
     return { kind: "held" as const, holdId: held.entryId, ctx };
   });
   if (hold.kind === "credentials") return credentialsMissing(res, current.sellerGstin);
+  if (hold.kind === "busy") return busy(res);
   if (hold.kind === "credits") return insufficient(res, hold.cost, hold.balance, ACTION_NAME[body.action]);
 
   const where = { fromPlace: ("fromPlace" in body && body.fromPlace?.trim()) || current.fromState, fromState: ("fromState" in body && body.fromState) || current.fromState, transMode: current.transport.mode, transDocNo: current.transport.docNumber, transDocDate: current.transport.docDate };
@@ -379,6 +434,7 @@ router.post("/ewb/:id/actions", async (req, res) => {
     if (body.action === "cancel") {
       record.status = "cancelled";
       record.cancelledAt = now;
+      bump(workspace, "ewbsCancelled");
       record.cancelReason = body.reason;
       record.history.push({ at: now, action: "Cancelled", detail: body.reason });
     } else if (body.action === "extend") {
@@ -425,6 +481,8 @@ router.post("/ewb-consolidated", async (req, res) => {
   const body = { ...parsed.data, vehicleNumber: parsed.data.vehicleNumber.replace(/[\s-]/g, "").toUpperCase(), ewbIds: [...new Set(parsed.data.ewbIds)] };
   if (body.transMode === "Road" && !VEHICLE_PATTERN.test(body.vehicleNumber)) return res.status(400).json({ error: "vehicle_format", message: "Vehicle number format looks wrong (example: MH12AB1234)." });
   if (!stateFromName(body.fromState)) return res.status(400).json({ error: "bad_request", message: "Choose the state the vehicle starts from." });
+  if (body.transMode !== "Road" && (!body.transDocNo?.trim() || !body.transDocDate?.trim())) return res.status(400).json({ error: "bad_request", message: "Add the transport document number and date for rail, air or ship." });
+  const target = `cewb|${[...body.ewbIds].sort().join(",")}`.slice(0, 300);
 
   const claim = await withWorkspace(req.workspaceId, (workspace) => {
     const bills = body.ewbIds.map((id) => workspace.ewbs[id]);
@@ -437,12 +495,14 @@ router.post("/ewb-consolidated", async (req, res) => {
     const gstin = records[0]!.sellerGstin;
     const ctx = contextFor(workspace, gstin);
     if ("missing" in ctx) return { kind: "credentials" as const, gstin };
-    const held = holdCredits(workspace, "consolidate");
+    if (claimTarget(workspace, target, req.actor) === "busy") return { kind: "busy" as const };
+    const held = holdCredits(workspace, "consolidate", target);
     if (!held.ok) return { kind: "credits" as const, cost: held.cost, balance: held.balance };
     return { kind: "held" as const, holdId: held.entryId, ctx, ewbNumbers: records.map((bill) => bill.ewbNumber) };
   }, { ewbs: body.ewbIds });
   if (claim.kind === "error") return res.status(claim.status).json({ error: "not_allowed", message: claim.message });
   if (claim.kind === "credentials") return credentialsMissing(res, claim.gstin);
+  if (claim.kind === "busy") return busy(res);
   if (claim.kind === "credits") return insufficient(res, claim.cost, claim.balance, "A consolidated e-way bill");
 
   let result;
@@ -529,9 +589,9 @@ router.put("/ewb-credentials", credentialLimit, async (req, res) => {
       });
       return res.status(400).json({ error: "credentials_invalid", message: `The portal refused this login: ${check.message}` });
     }
-    // The portal allows only a few checks per GSTIN in 15 minutes. A login it refused a
-    // moment ago is not saved unchecked just because it can no longer be checked.
-    if (check.rateLimited) {
+    // Not checked (check limit reached, portal slow or down): a login the portal refused
+    // a moment ago is not saved just because it could not be checked again.
+    if (check.valid === null) {
       const refused = await withWorkspace(req.workspaceId, (workspace) => workspace.refusedLogins?.[gstin]);
       if (refused && refused.fingerprint === fingerprint && Date.now() - Date.parse(refused.at) < 30 * 60_000) {
         await note("refused_again");

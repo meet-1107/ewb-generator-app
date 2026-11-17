@@ -1,5 +1,6 @@
 import { directory, type DirectoryUser } from "./admin-directory";
-import { listWorkspaceIds, peekWorkspace, queryLogs, readDoc, type CreditPurchase, type EwbRecord, type LogRecord, type WalletEntry, type Workspace } from "./store";
+import { metricsReady } from "./admin-counters";
+import { listWorkspaceIds, peekWorkspace, queryLogs, queryUserIndex, readDoc, type CreditPurchase, type EwbRecord, type LogRecord, type WalletEntry, type Workspace } from "./store";
 import { suspendedAccounts } from "./suspensions";
 
 /**
@@ -122,28 +123,14 @@ export function invoiceStats(workspace: Workspace | undefined, now = Date.now())
   return out;
 }
 
-async function build(): Promise<Snapshot> {
-  const [accounts, ids, suspended] = await Promise.all([directory().list(), listWorkspaceIds(), suspendedAccounts()]);
-  const workspaces = new Map<string, Workspace>();
-  const loaded = await mapLimit(ids, 10, (id) => peekWorkspace(id, { ewbs: true, syncKeys: ["business/profile"], syncNames: ["invoices"] }));
-  loaded.forEach((workspace, index) => { if (workspace) workspaces.set(ids[index]!, workspace); });
-
-  const byUid = new Map<string, DirectoryUser>(accounts.map((account) => [account.uid, account]));
-  const uids = [...new Set([...byUid.keys(), ...workspaces.keys()])];
+/** One account's row (Users page), its bills, payments and credit entries. */
+export function rowFor(uid: string, account: DirectoryUser | undefined, workspace: Workspace | undefined, suspended: Record<string, unknown>) {
   const ewbs: EwbRow[] = [];
-  const purchases: PurchaseRow[] = [];
-  const ledger: LedgerRow[] = [];
-  let ledgerTrimmed = false;
-
-  const users = uids.map((uid): UserRow => {
-    const account = byUid.get(uid);
-    const workspace = workspaces.get(uid);
+  const row = ((): UserRow => {
     const entries = workspace?.wallet.ledger ?? [];
-    if (entries.length >= 1000) ledgerTrimmed = true;
     const sum = (filter: (entry: WalletEntry) => boolean) => entries.filter(filter).reduce((total, entry) => total + entry.credits, 0);
     const chargedFor = new Map<string, number>();
     for (const entry of entries) {
-      ledger.push({ ...entry, uid });
       if (entry.status === "charged" && entry.kind === "generate" && entry.targetId) chargedFor.set(entry.targetId, (chargedFor.get(entry.targetId) ?? 0) - entry.credits);
     }
     const own = Object.values(workspace?.ewbs ?? {});
@@ -156,7 +143,6 @@ async function build(): Promise<Snapshot> {
       });
     }
     const ownPurchases = Object.values(workspace?.purchases ?? {});
-    for (const purchase of ownPurchases) purchases.push({ ...purchase, uid });
     const paid = ownPurchases.filter((purchase) => purchase.status === "paid" && purchase.provider === "razorpay");
     const business = workspace?.sync["business"]?.["profile"]?.data as { name?: string; gstin?: string } | undefined;
     const docs = invoiceStats(workspace);
@@ -195,13 +181,54 @@ async function build(): Promise<Snapshot> {
       planId: workspace?.subscription.planId ?? "free",
       planState: workspace?.subscription.entitlementState ?? "trial",
     };
+  })();
+  const entries = workspace?.wallet.ledger ?? [];
+  return {
+    row,
+    ewbs,
+    purchases: Object.values(workspace?.purchases ?? {}).map((purchase): PurchaseRow => ({ ...purchase, uid })),
+    ledger: entries.map((entry): LedgerRow => ({ ...entry, uid })),
+    trimmed: entries.length >= 1000,
+  };
+}
+
+async function build(): Promise<Snapshot> {
+  const [accounts, ids, suspended] = await Promise.all([directory().list(), listWorkspaceIds(), suspendedAccounts()]);
+  const workspaces = new Map<string, Workspace>();
+  const loaded = await mapLimit(ids, 10, (id) => peekWorkspace(id, { ewbs: true, syncKeys: ["business/profile"], syncNames: ["invoices"] }));
+  loaded.forEach((workspace, index) => { if (workspace) workspaces.set(ids[index]!, workspace); });
+
+  const byUid = new Map<string, DirectoryUser>(accounts.map((account) => [account.uid, account]));
+  const uids = [...new Set([...byUid.keys(), ...workspaces.keys()])];
+  const ewbs: EwbRow[] = [];
+  const purchases: PurchaseRow[] = [];
+  const ledger: LedgerRow[] = [];
+  let ledgerTrimmed = false;
+
+  const users = uids.map((uid): UserRow => {
+    const result = rowFor(uid, byUid.get(uid), workspaces.get(uid), suspended);
+    ewbs.push(...result.ewbs);
+    purchases.push(...result.purchases);
+    ledger.push(...result.ledger);
+    if (result.trimmed) ledgerTrimmed = true;
+    return result.row;
   });
 
   return { builtAt: new Date().toISOString(), users, ewbs, purchases, ledger, ledgerTrimmed, workspaces };
 }
 
+/** Above this many accounts, pages that read every account are refused (they would cost a read per record). */
+const SNAPSHOT_LIMIT = Number(process.env["ADMIN_SNAPSHOT_LIMIT"] ?? 5000);
+
 /** The shared snapshot; `fresh` rebuilds it now. */
 export async function snapshot(fresh = false): Promise<Snapshot> {
+  if (!cached && !building && await metricsReady()) {
+    const accounts = (await queryUserIndex({ orderBy: "createdAt", direction: "desc", limit: 0 })).total;
+    if (accounts > SNAPSHOT_LIMIT) {
+      const message = `This page reads every account (${accounts.toLocaleString("en-IN")} now), which costs too much at this size. Use the Overview, Users, Support and each user's own page instead.`;
+      throw Object.assign(new Error(message), { status: 503, code: "too_many_accounts" });
+    }
+  }
   if (!fresh && cached && Date.now() - cached.at < TTL_MS) return cached.snapshot;
   building ??= build().then((result) => {
     cached = { snapshot: result, at: Date.now() };

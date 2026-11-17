@@ -40,7 +40,7 @@ function load(): PushClient | null {
       if (!sdk.isDeviceRegisteredForRemoteMessages(messaging)) await sdk.registerDeviceForRemoteMessages(messaging);
       const token = await sdk.getToken(messaging);
       if (!token) throw new Error('Firebase gave no push token.');
-      if (token && token !== saved) {
+      if (token) {
         await api.savePushToken(token, Platform.OS === 'ios' ? 'ios' : 'android');
         saved = token;
       }

@@ -1,8 +1,12 @@
 import { Router, type IRouter, type Request, type Response } from "express";
 import { z } from "zod";
 import { adminAudit, ADMIN_ROLES, allow, bootstrapEmails, can, forgetRole, maskEmail, maskGstin, PERMISSIONS, recentSignIn, requireAdmin, ROLE_LABELS, type AdminIdentity } from "../lib/admin-auth";
-import { activity, apiCalls, inRange, invalidateSnapshot, overview, paymentJourneys, paymentOutcome, providerQuota, reconcile, snapshot, summarizeApi, type EwbRow, type PaymentStepRow, type PurchaseRow, type Range, type UserRow } from "../lib/admin-data";
+import { activity, rowFor, apiCalls, inRange, invalidateSnapshot, overview, paymentJourneys, paymentOutcome, providerQuota, reconcile, snapshot, summarizeApi, type EwbRow, type PaymentStepRow, type PurchaseRow, type Range, type UserRow } from "../lib/admin-data";
 import { directory } from "../lib/admin-directory";
+import { accountsFor, daysOf, indexQueryOf, metricsReady, overviewFromCounters, setMetricsReady, usersPage } from "../lib/admin-counters";
+import { rebuildPage } from "../lib/metrics-rebuild";
+import { istDay } from "../lib/metrics";
+import { suspendedAccounts } from "../lib/suspensions";
 import { authMode } from "../lib/auth";
 import { distanceConfigured } from "../lib/distance";
 import { gstinApiConfigured, gstinApiTestMode } from "../lib/gstinapi";
@@ -10,7 +14,7 @@ import { creditPacks, creditPricePaise, fetchPaymentLink, razorpayConfigured } f
 import { billingMode } from "../lib/plans";
 import { rateLimit } from "../lib/rate-limit";
 import { peekWorkspace, queryLogs, readDoc, withWorkspace } from "../lib/store";
-import { addAdminReply, listThreads, readThread, setThreadStatus, TOPIC_LABELS, type SupportThread } from "../lib/support";
+import { addAdminReply, ADMIN_MESSAGES_PER_DAY, adminMessagesToday, listThreads, readThread, setThreadStatus, TOPIC_LABELS, type SupportThread, type Who } from "../lib/support";
 import { setSuspended } from "../lib/suspensions";
 import { adjustCredits, creditCosts, walletSummary } from "../lib/wallet";
 import { ewbProvider, ewbProviderSetting } from "../providers/ewb-provider";
@@ -103,10 +107,33 @@ router.get("/me", async (req, res) => {
 /* ---------- Overview ---------- */
 
 router.get("/overview", allow("overview"), async (req, res) => {
-  const data = await overview(rangeOf(req));
   const admin = req.admin!;
+  if (await metricsReady()) {
+    // From the daily counters: a few hundred small documents, whatever the number of accounts.
+    const range = rangeOf(req);
+    const [{ records, capped }, quota] = await Promise.all([apiCalls(range), providerQuota()]);
+    const perDay = new Map<string, number>();
+    for (const record of records) perDay.set(istDay(record.at), (perDay.get(istDay(record.at)) ?? 0) + 1);
+    const apiSeries = daysOf(range).map((day) => ({ day, value: perDay.get(day) ?? 0 }));
+    const data = await overviewFromCounters(range, { api: { ...summarizeApi(records), capped, series: apiSeries }, quota });
+    const accounts = await accountsFor([...new Set([...data.recent.ewbs, ...data.recent.payments].map((row) => row.uid).filter(Boolean))]);
+    const email = (uid: string) => { const value = accounts.get(uid)?.email ?? null; return can(admin, "pii") ? value : maskEmail(value); };
+    return res.json({
+      ...data,
+      api: can(admin, "api") ? data.api : null,
+      quota: can(admin, "api") || can(admin, "health") ? data.quota : null,
+      payments: can(admin, "payments") ? data.payments : null,
+      credits: can(admin, "credits") ? data.credits : null,
+      recent: {
+        payments: can(admin, "payments") ? data.recent.payments.map((row) => ({ ...row, userEmail: email(row.uid) })) : [],
+        ewbs: data.recent.ewbs.map((row) => ({ ...row, userEmail: email(row.uid) })),
+        admin: can(admin, "audit") ? data.recent.admin : [],
+      },
+    });
+  }
+  const data = await overview(rangeOf(req));
   const users = userIndex((await snapshot()).users);
-  res.json({
+  return res.json({
     ...data,
     api: can(admin, "api") ? data.api : null,
     quota: can(admin, "api") || can(admin, "health") ? data.quota : null,
@@ -203,6 +230,23 @@ const USER_SORT: Record<string, (user: UserRow) => string | number | null> = {
 };
 
 router.get("/users", allow("users"), async (req, res) => {
+  if (await metricsReady()) {
+    // A page of the user index (50 small documents) instead of every account.
+    const q = text(req, "q");
+    const params = Object.fromEntries(Object.entries(req.query).map(([key, value]) => [key, typeof value === "string" ? value : ""]));
+    let result: Awaited<ReturnType<typeof usersPage>>;
+    if (q) {
+      // Exact search: user ID, email (Firebase Authentication) or GSTIN.
+      const byEmail = q.includes("@") ? await directory().getByEmail(q.toLowerCase()).catch(() => null) : null;
+      const uid = byEmail?.uid ?? (/^[A-Za-z0-9_-]{16,80}$/.test(q) && !/^\d{2}[A-Z]{5}/i.test(q) ? q : null);
+      result = uid
+        ? await usersPage({ where: { field: "uid", op: "==", value: uid }, orderBy: "uid", direction: "asc", limit: 50 })
+        : await usersPage({ where: { field: "gstin", op: "==", value: q.toUpperCase() }, orderBy: "gstin", direction: "asc", limit: 50 });
+    } else {
+      result = await usersPage(indexQueryOf(params));
+    }
+    return res.json({ items: result.items.map((user) => userView(req.admin!, user as unknown as UserRow)), total: result.total, next: result.next, paged: "cursor" });
+  }
   const snap = await snapshot(req.query["fresh"] === "1");
   let users = filterUsers(req, snap.users);
   // Searching by an e-way bill number or payment reference finds its owner.
@@ -214,15 +258,31 @@ router.get("/users", allow("users"), async (req, res) => {
   const key = USER_SORT[text(req, "sort")] ?? USER_SORT["createdAt"]!;
   const sorted = sortBy(users, key, text(req, "dir") === "asc" ? "asc" : "desc");
   const result = page(req, sorted);
-  res.json({ ...result, items: result.items.map((user) => userView(req.admin!, user)), builtAt: snap.builtAt });
+  return res.json({ ...result, items: result.items.map((user) => userView(req.admin!, user)), builtAt: snap.builtAt });
 });
 
 router.get("/users/:uid", allow("users"), async (req, res) => {
   const admin = req.admin!;
-  const snap = await snapshot(req.query["fresh"] === "1");
-  const user = snap.users.find((item) => item.uid === param(req, "uid"));
-  if (!user) return res.status(404).json({ error: "not_found", message: "No such user." });
-  const workspace = await peekWorkspace(user.uid, { ewbs: true, requests: true, syncKeys: ["business/profile"] });
+  let user!: UserRow;
+  let workspace: Awaited<ReturnType<typeof peekWorkspace>>;
+  let snap: { users: UserRow[]; ewbs: EwbRow[] };
+  if (await metricsReady()) {
+    // Only this account: its row is built from its own data.
+    const uid = param(req, "uid");
+    const [account, loaded, suspended] = await Promise.all([directory().get(uid).catch(() => null), peekWorkspace(uid, { ewbs: true, requests: true, syncKeys: ["business/profile"], syncNames: ["invoices"] }), suspendedAccounts()]);
+    if (!account && !loaded) return res.status(404).json({ error: "not_found", message: "No such user." });
+    const result = rowFor(uid, account ?? undefined, loaded ?? undefined, suspended);
+    user = result.row;
+    workspace = loaded;
+    snap = { users: [user], ewbs: result.ewbs };
+  } else {
+    const full = await snapshot(req.query["fresh"] === "1");
+    const found = full.users.find((item) => item.uid === param(req, "uid"));
+    if (!found) return res.status(404).json({ error: "not_found", message: "No such user." });
+    user = found;
+    workspace = await peekWorkspace(user.uid, { ewbs: true, requests: true, syncKeys: ["business/profile"] });
+    snap = full;
+  }
   const calls = can(admin, "api") ? (await queryLogs("api_calls", { from: new Date(Date.now() - 90 * 86_400_000).toISOString(), limit: 20_000 })).filter((call) => call["workspaceId"] === user.uid) : null;
   const users = userIndex(snap.users);
   // Document locks share the requests section; only real submissions are counted.
@@ -421,7 +481,15 @@ router.get("/users/:uid/invoices", allow("payments"), async (req, res) => {
   const workspace = await peekWorkspace(uid);
   if (!workspace) return res.status(404).json({ error: "not_found", message: "No such user." });
   const paid = Object.values(workspace.purchases).filter((purchase) => purchase.status === "paid");
-  const invoices = (await Promise.all(paid.map(async (purchase) => (await readDoc<BillingInvoice>("billing_invoices", purchase.id)) ?? issueBillingInvoice(uid, purchase.id, { email: false })))).filter((invoice): invoice is BillingInvoice => Boolean(invoice));
+  // Existing invoices are read together; missing ones are issued one at a time, oldest
+  // payment first, so they do not collide on the shared counter and keep date order.
+  const found = await Promise.all(paid.map((purchase) => readDoc<BillingInvoice>("billing_invoices", purchase.id)));
+  const invoices: BillingInvoice[] = found.filter((invoice): invoice is BillingInvoice => Boolean(invoice));
+  const missing = paid.filter((_, index) => !found[index]).sort((a, b) => (a.paidAt ?? a.createdAt).localeCompare(b.paidAt ?? b.createdAt));
+  for (const purchase of missing) {
+    const issued = await issueBillingInvoice(uid, purchase.id, { email: false });
+    if (issued) invoices.push(issued);
+  }
   invoices.sort((a, b) => b.paidAt.localeCompare(a.paidAt));
   return res.json({ invoices });
 });
@@ -436,6 +504,30 @@ router.get("/users/:uid/invoices/:id", allow("payments"), async (req, res) => {
   if (!invoice) return res.status(404).json({ error: "not_found", message: "No invoice for this payment." });
   await adminAudit(req, { action: "admin.invoice.view", target: uid, outcome: invoice.number });
   return res.json({ invoice, html: billingInvoiceHtml(invoice) });
+});
+
+/* ---------- Counters for the admin panel (one-time rebuild) ---------- */
+
+router.get("/metrics/status", allow("admins"), async (_req, res) => {
+  res.json({ ready: await metricsReady() });
+});
+
+/**
+ * Builds the daily counters and the user index from the stored data, one page of accounts
+ * per call: the panel calls it again with `next` until it is null. The first call sends
+ * `reset: true`. When the last page is done, the panel switches to the counters.
+ */
+router.post("/metrics/rebuild", allow("admins"), recentSignIn(), async (req, res) => {
+  const parsed = z.object({ after: z.string().max(200).optional(), reset: z.boolean().optional() }).safeParse(req.body ?? {});
+  if (!parsed.success) return res.status(400).json({ error: "bad_request", message: "Could not read the request." });
+  if (parsed.data.reset) await setMetricsReady(false, req.admin!.email);
+  const result = await rebuildPage({ after: parsed.data.after, reset: parsed.data.reset });
+  if (!result.next) {
+    await setMetricsReady(true, req.admin!.email);
+    invalidateSnapshot();
+    await adminAudit(req, { action: "admin.metrics.rebuild", target: "all", outcome: "done" });
+  }
+  return res.json(result);
 });
 
 /* ---------- Support chat ---------- */
@@ -453,23 +545,43 @@ router.get("/support", allow("support"), async (req, res) => {
   return res.json({ threads, counts: { open: all.filter((t) => t.status === "open").length, replied: all.filter((t) => t.status === "replied").length, closed: all.filter((t) => t.status === "closed").length, total: all.length } });
 });
 
+/** Who a new conversation is with (for a user who never wrote to support). */
+async function supportWho(uid: string): Promise<Who | null> {
+  const [user, workspace] = await Promise.all([directory().get(uid).catch(() => null), peekWorkspace(uid, { syncKeys: ["business/profile"] }).catch(() => null)]);
+  if (!user && !workspace) return null;
+  const business = workspace?.sync["business"]?.["profile"]?.data as { name?: string; gstin?: string } | undefined;
+  return { uid, email: user?.email ?? null, name: user?.name ?? null, businessName: business?.name ?? null, gstin: business?.gstin ?? null };
+}
+
+const threadView = (thread: SupportThread) => ({ ...threadSummary(thread), messages: thread.messages, sentToday: adminMessagesToday(thread), dailyLimit: ADMIN_MESSAGES_PER_DAY });
+
 router.get("/support/:uid", allow("support"), async (req, res) => {
-  const thread = await readThread(param(req, "uid"));
-  if (!thread) return res.status(404).json({ error: "not_found", message: "No support messages from this user." });
-  return res.json({ thread: { ...threadSummary(thread), messages: thread.messages } });
+  const uid = param(req, "uid");
+  const thread = await readThread(uid);
+  if (thread) return res.json({ thread: threadView(thread) });
+  // No chat yet: an empty one, so the team can write first.
+  const who = await supportWho(uid);
+  if (!who) return res.status(404).json({ error: "not_found", message: "No such user." });
+  const now = new Date().toISOString();
+  return res.json({ thread: threadView({ ...who, topic: "other", status: "replied", messages: [], createdAt: now, updatedAt: now, lastUserAt: now, unreadForUser: 0 }) });
 });
 
 router.post("/support/:uid/reply", allow("support"), sensitive, async (req, res) => {
   const parsed = z.object({ text: z.string().trim().min(1).max(4000) }).safeParse(req.body);
   if (!parsed.success) return res.status(400).json({ error: "bad_request", message: "Write a reply." });
   const uid = param(req, "uid");
-  const thread = await addAdminReply(uid, parsed.data.text, req.admin!.email);
-  if (!thread) return res.status(404).json({ error: "not_found", message: "No support messages from this user." });
+  // A first message to a user who never wrote opens the thread.
+  const existing = await readThread(uid);
+  const who = existing ? undefined : await supportWho(uid);
+  if (!existing && !who) return res.status(404).json({ error: "not_found", message: "No such user." });
+  const sent = await addAdminReply(uid, parsed.data.text, req.admin!.email, who ?? undefined);
+  if (!sent) return res.status(404).json({ error: "not_found", message: "No such user." });
+  if (!sent.ok) return res.status(429).json({ error: "daily_limit", message: `${ADMIN_MESSAGES_PER_DAY} messages already sent to this user today. You can write again tomorrow.` });
   // The user gets a notification; a tap opens the chat.
   await withWorkspace(uid, (workspace) => { noticeSupportReply(workspace, parsed.data.text); });
   await pushNotices(uid);
-  await adminAudit(req, { action: "admin.support.reply", target: uid, outcome: "sent" });
-  return res.json({ thread: { ...threadSummary(thread), messages: thread.messages } });
+  await adminAudit(req, { action: existing ? "admin.support.reply" : "admin.support.message", target: uid, outcome: "sent" });
+  return res.json({ thread: threadView(sent.thread) });
 });
 
 router.post("/support/:uid/status", allow("support"), async (req, res) => {
@@ -478,7 +590,7 @@ router.post("/support/:uid/status", allow("support"), async (req, res) => {
   const thread = await setThreadStatus(param(req, "uid"), parsed.data.status);
   if (!thread) return res.status(404).json({ error: "not_found", message: "No support messages from this user." });
   await adminAudit(req, { action: "admin.support.status", target: thread.uid, outcome: parsed.data.status });
-  return res.json({ thread: { ...threadSummary(thread), messages: thread.messages } });
+  return res.json({ thread: threadView(thread) });
 });
 
 /** Asks Razorpay for the link's real status and settles it if paid (credits once, like the webhook). */

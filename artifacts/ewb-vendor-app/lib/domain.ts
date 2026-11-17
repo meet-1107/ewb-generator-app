@@ -66,6 +66,8 @@ export type Invoice = {
   createdBy?: string;
   updatedBy?: string;
   sourceFileName?: string;
+  /** The user chose to start a new number series with this number (e.g. a new financial year). */
+  newSeriesNumber?: string;
   extraction?: { parserVersion: string; fields: Record<string, Confidence>; original: Record<string, string>; confirmed: boolean };
   ewbId?: string;
   ewbNumber?: string;
@@ -378,7 +380,7 @@ export function newInvoice(templateId = 'classic'): Invoice {
 /** Fills fields added in later schema versions so older saved drafts keep working. */
 export function migrateInvoice(raw: Partial<Invoice> & { id: string }): Invoice {
   const base = newInvoice(raw.templateId);
-  return { ...base, ...raw, lines: raw.lines?.length ? raw.lines : base.lines, revisionHistory: raw.revisionHistory ?? [], schemaVersion: 2 };
+  return { ...base, ...raw, lines: raw.lines?.length ? raw.lines : base.lines, revisionHistory: (raw.revisionHistory ?? []).slice(-3), schemaVersion: 2 };
 }
 
 export function parseRupees(value: string) {
@@ -728,6 +730,8 @@ export function invoiceSeriesProblem(invoice: Invoice, others: Invoice[], releas
   // A purchase keeps the number on the party's bill. An invoice imported from a PDF may keep
   // the number printed on it: only `imported` asks, to warn without blocking.
   if ((invoice.sourceFileName && !imported) || isPurchase(invoice)) return null;
+  // Started a new series on purpose (FY26-27/305 → FY27-28/001).
+  if (invoice.newSeriesNumber && invoice.newSeriesNumber === invoice.invoiceNumber) return null;
   const counted = others.filter((other) => other.id !== invoice.id && !isPurchase(other) && sameDocumentType(other, invoice.documentType) && !other.unsaved && !released.has(other.id) && other.invoiceNumber.trim() && sameSeller(other, invoice.sellerGstin));
   const latest = latestOfSeries(counted);
   if (!latest || !invoice.invoiceNumber.trim()) return null;

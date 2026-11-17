@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { appendFile, mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { EwbInput } from "./validation";
+import { bump, indexOf, takePending, type AccountCounts, type StatTotals, type UserIndex } from "./metrics";
 
 /**
  * Workspace-scoped persistence with two backends:
@@ -186,6 +187,10 @@ export type Workspace = {
   notices?: Notice[];
   /** Per GSTIN: the last login the portal refused (a keyed fingerprint, never the password). */
   refusedLogins?: Record<string, { fingerprint: string; at: string }>;
+  /** Counts for the admin panel (lib/metrics.ts). */
+  counts?: AccountCounts;
+  /** Business name and GSTIN, copied from the synced business profile for the user index. */
+  profile?: { businessName: string | null; gstin: string | null };
   /** FCM registration tokens of the user's devices, with when each was last seen. */
   pushTokens?: Record<string, { platform: string; updatedAt: string }>;
 };
@@ -360,15 +365,40 @@ function fileWorkspace<T>(id: string, fn: (workspace: Workspace) => T | Promise<
   const previous = queues.get(id) ?? Promise.resolve();
   const next = previous.catch(() => undefined).then(async () => {
     // fn works on a copy, so a throw leaves the workspace exactly as it was.
+    const isNew = !fileExists.has(id) && !(await pathExists(workspaceFile(id)));
     const stored = await loadFile(id);
     const workspace = structuredClone(stored);
+    const indexBefore = isNew ? null : JSON.stringify(indexOf(stored));
     const result = await fn(guard(workspace, spec));
     stampChangedEwbs(workspace.ewbs, (key) => (stored.ewbs[key] ? JSON.stringify(stored.ewbs[key]) : undefined), new Date().toISOString());
+    if (isNew) bump(workspace, "signups");
+    const stats = takePending(workspace);
     await writeJson(workspaceFile(id), workspace);
+    fileExists.add(id);
     cache.set(id, workspace);
+    const index = indexOf(workspace);
+    if (JSON.stringify(index) !== indexBefore) await writeJson(path.join(dataDir, "user_index", `${id}.json`), index);
+    for (const [docName, fields] of stats) await fileDoc<Partial<StatTotals>, null>("stats", docName, (current) => ({ next: addTotals(current ?? {}, fields), result: null }));
     return result;
   });
   queues.set(id, next);
+  return next;
+}
+
+const fileExists = new Set<string>();
+
+async function pathExists(file: string) {
+  try {
+    await readFile(file);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function addTotals(current: Partial<StatTotals>, fields: Partial<StatTotals>) {
+  const next = { ...current };
+  for (const [key, n] of Object.entries(fields) as [keyof StatTotals, number][]) next[key] = (next[key] ?? 0) + n;
   return next;
 }
 
@@ -480,13 +510,23 @@ async function firestoreWorkspace<T>(id: string, fn: (workspace: Workspace) => T
       }
     });
 
+    const indexBefore = coreBefore ? JSON.stringify(indexOf(workspace)) : null;
     const result = await fn(guard(workspace, spec));
     if (spec.ewbs !== undefined) stampChangedEwbs(workspace.ewbs, (key) => before.get(`ewbs/${docId(key)}`), new Date().toISOString());
+    // The first write of an account is its sign-up.
+    if (!coreBefore) bump(workspace, "signups");
+    const stats = takePending(workspace);
 
     const coreAfter = JSON.stringify(coreOf(workspace));
     if (coreAfter !== coreBefore) {
       // `balance` is duplicated as a plain field so it can be read in the Firebase console.
       tx.set(root, { data: coreAfter, balance: workspace.wallet.balance, updatedAt: sdk.FieldValue.serverTimestamp() });
+      // The Users page reads this small document, never the whole account.
+      const index = indexOf(workspace);
+      if (JSON.stringify(index) !== indexBefore) tx.set(db.collection("user_index").doc(id), index);
+      for (const [docName, fields] of stats) {
+        tx.set(db.collection("stats").doc(docName), Object.fromEntries(Object.entries(fields).map(([key, n]) => [key, sdk.FieldValue.increment(n as number)])), { merge: true });
+      }
     }
     for (const section of sections) {
       for (const { id: recordId, doc } of sectionEntries(workspace, section)) {
@@ -601,9 +641,13 @@ export async function appendLog(collection: LogCollection, record: LogRecord): P
     await appendFile(file, `${JSON.stringify(record)}\n`);
     return;
   }
-  const { db } = await firestore();
-  await db.collection(collection).add(record);
+  const { db, sdk } = await firestore();
+  // `expireAt`: a Firestore TTL policy on this field deletes old log rows by itself (no read, no cost to our code).
+  await db.collection(collection).add({ ...record, expireAt: sdk.Timestamp.fromMillis(Date.parse(record.at) + LOG_RETENTION_DAYS[collection] * 86_400_000) });
 }
+
+/** How long each log is kept before the TTL policy removes it. */
+const LOG_RETENTION_DAYS: Record<LogCollection, number> = { api_calls: 120, app_opens: 120, payment_steps: 180, payment_events: 400, admin_audit: 730 };
 
 /** Log records with `at` in [from, to], newest first, at most `limit`. */
 export async function queryLogs(collection: LogCollection, { from, to, limit }: { from?: string; to?: string; limit: number }): Promise<LogRecord[]> {
@@ -623,4 +667,121 @@ export async function queryLogs(collection: LogCollection, { from, to, limit }: 
   if (to) query = query.where("at", "<=", to);
   const snap = await query.orderBy("at", "desc").limit(limit).get();
   return snap.docs.map((doc) => doc.data() as LogRecord);
+}
+
+
+/* ---------- Admin counters and user index (lib/metrics.ts) ---------- */
+
+/** Counter shard documents by id (missing ones are skipped). */
+export async function readStats(ids: string[]): Promise<Partial<StatTotals>[]> {
+  if (!ids.length) return [];
+  if (backend === "file") {
+    const docs = await Promise.all(ids.map((id) => readFile(path.join(dataDir, "stats", `${id}.json`), "utf8").then((text) => JSON.parse(text) as Partial<StatTotals>).catch(() => null)));
+    return docs.filter((doc): doc is Partial<StatTotals> => Boolean(doc));
+  }
+  const { db } = await firestore();
+  const snaps = [];
+  // getAll in batches of 300 (a month of days × shards is 300 documents).
+  for (let start = 0; start < ids.length; start += 300) snaps.push(...(await db.getAll(...ids.slice(start, start + 300).map((id) => db.collection("stats").doc(id)))));
+  return snaps.filter((snap) => snap.exists).map((snap) => snap.data() as Partial<StatTotals>);
+}
+
+/** Replaces counter documents (the one-time rebuild). */
+export async function writeStats(docs: Map<string, Partial<StatTotals>>, { merge = false } = {}) {
+  if (backend === "file") {
+    for (const [id, fields] of docs) await fileDoc<Partial<StatTotals>, null>("stats", id, (current) => ({ next: merge ? addTotals(current ?? {}, fields) : fields, result: null }));
+    return;
+  }
+  const { db, sdk } = await firestore();
+  const entries = [...docs.entries()];
+  for (let start = 0; start < entries.length; start += 400) {
+    const batch = db.batch();
+    for (const [id, fields] of entries.slice(start, start + 400)) {
+      const ref = db.collection("stats").doc(id);
+      if (merge) batch.set(ref, Object.fromEntries(Object.entries(fields).map(([key, n]) => [key, sdk.FieldValue.increment(n as number)])), { merge: true });
+      else batch.set(ref, fields);
+    }
+    await batch.commit();
+  }
+}
+
+/** Deletes every counter document (before a rebuild). */
+export async function clearStats() {
+  if (backend === "file") {
+    await rm(path.join(dataDir, "stats"), { recursive: true, force: true });
+    return;
+  }
+  const { db } = await firestore();
+  for (;;) {
+    const page = await db.collection("stats").limit(400).get();
+    if (page.empty) return;
+    const batch = db.batch();
+    for (const snap of page.docs) batch.delete(snap.ref);
+    await batch.commit();
+  }
+}
+
+export type IndexQuery = {
+  /** One filter at most (Firestore orders by the filtered field, so no composite index is needed). */
+  where?: { field: keyof UserIndex; op: "==" | ">" | "<" | ">=" | "<="; value: string | number | boolean | null };
+  orderBy: keyof UserIndex;
+  direction: "asc" | "desc";
+  limit: number;
+  /** The uid of the last row of the previous page. */
+  after?: string;
+};
+
+const compare = (a: unknown, b: unknown) => (a === b ? 0 : a === null || a === undefined ? -1 : b === null || b === undefined ? 1 : a < b ? -1 : 1);
+const matches = (value: unknown, op: string, target: unknown) => (op === "==" ? value === target : op === ">" ? compare(value, target) > 0 : op === "<" ? compare(value, target) < 0 : op === ">=" ? compare(value, target) >= 0 : compare(value, target) <= 0);
+
+/** One page of the user index, and how many accounts match the filter. */
+export async function queryUserIndex(query: IndexQuery): Promise<{ rows: UserIndex[]; total: number; next: string | null }> {
+  const orderBy = query.where && query.where.op !== "==" ? query.where.field : query.orderBy;
+  if (backend === "file") {
+    let all: UserIndex[] = [];
+    try {
+      const dir = path.join(dataDir, "user_index");
+      all = await Promise.all((await readdir(dir)).filter((name) => name.endsWith(".json")).map(async (name) => JSON.parse(await readFile(path.join(dir, name), "utf8")) as UserIndex));
+    } catch { /* none yet */ }
+    const filtered = query.where ? all.filter((row) => matches(row[query.where!.field], query.where!.op, query.where!.value)) : all;
+    const sign = query.direction === "desc" ? -1 : 1;
+    filtered.sort((a, b) => sign * (compare(a[orderBy], b[orderBy]) || compare(a.uid, b.uid)));
+    const start = query.after ? filtered.findIndex((row) => row.uid === query.after) + 1 : 0;
+    const rows = filtered.slice(start, start + query.limit);
+    return { rows, total: filtered.length, next: start + rows.length < filtered.length ? rows.at(-1)?.uid ?? null : null };
+  }
+  const { db } = await firestore();
+  let base: import("firebase-admin/firestore").Query = db.collection("user_index");
+  if (query.where) base = base.where(query.where.field, query.where.op, query.where.value);
+  const total = (await base.count().get()).data().count;
+  if (!query.limit) return { rows: [], total, next: null };
+  let page = base.orderBy(orderBy, query.direction);
+  if (query.after) {
+    const cursor = await db.collection("user_index").doc(query.after).get();
+    if (cursor.exists) page = page.startAfter(cursor);
+  }
+  const snaps = await page.limit(query.limit + 1).get();
+  const rows = snaps.docs.slice(0, query.limit).map((snap) => snap.data() as UserIndex);
+  return { rows, total, next: snaps.docs.length > query.limit ? rows.at(-1)?.uid ?? null : null };
+}
+
+/** Writes an account's index document directly (the one-time rebuild). */
+export async function writeUserIndex(index: UserIndex) {
+  if (backend === "file") return writeJson(path.join(dataDir, "user_index", `${index.uid}.json`), index);
+  const { db } = await firestore();
+  await db.collection("user_index").doc(index.uid).set(index);
+}
+
+/** Workspace ids in pages (the one-time rebuild). */
+export async function workspaceIdPage(after: string | undefined, limit: number): Promise<string[]> {
+  if (backend === "firestore") {
+    // Only this page of accounts is read (no listing of every account per page).
+    const { db, sdk } = await firestore();
+    let query = db.collection("workspaces").orderBy(sdk.FieldPath.documentId()).select().limit(limit);
+    if (after) query = query.startAfter(after);
+    return (await query.get()).docs.map((snap) => snap.id);
+  }
+  const ids = (await listWorkspaceIds()).sort();
+  const start = after ? ids.findIndex((id) => id > after) : 0;
+  return start < 0 ? [] : ids.slice(start, start + limit);
 }

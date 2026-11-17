@@ -10,6 +10,7 @@ import { EWB_PORTAL_URL, EwbLoginSteps, useTutorialVideo } from '@/components/Ew
 import { useColors } from '@/hooks/useColors';
 import { api, ApiError, type EwbCredential } from '@/lib/api';
 import { formatDate, gstinProblem } from '@/lib/domain';
+import { saveEwbLogin } from '@/lib/ewb-credential';
 import { useAppStore } from '@/state/app-store';
 
 /**
@@ -81,20 +82,8 @@ export default function EwbLoginScreen() {
     if (!username.trim() || !password) return dialog.toast('Enter the API username and password.', 'danger');
     setBusy(true);
     setSavedOk(false);
-    const startedAt = new Date().toISOString();
     try {
-      let result: Awaited<ReturnType<typeof api.saveEwbCredential>>;
-      try {
-        result = await api.saveEwbCredential(gstin, username.trim(), password);
-      } catch (error) {
-        // A slow portal can outlast the wait even though the server saved the login:
-        // look before telling the user it failed.
-        if (!(error instanceof ApiError) || (error.code !== 'timeout' && error.code !== 'offline')) throw error;
-        const list = await api.ewbCredentials().catch(() => null);
-        const stored = list?.credentials.find((item) => item.gstin === gstin && item.username === username.trim() && item.updatedAt >= startedAt);
-        if (!stored) throw error;
-        result = { credential: stored, checked: false, message: 'Login saved. It will be checked with the portal on your first e-way bill.' };
-      }
+      const result = await saveEwbLogin(gstin, username.trim(), password);
       setSavedOk(true);
       await new Promise((resolve) => setTimeout(resolve, 900));
       if (result.welcomeCredits) {
