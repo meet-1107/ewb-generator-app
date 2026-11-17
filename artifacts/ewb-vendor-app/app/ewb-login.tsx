@@ -5,6 +5,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Button, Card, Divider, Field, ListRow, Notice, ScreenHeader, Sheet, StatusPill, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
+import { CredentialProgress } from '@/components/CredentialProgress';
 import { EWB_PORTAL_URL, EwbLoginSteps, useTutorialVideo } from '@/components/EwbLoginGuide';
 import { useColors } from '@/hooks/useColors';
 import { api, ApiError, type EwbCredential } from '@/lib/api';
@@ -31,6 +32,7 @@ export default function EwbLoginScreen() {
   const [password, setPassword] = useState('');
   const [newGstin, setNewGstin] = useState('');
   const [busy, setBusy] = useState(false);
+  const [savedOk, setSavedOk] = useState(false);
   const video = useTutorialVideo();
 
   const gstins = useMemo(() => {
@@ -78,8 +80,23 @@ export default function EwbLoginScreen() {
     if (gstinProblem(gstin)) return dialog.toast(gstinProblem(gstin)!, 'danger');
     if (!username.trim() || !password) return dialog.toast('Enter the API username and password.', 'danger');
     setBusy(true);
+    setSavedOk(false);
+    const startedAt = new Date().toISOString();
     try {
-      const result = await api.saveEwbCredential(gstin, username.trim(), password);
+      let result: Awaited<ReturnType<typeof api.saveEwbCredential>>;
+      try {
+        result = await api.saveEwbCredential(gstin, username.trim(), password);
+      } catch (error) {
+        // A slow portal can outlast the wait even though the server saved the login:
+        // look before telling the user it failed.
+        if (!(error instanceof ApiError) || (error.code !== 'timeout' && error.code !== 'offline')) throw error;
+        const list = await api.ewbCredentials().catch(() => null);
+        const stored = list?.credentials.find((item) => item.gstin === gstin && item.username === username.trim() && item.updatedAt >= startedAt);
+        if (!stored) throw error;
+        result = { credential: stored, checked: false, message: 'Login saved. It will be checked with the portal on your first e-way bill.' };
+      }
+      setSavedOk(true);
+      await new Promise((resolve) => setTimeout(resolve, 900));
       if (result.welcomeCredits) {
         if (result.balance !== undefined) store.setWalletBalance(result.balance);
         void store.refreshWallet();
@@ -125,7 +142,8 @@ export default function EwbLoginScreen() {
           <TextBlock size={12} color={colors.mutedForeground}>One-time setup for each GSTIN. The API login is different from your normal portal login.</TextBlock>
           <EwbLoginSteps />
           <View style={{ gap: 10 }}>
-            <Button title="Watch setup video" icon="play-circle" onPress={() => void video.open()} testID="ewb-login-video" />
+            <Button title="Step-by-step guide with pictures" icon="book-open" onPress={() => router.push('/ewb-setup')} testID="ewb-login-guide" />
+            <Button title="Watch setup video" icon="play-circle" variant="outline" onPress={() => void video.open()} testID="ewb-login-video" />
             <Button title="Open e-way bill portal" icon="external-link" variant="outline" onPress={() => void Linking.openURL(EWB_PORTAL_URL)} />
           </View>
         </Card>
@@ -152,18 +170,18 @@ export default function EwbLoginScreen() {
 
       <Sheet
         visible={Boolean(editing)}
-        onClose={() => setEditing(null)}
-        title={editing === 'new' ? 'Add portal login' : `Login for ${editing}`}
-        footer={<View style={{ flexDirection: 'row', gap: 10 }}>
+        onClose={() => { if (!busy) setEditing(null); }}
+        title={busy ? 'Saving portal login' : editing === 'new' ? 'Add portal login' : `Login for ${editing}`}
+        footer={busy ? undefined : <View style={{ flexDirection: 'row', gap: 10 }}>
           {editing && editing !== 'new' && saved.some((item) => item.gstin === editing) ? <Button title="Remove" variant="danger" onPress={() => void remove(editing)} style={{ flex: 1 }} /> : null}
           <Button title="Save" onPress={() => void save()} loading={busy} style={{ flex: 2 }} />
         </View>}
       >
-        <View style={{ paddingHorizontal: 18, gap: 12 }}>
+        {busy ? <CredentialProgress done={savedOk} /> : <View style={{ paddingHorizontal: 18, gap: 12 }}>
           {editing === 'new' ? <Field label="GSTIN" required value={newGstin} onChangeText={(value) => setNewGstin(value.toUpperCase().replace(/\s/g, ''))} autoCapitalize="characters" maxLength={15} /> : null}
           <Field label="API username" required value={username} onChangeText={setUsername} autoCapitalize="none" />
           <Field label="API password" required value={password} onChangeText={setPassword} secureTextEntry hint="Stored encrypted on the server; never shown again." />
-        </View>
+        </View>}
       </Sheet>
     </View>
   );

@@ -303,6 +303,7 @@
     { id: "overview", label: "Overview", permission: "overview" },
     { id: "activity", label: "Active users", permission: "users" },
     { id: "users", label: "Users & businesses", permission: "users" },
+    { id: "support", label: "Support", permission: "support" },
     { id: "ewbs", label: "E-way bills", permission: "ewbs" },
     { id: "api", label: "API usage & quota", permission: "api" },
     { group: "Money" },
@@ -397,6 +398,29 @@
             { label: "Last step buying credits", wrap: true, render: (r) => (r.lastPaymentStep ? h("div", {}, stepBadge(r.lastPaymentStep), h("div", { class: "note", style: "margin:0" }, when(r.lastPaymentStepAt))) : "—") },
           ], a.users, { onRow: (r) => go(`users/${r.uid}`), empty: "No one opened the app in this period." })),
       );
+    },
+
+    async support(view, params) {
+      if (params[0]) return supportThread(view, params[0]);
+      const state = { status: "open", ...(pages.support.state || {}) };
+      pages.support.state = state;
+      view.append(head("Support", "Messages users send from the app's support chat. The assistant answers at once; reply here and the user gets a notification."));
+      const body = h("div", {}, loading());
+      view.append(body);
+      const d = await api(`/support${state.status ? `?status=${state.status}` : ""}`);
+      const seg = h("div", { class: "seg", role: "group", "aria-label": "Status" });
+      for (const [value, label] of [["open", `Waiting for reply (${d.counts.open})`], ["replied", `Replied (${d.counts.replied})`], ["closed", `Closed (${d.counts.closed})`], ["", `All (${d.counts.total})`]]) {
+        seg.append(h("button", { type: "button", "aria-pressed": state.status === value ? "true" : "false", onclick: () => { state.status = value; render(); } }, label));
+      }
+      put(body, h("div", { class: "filters" }, seg),
+        table([
+          { label: "User", wrap: true, render: (r) => h("div", {}, h("div", { style: "font-weight:600" }, r.name || r.businessName || "—"), h("div", { class: "note", style: "margin:0" }, r.email || r.uid)) },
+          { label: "Business", wrap: true, render: (r) => h("div", {}, r.businessName || "—", r.gstin ? h("div", { class: "note mono", style: "margin:0" }, r.gstin) : null) },
+          { label: "Topic", render: (r) => r.topicLabel },
+          { label: "Last message", wrap: true, render: (r) => (r.lastMessage.length > 120 ? `${r.lastMessage.slice(0, 117)}…` : r.lastMessage) },
+          { label: "Received", render: (r) => when(r.lastUserAt) },
+          { label: "Status", render: (r) => badge(r.status === "open" ? "pending" : r.status === "replied" ? "active" : "cancelled", r.status === "open" ? "waiting" : r.status) },
+        ], d.threads, { onRow: (r) => go(`support/${r.uid}`), empty: state.status === "open" ? "No one is waiting for a reply." : "No messages here." }));
     },
 
     async users(view, params) {
@@ -734,6 +758,21 @@
       d.wallet ? ["Credits", () => h("div", {}, h("div", { class: "grid kpis" }, tile("Balance", num(d.wallet.balance)), tile("Bought", num(u.purchasedCredits)), tile("Welcome", num(u.grantedCredits)), tile("Adjusted", num(u.adjustedCredits)), tile("Consumed", num(u.consumedCredits)), tile("Held now", num(u.heldCredits))),
         h("div", { class: "section" }, table([{ label: "Time", render: (r) => when(r.at) }, { label: "Type", key: "kind" }, { label: "Credits", num: true, render: (r) => (r.credits > 0 ? `+${r.credits}` : r.credits) }, { label: "State", render: (r) => badge(r.status) }, { label: "Bill / purchase", mono: true, render: (r) => r.ewbNumber || r.targetId || "" }, { label: "Note", wrap: true, render: (r) => [r.note, r.actor ? ` · by ${r.actor}` : ""].join("") }, { label: "Entry ID", mono: true, key: "id" }], d.wallet.ledger, { empty: "No credit movements." })))] : null,
       d.purchases ? ["Payments", () => table([{ label: "Link / order", mono: true, key: "id" }, { label: "Payment ID", mono: true, render: (r) => r.paymentId || "—" }, { label: "Credits", num: true, key: "credits" }, { label: "Amount", num: true, render: (r) => inr(r.amountPaise) }, { label: "Created", render: (r) => when(r.createdAt) }, { label: "Paid", render: (r) => when(r.paidAt) }, { label: "Status", render: (r) => badge(r.status) }, { label: "Gateway", key: "provider" }], d.purchases, { onRow: (r) => go(`payments/${uid}/${r.id}`), empty: "No payments." })] : null,
+      d.purchases ? ["Invoices", () => {
+        const box = h("div", {}, loading());
+        api(`/users/${encodeURIComponent(uid)}/invoices`).then((result) => put(box, table([
+          { label: "Invoice no.", mono: true, key: "number" },
+          { label: "Paid", render: (r) => when(r.paidAt) },
+          { label: "Credits", num: true, render: (r) => num(r.credits) },
+          { label: "Amount", num: true, render: (r) => inr(r.amountPaise) },
+          { label: "Payment ID", mono: true, render: (r) => r.paymentId || (r.provider === "sandbox" ? "test" : "—") },
+          { label: "Emailed", render: (r) => (r.emailedAt ? `${r.emailedTo || ""} · ${day(r.emailedAt)}` : "—") },
+          { label: "", render: (r) => h("div", { class: "filters", style: "margin:0;gap:6px;flex-wrap:nowrap" },
+            h("button", { class: "btn small", onclick: (e) => { e.stopPropagation(); openInvoice(uid, r.purchaseId, false); } }, "View"),
+            h("button", { class: "btn small primary", onclick: (e) => { e.stopPropagation(); openInvoice(uid, r.purchaseId, true); } }, "Download PDF")) },
+        ], result.invoices, { empty: "No paid purchases, so no invoices yet." }))).catch((error) => put(box, errorBox(error)));
+        return h("div", {}, h("p", { class: "note", style: "margin-top:0" }, "An invoice for every credit purchase this user paid for. Download PDF opens the print dialog: choose “Save as PDF”."), box);
+      }] : null,
       ["E-way bills", () => table([{ label: "E-way bill", mono: true, key: "ewbNumber" }, { label: "Invoice", render: (r) => r.invoiceNumber }, { label: "Generated", render: (r) => when(r.generatedAt) }, { label: "Value", num: true, render: (r) => inr(r.totalPaise) }, { label: "Credits", num: true, key: "creditsCharged" }, { label: "Status", render: (r) => badge(r.status) }], d.ewbs, { onRow: (r) => go(`ewbs/${uid}/${r.id}`), empty: "No e-way bills." })],
       d.audit ? ["Audit", () => h("div", {}, h("div", { class: "card" }, h("h2", {}, "Admin actions on this account"), auditTable(d.audit.admin)), h("div", { class: "card section" }, h("h2", {}, "Account events"), table([{ label: "Time", render: (r) => when(r.at) }, { label: "Action", mono: true, key: "action" }, { label: "Target", mono: true, key: "targetId" }, { label: "Outcome", key: "outcome" }], d.audit.workspace, { empty: "No events." })))] : null,
     ].filter(Boolean);
@@ -763,6 +802,57 @@
     }
   }
 
+  async function supportThread(view, uid) {
+    view.append(h("p", {}, h("a", { href: "#/support" }, "← All messages")));
+    const body = h("div", {}, loading());
+    view.append(body);
+    let t = (await api(`/support/${encodeURIComponent(uid)}`)).thread;
+    const draw = () => {
+      const log = h("div", { class: "chat" }, t.messages.map((m) => h("div", { class: `bubble ${m.from}` },
+        h("div", { class: "who" }, m.from === "user" ? (t.name || t.email || "User") : m.from === "bot" ? "Assistant (automatic)" : `Support · ${m.adminEmail || ""}`),
+        h("div", { class: "text" }, m.text), h("div", { class: "at" }, when(m.at)))));
+      const input = h("textarea", { class: "input", rows: 4, maxlength: 4000, placeholder: "Write your reply. The user gets a notification and sees it in the chat.", "aria-label": "Reply" });
+      const sendBtn = h("button", { class: "btn primary", onclick: async () => {
+        const text = input.value.trim();
+        if (!text) return toast("Write a reply first.");
+        sendBtn.disabled = true;
+        try { t = (await api(`/support/${encodeURIComponent(uid)}/reply`, { body: { text } })).thread; toast("Reply sent. The user was notified."); draw(); } catch (error) { toast(error.message); sendBtn.disabled = false; }
+      } }, "Send reply");
+      const statusBtn = t.status === "closed"
+        ? h("button", { class: "btn", onclick: () => setStatus("open") }, "Reopen")
+        : h("button", { class: "btn", onclick: () => setStatus("closed") }, "Mark as resolved");
+      put(body,
+        h("div", { class: "page-head" }, h("div", {}, h("h1", {}, t.name || t.businessName || t.email || uid), h("p", {}, [t.email, t.businessName, t.gstin, t.topicLabel].filter(Boolean).join(" · "))),
+          h("div", { class: "filters", style: "margin:0" }, badge(t.status === "open" ? "pending" : t.status === "replied" ? "active" : "cancelled", t.status === "open" ? "waiting for reply" : t.status), statusBtn, canDo("users") ? h("a", { class: "btn", href: `#/users/${encodeURIComponent(uid)}` }, "Open user") : null)),
+        h("div", { class: "card" }, log),
+        h("div", { class: "card section" }, h("h2", {}, "Reply"), input, h("div", { class: "filters", style: "margin:10px 0 0" }, sendBtn)));
+      log.scrollTop = log.scrollHeight;
+    };
+    async function setStatus(status) {
+      try { t = (await api(`/support/${encodeURIComponent(uid)}/status`, { body: { status } })).thread; toast(status === "closed" ? "Marked as resolved" : "Reopened"); draw(); } catch (error) { toast(error.message); }
+    }
+    draw();
+  }
+
+  /** Opens a billing invoice in a new tab; with `print`, the print dialog opens so it can be saved as PDF. */
+  async function openInvoice(uid, id, print) {
+    const win = window.open("", "_blank");
+    if (!win) return toast("Allow pop-ups for this site to open the invoice.");
+    win.document.write("<p style='font-family:sans-serif;padding:24px'>Loading invoice…</p>");
+    try {
+      const d = await api(`/users/${encodeURIComponent(uid)}/invoices/${encodeURIComponent(id)}`);
+      win.document.open();
+      win.document.write(d.html);
+      win.document.title = `Invoice ${d.invoice.number}`;
+      win.document.close();
+      // Images (the logo) get a moment to load before the print dialog opens.
+      if (print) setTimeout(() => { win.focus(); win.print(); }, 700);
+    } catch (error) {
+      win.close();
+      toast(error.message);
+    }
+  }
+
   async function ewbDetail(view, uid, id) {
     view.append(h("p", {}, h("a", { href: "#/ewbs" }, "← All e-way bills")));
     const d = await api(`/ewbs/${encodeURIComponent(uid)}/${encodeURIComponent(id)}`);
@@ -789,7 +879,7 @@
       h("div", { class: `notice ${consistent ? "" : "bad"}` }, consistent ? (p.status === "paid" ? `Reconciled: paid, and ${num(credited)} credits were added once.` : "Not paid, and no credits were added.") : `Mismatch: status ${p.status}, ${num(credited)} credits added for a ${num(p.credits)}-credit purchase.`),
       h("div", { class: "grid two" },
         h("div", { class: "card" }, h("h2", {}, "Order"), h("dl", { class: "kv" }, h("dt", {}, "Customer"), h("dd", {}, h("a", { href: `#/users/${encodeURIComponent(uid)}` }, uid)), h("dt", {}, "Gateway"), h("dd", {}, p.provider), h("dt", {}, "Payment ID"), h("dd", { class: "mono" }, p.paymentId || "—"),
-          h("dt", {}, "Amount"), h("dd", {}, `${inr(p.amountPaise)} INR (gross; fees and GST not recorded)`), h("dt", {}, "Created"), h("dd", {}, when(p.createdAt)), h("dt", {}, "Paid"), h("dd", {}, when(p.paidAt)), h("dt", {}, "Receipt"), h("dd", {}, "Not issued by the app"), h("dt", {}, "Refunds"), h("dd", {}, "Not tracked by the app"))),
+          h("dt", {}, "Amount"), h("dd", {}, `${inr(p.amountPaise)} INR (gross; fees and GST not recorded)`), h("dt", {}, "Created"), h("dd", {}, when(p.createdAt)), h("dt", {}, "Paid"), h("dd", {}, when(p.paidAt)), h("dt", {}, "Invoice"), h("dd", {}, p.status === "paid" ? h("span", { class: "filters", style: "margin:0;gap:6px" }, p.invoiceNumber ? h("span", { class: "mono" }, p.invoiceNumber) : null, h("button", { class: "btn small", onclick: () => openInvoice(uid, p.id, false) }, "View"), h("button", { class: "btn small primary", onclick: () => openInvoice(uid, p.id, true) }, "Download PDF")) : "Issued once paid"), h("dt", {}, "Refunds"), h("dd", {}, "Not tracked by the app"))),
         h("div", { class: "card" }, h("h2", {}, "Credits added"), table([{ label: "Time", render: (r) => when(r.at) }, { label: "Credits", num: true, key: "credits" }, { label: "Entry", mono: true, key: "id" }], d.credits, { empty: "None." }))),
       h("div", { class: "card section" }, h("h2", {}, "In the app"), table([{ label: "Time", render: (r) => when(r.at) }, { label: "Step", render: (r) => stepBadge(r.step) }, { label: "Credits", num: true, render: (r) => num(r.credits) }, { label: "Note", wrap: true, render: (r) => r.note || "" }, { label: "App", render: (r) => r.appVersion || "—" }], d.appSteps || [], { empty: "No steps reported (app before 1.3.11, or a payment made elsewhere)." })),
       h("div", { class: "card section" }, h("h2", {}, "Webhook deliveries"), table([{ label: "Received", render: (r) => when(r.at) }, { label: "Event", key: "event" }, { label: "Amount paid", num: true, render: (r) => inr(r.amountPaid) }, { label: "Credited", render: (r) => (r.credited ? "yes" : "no (already settled or short)") }], d.events, { empty: "No webhook received for this link." })));

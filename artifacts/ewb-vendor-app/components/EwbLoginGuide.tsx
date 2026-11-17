@@ -68,7 +68,8 @@ export function EwbLoginGuide({ visible, gstin, onClose }: { visible: boolean; g
       subtitle={gstin ? `E-way bill portal API login for ${gstin}` : 'E-way bill portal API login'}
       footer={
         <View style={{ gap: 10 }}>
-          <Button title="I have it — enter API login" icon="key" onPress={addLogin} testID="guide-add-login" />
+          <Button title="Show me step by step" icon="book-open" onPress={() => { onClose(); router.push('/ewb-setup'); }} testID="guide-steps" />
+          <Button title="I have it — enter API login" icon="key" variant="outline" onPress={addLogin} testID="guide-add-login" />
           <Button title="Open e-way bill portal" icon="external-link" variant="outline" onPress={() => void Linking.openURL(EWB_PORTAL_URL)} testID="guide-open-portal" />
         </View>
       }

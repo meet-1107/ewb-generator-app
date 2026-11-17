@@ -9,12 +9,14 @@ import { gstinApiConfigured, gstinApiTestMode } from "../lib/gstinapi";
 import { creditPacks, creditPricePaise, fetchPaymentLink, razorpayConfigured } from "../lib/payments";
 import { billingMode } from "../lib/plans";
 import { rateLimit } from "../lib/rate-limit";
-import { peekWorkspace, queryLogs, withWorkspace } from "../lib/store";
+import { peekWorkspace, queryLogs, readDoc, withWorkspace } from "../lib/store";
+import { addAdminReply, listThreads, readThread, setThreadStatus, TOPIC_LABELS, type SupportThread } from "../lib/support";
 import { setSuspended } from "../lib/suspensions";
 import { adjustCredits, creditCosts, walletSummary } from "../lib/wallet";
 import { ewbProvider, ewbProviderSetting } from "../providers/ewb-provider";
 import { settlePurchase } from "./wallet";
-import { issueBillingInvoice } from "../lib/billing";
+import { noticeCreditsChanged, noticeSupportReply, pushNotices } from "../lib/notify";
+import { billingInvoiceHtml, issueBillingInvoice, type BillingInvoice } from "../lib/billing";
 import { appVersionSetting, PLAY_STORE_URL, setAppVersionSetting } from "../lib/app-version";
 
 /**
@@ -261,7 +263,10 @@ router.post("/users/:uid/credits", allow("credits.adjust"), recentSignIn(), sens
   const result = await withWorkspace(uid, (workspace) => {
     const before = workspace.wallet.balance;
     const outcome = adjustCredits(workspace, { ...parsed.data, actor: `${admin.email} (${admin.uid})` });
-    if (outcome.ok && !outcome.replay) workspace.audit.push({ at: new Date().toISOString(), actor: `admin:${admin.uid}`, action: "wallet.adjust", targetId: outcome.entry.id, outcome: String(parsed.data.credits) });
+    if (outcome.ok && !outcome.replay) {
+      workspace.audit.push({ at: new Date().toISOString(), actor: `admin:${admin.uid}`, action: "wallet.adjust", targetId: outcome.entry.id, outcome: String(parsed.data.credits) });
+      noticeCreditsChanged(workspace, parsed.data.credits, parsed.data.credits > 0 ? "Added by E-Way Easy support" : "Adjusted by E-Way Easy support");
+    }
     return { ...outcome, before };
   });
   if (!result.ok) {
@@ -269,6 +274,7 @@ router.post("/users/:uid/credits", allow("credits.adjust"), recentSignIn(), sens
     return res.status(409).json({ error: "negative_balance", message: `This would take the balance below zero (it is ${result.balance}).` });
   }
   if (!result.replay) {
+    await pushNotices(uid);
     await adminAudit(req, { action: "admin.credits.adjust", target: uid, outcome: "ok", reason: parsed.data.reason, before: { balance: result.before }, after: { balance: result.balance, entryId: result.entry.id, credits: parsed.data.credits } });
     invalidateSnapshot();
   }
@@ -407,6 +413,74 @@ router.get("/payments/:uid/:id", allow("payments"), async (req, res) => {
   });
 });
 
+/* ---------- Billing invoices (for credit purchases) ---------- */
+
+/** A user's billing invoices, newest first. Paid purchases without one get it now (without emailing). */
+router.get("/users/:uid/invoices", allow("payments"), async (req, res) => {
+  const uid = param(req, "uid");
+  const workspace = await peekWorkspace(uid);
+  if (!workspace) return res.status(404).json({ error: "not_found", message: "No such user." });
+  const paid = Object.values(workspace.purchases).filter((purchase) => purchase.status === "paid");
+  const invoices = (await Promise.all(paid.map(async (purchase) => (await readDoc<BillingInvoice>("billing_invoices", purchase.id)) ?? issueBillingInvoice(uid, purchase.id, { email: false })))).filter((invoice): invoice is BillingInvoice => Boolean(invoice));
+  invoices.sort((a, b) => b.paidAt.localeCompare(a.paidAt));
+  return res.json({ invoices });
+});
+
+/** One invoice and its printable page (the panel opens it to view, print or save as PDF). */
+router.get("/users/:uid/invoices/:id", allow("payments"), async (req, res) => {
+  const uid = param(req, "uid");
+  const workspace = await peekWorkspace(uid);
+  const purchase = workspace?.purchases[param(req, "id")];
+  if (!purchase || purchase.status !== "paid") return res.status(404).json({ error: "not_found", message: "No invoice for this payment." });
+  const invoice = (await readDoc<BillingInvoice>("billing_invoices", purchase.id)) ?? (await issueBillingInvoice(uid, purchase.id, { email: false }));
+  if (!invoice) return res.status(404).json({ error: "not_found", message: "No invoice for this payment." });
+  await adminAudit(req, { action: "admin.invoice.view", target: uid, outcome: invoice.number });
+  return res.json({ invoice, html: billingInvoiceHtml(invoice) });
+});
+
+/* ---------- Support chat ---------- */
+
+const threadSummary = (thread: SupportThread) => {
+  const last = thread.messages[thread.messages.length - 1];
+  const lastUser = [...thread.messages].reverse().find((item) => item.from === "user");
+  return { uid: thread.uid, email: thread.email, name: thread.name, businessName: thread.businessName, gstin: thread.gstin, topic: thread.topic, topicLabel: TOPIC_LABELS[thread.topic], status: thread.status, updatedAt: thread.updatedAt, lastUserAt: thread.lastUserAt, lastMessage: lastUser?.text ?? last?.text ?? "", messages: thread.messages.length };
+};
+
+router.get("/support", allow("support"), async (req, res) => {
+  const status = text(req, "status");
+  const all = (await listThreads()).sort((a, b) => b.lastUserAt.localeCompare(a.lastUserAt));
+  const threads = all.filter((thread) => !status || thread.status === status).map(threadSummary);
+  return res.json({ threads, counts: { open: all.filter((t) => t.status === "open").length, replied: all.filter((t) => t.status === "replied").length, closed: all.filter((t) => t.status === "closed").length, total: all.length } });
+});
+
+router.get("/support/:uid", allow("support"), async (req, res) => {
+  const thread = await readThread(param(req, "uid"));
+  if (!thread) return res.status(404).json({ error: "not_found", message: "No support messages from this user." });
+  return res.json({ thread: { ...threadSummary(thread), messages: thread.messages } });
+});
+
+router.post("/support/:uid/reply", allow("support"), sensitive, async (req, res) => {
+  const parsed = z.object({ text: z.string().trim().min(1).max(4000) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "bad_request", message: "Write a reply." });
+  const uid = param(req, "uid");
+  const thread = await addAdminReply(uid, parsed.data.text, req.admin!.email);
+  if (!thread) return res.status(404).json({ error: "not_found", message: "No support messages from this user." });
+  // The user gets a notification; a tap opens the chat.
+  await withWorkspace(uid, (workspace) => { noticeSupportReply(workspace, parsed.data.text); });
+  await pushNotices(uid);
+  await adminAudit(req, { action: "admin.support.reply", target: uid, outcome: "sent" });
+  return res.json({ thread: { ...threadSummary(thread), messages: thread.messages } });
+});
+
+router.post("/support/:uid/status", allow("support"), async (req, res) => {
+  const parsed = z.object({ status: z.enum(["open", "replied", "closed"]) }).safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "bad_request", message: "Choose a status." });
+  const thread = await setThreadStatus(param(req, "uid"), parsed.data.status);
+  if (!thread) return res.status(404).json({ error: "not_found", message: "No support messages from this user." });
+  await adminAudit(req, { action: "admin.support.status", target: thread.uid, outcome: parsed.data.status });
+  return res.json({ thread: { ...threadSummary(thread), messages: thread.messages } });
+});
+
 /** Asks Razorpay for the link's real status and settles it if paid (credits once, like the webhook). */
 router.post("/payments/:uid/:id/recheck", allow("payments.recheck"), sensitive, async (req, res) => {
   const workspace = await peekWorkspace(param(req, "uid"));
@@ -428,7 +502,10 @@ router.post("/payments/:uid/:id/recheck", allow("payments.recheck"), sensitive, 
     if (record.status === "created" && link.status !== "created") record.status = link.status;
     return { before, credited: false, status: record.status };
   });
-  if (outcome.credited) await issueBillingInvoice(param(req, "uid"), purchase.id);
+  if (outcome.credited) {
+    await issueBillingInvoice(param(req, "uid"), purchase.id);
+    await pushNotices(param(req, "uid"));
+  }
   await adminAudit(req, { action: "admin.payment.recheck", target: purchase.id, outcome: outcome.credited ? "credited" : "no_change", before: { status: outcome.before }, after: { status: outcome.status, gateway: link.status, amountPaid: link.amountPaid } });
   invalidateSnapshot();
   return res.json({ gateway: link, ...outcome });

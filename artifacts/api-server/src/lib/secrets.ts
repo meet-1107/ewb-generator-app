@@ -1,4 +1,4 @@
-import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes } from "node:crypto";
 
 /**
  * AES-256-GCM for the e-way bill portal passwords users save. The key comes
@@ -24,4 +24,12 @@ export function decryptSecret(sealed: string) {
   const decipher = createDecipheriv("aes-256-gcm", key, Buffer.from(iv, "base64"));
   decipher.setAuthTag(Buffer.from(tag, "base64"));
   return Buffer.concat([decipher.update(Buffer.from(data, "base64")), decipher.final()]).toString("utf8");
+}
+
+/**
+ * A keyed fingerprint of a login (HMAC with the server secret), so a login the portal
+ * just refused can be recognised again without keeping the password.
+ */
+export function loginFingerprint(gstin: string, username: string, password: string) {
+  return createHmac("sha256", key).update(`${gstin}\n${username}\n${password}`).digest("hex").slice(0, 32);
 }

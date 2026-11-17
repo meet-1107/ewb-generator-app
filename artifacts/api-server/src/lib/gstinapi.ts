@@ -83,7 +83,9 @@ async function call<T>(method: "GET" | "POST", path: string, body?: unknown, { t
     if (response.ok && json["success"] !== false) {
       const data = (json["data"] ?? json) as Record<string, unknown>;
       const number = data["ewaybill_no"] ?? data["consolidated_ewaybill_no"];
-      await log(response.status, "ok", undefined, number ? String(number) : undefined);
+      // A login check answers 200 either way; `valid: false` means the portal refused the login.
+      const invalidLogin = json["valid"] === false || data["valid"] === false;
+      await log(response.status, invalidLogin ? "rejected" : "ok", invalidLogin ? "INVALID_LOGIN" : undefined, number ? String(number) : undefined);
       return json as T;
     }
     await log(response.status, response.ok ? "rejected" : outcomeFor(response.status), providerCode);
@@ -125,7 +127,7 @@ export type EwbCredentials = { gstin: string; username: string; password: string
  * are sent at the top level next to the credentials (generate puts the NIC
  * JSON under `payload`). Retried only when the caller says it is safe.
  */
-export function ewaybillCall<T = Record<string, unknown>>(path: string, credentials: EwbCredentials, fields: Record<string, unknown>, options: { retries?: number; testMode?: boolean } = {}) {
+export function ewaybillCall<T = Record<string, unknown>>(path: string, credentials: EwbCredentials, fields: Record<string, unknown>, options: { retries?: number; testMode?: boolean; timeoutMs?: number } = {}) {
   const testMode = options.testMode ?? gstinApiTestMode;
   return call<T>("POST", `/v1/ewaybill${path}`, {
     gstin: credentials.gstin,
@@ -133,5 +135,5 @@ export function ewaybillCall<T = Record<string, unknown>>(path: string, credenti
     password: credentials.password,
     ...fields,
     ...(testMode ? { test_mode: true } : {}),
-  }, { timeoutMs: 45_000, retries: options.retries ?? 0 });
+  }, { timeoutMs: options.timeoutMs ?? 45_000, retries: options.retries ?? 0 });
 }

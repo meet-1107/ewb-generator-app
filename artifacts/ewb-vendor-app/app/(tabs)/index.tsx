@@ -7,6 +7,7 @@ import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useColors } from '@/hooks/useColors';
 import { useAppStore, useScopedRecords } from '@/state/app-store';
+import { useNotices } from '@/state/notices';
 import {
   ewbStatusMeta,
   financialYear,
@@ -18,13 +19,16 @@ import {
   relativeTime,
   today,
 } from '@/lib/domain';
-import { Card, Notice, Page, SectionTitle, StatusPill, TextBlock, SelectSheet } from '@/components/AppUI';
+import { Card, IconButton, Notice, Page, SectionTitle, StatusPill, TextBlock, SelectSheet } from '@/components/AppUI';
 import InvoiceCard from '@/components/InvoiceCard';
 import { AccountButton, BrandBar } from '@/components/Brand';
+import { SideMenu } from '@/components/SideMenu';
 
 export default function DashboardScreen() {
   const colors = useColors();
   const store = useAppStore();
+  const notices = useNotices();
+  const [menuOpen, setMenuOpen] = useState(false);
   // credited=N: just back from a successful credit purchase.
   const { credited } = useLocalSearchParams<{ credited?: string }>();
   const { invoices, purchases, ewbs } = useScopedRecords();
@@ -85,17 +89,21 @@ export default function DashboardScreen() {
 
   return (
     <Page contentStyle={styles.page} onRefresh={refresh} refreshing={refreshing}>
-      <BrandBar right={<>
+      <BrandBar left={<IconButton icon="menu" accessibilityLabel="Open menu" onPress={() => setMenuOpen(true)} filled color={colors.primary} />} right={<>
         <Pressable
-          onPress={() => router.push('/help')}
+          onPress={() => router.push('/notifications')}
           accessibilityRole="button"
-          accessibilityLabel="Help and support"
-          testID="dashboard-help"
+          accessibilityLabel={notices.unread ? `Notifications, ${notices.unread} new` : 'Notifications'}
+          testID="dashboard-notifications"
           hitSlop={6}
-          style={({ pressed }) => [styles.help, { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 }]}
+          style={({ pressed }) => [styles.bell, { backgroundColor: colors.card, borderColor: colors.border, opacity: pressed ? 0.7 : 1 }]}
         >
-          <Feather name="headphones" size={16} color={colors.primary} />
-          <TextBlock size={13} weight="semibold" color={colors.primary}>Help</TextBlock>
+          <Feather name="bell" size={18} color={colors.primary} />
+          {notices.unread ? (
+            <View style={[styles.bellBadge, { backgroundColor: colors.destructive, borderColor: colors.background }]}>
+              <TextBlock size={10} weight="bold" color={colors.destructiveForeground}>{notices.unread > 9 ? '9+' : String(notices.unread)}</TextBlock>
+            </View>
+          ) : null}
         </Pressable>
         <AccountButton />
       </>} />
@@ -191,8 +199,8 @@ export default function DashboardScreen() {
           tone="success"
           title={`Get ${welcomeCredits} free credits`}
           body="Save your e-way bill portal API login for your GSTIN. Once the portal accepts it, the free credits are added to your wallet. Once per GSTIN."
-          action="Add portal login"
-          onAction={() => router.push('/ewb-login')}
+          action="Start step-by-step setup"
+          onAction={() => router.push('/ewb-setup')}
         />
       ) : null}
       {stats.expiringSoon.length ? (
@@ -231,6 +239,7 @@ export default function DashboardScreen() {
         options={registrations.map((registration) => ({ value: registration.gstin, label: registration.displayName || registration.gstin, detail: `${registration.gstin} · ${registration.state || 'State not set'}` }))}
         onSelect={(gstin) => void store.setActiveGstin(gstin)}
       />
+      <SideMenu visible={menuOpen} onClose={() => setMenuOpen(false)} />
     </Page>
   );
 }
@@ -268,7 +277,8 @@ function MoneyCard({ label, value, hint, color, onPress, testID }: { label: stri
 const styles = StyleSheet.create({
   // flexBasis 0: both cards stay half the row however long the amount is.
   money: { flex: 1, flexBasis: 0, minWidth: 140, borderWidth: 1, borderRadius: 18, padding: 14, gap: 3 },
-  help: { height: 40, paddingHorizontal: 12, borderRadius: 20, borderWidth: 1, flexDirection: 'row', alignItems: 'center', gap: 6 },
+  bell: { width: 40, height: 40, borderRadius: 20, borderWidth: 1, alignItems: 'center', justifyContent: 'center' },
+  bellBadge: { position: 'absolute', top: -4, right: -4, minWidth: 18, height: 18, borderRadius: 9, borderWidth: 2, paddingHorizontal: 3, alignItems: 'center', justifyContent: 'center' },
   page: { gap: 16 },
   topline: { flexDirection: 'row', alignItems: 'center', gap: 8 },
   gstinRow: { flexDirection: 'row', alignItems: 'center', gap: 4 },

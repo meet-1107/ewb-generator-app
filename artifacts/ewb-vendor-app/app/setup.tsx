@@ -98,7 +98,8 @@ export default function BusinessSetupScreen() {
         gstRegistrations: gstin ? [{ gstin, displayName: form.name.trim(), state: form.state, isDefault: true }] : [],
       });
       await store.setActiveGstin(gstin);
-      router.replace('/(tabs)');
+      // Next: the e-way bill portal login guide (it can be skipped). Not for unregistered businesses.
+      router.replace(gstin && store.config?.ewbCredentialsRequired !== false ? { pathname: '/ewb-setup', params: { first: '1' } } : '/(tabs)');
     } finally {
       setSaving(false);
     }

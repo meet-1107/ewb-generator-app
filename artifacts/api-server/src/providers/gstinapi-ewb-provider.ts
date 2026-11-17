@@ -319,12 +319,17 @@ export class GstinApiEwbProvider implements EwbProvider {
 }
 
 /** Checks a portal API login with gstinapi.in (free; limited to 3 per GSTIN per 15 min). */
-export async function testCredentials(credentials: EwbCredentials): Promise<{ valid: boolean | null; message: string }> {
+export async function testCredentials(credentials: EwbCredentials): Promise<{ valid: boolean | null; message: string; rateLimited?: boolean }> {
   try {
-    const body = await ewaybillCall("/credentials/test", credentials, {}, { testMode: false });
+    // Kept short: a slow portal must not keep the user waiting. A login that cannot be
+    // checked in time is saved anyway and checked on first use.
+    const body = await ewaybillCall("/credentials/test", credentials, {}, { testMode: false, timeoutMs: 25_000 });
     return { valid: body["valid"] !== false, message: typeof body["message"] === "string" ? body["message"] : "Login works." };
   } catch (error) {
-    if (error instanceof GstinApiError && (error.code === "RATE_LIMITED" || error.code === "PROVIDER_UNAVAILABLE" || error.code === "TIMEOUT" || error.code === "NETWORK")) {
+    if (error instanceof GstinApiError && error.code === "RATE_LIMITED") {
+      return { valid: null, rateLimited: true, message: "Could not check the login right now; it was saved and will be checked on first use." };
+    }
+    if (error instanceof GstinApiError && (error.code === "PROVIDER_UNAVAILABLE" || error.code === "TIMEOUT" || error.code === "NETWORK")) {
       return { valid: null, message: "Could not check the login right now; it was saved and will be checked on first use." };
     }
     if (error instanceof GstinApiError && error.status === 400) return { valid: false, message: error.message };

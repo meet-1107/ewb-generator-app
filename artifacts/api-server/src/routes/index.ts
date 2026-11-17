@@ -7,6 +7,8 @@ import accountRouter from "./account";
 import gstinRouter from "./gstin";
 import distanceRouter from "./distance";
 import authRouter from "./auth";
+import notificationsRouter from "./notifications";
+import supportRouter from "./support";
 import adminPanelRouter from "./admin";
 import { adminRouter, walletRouter } from "./wallet";
 import { requireWorkspace } from "../lib/auth";
@@ -26,5 +28,7 @@ router.use(accountRouter);
 router.use(gstinRouter);
 router.use(distanceRouter);
 router.use(walletRouter);
+router.use(notificationsRouter);
+router.use(supportRouter);
 
 export default router;

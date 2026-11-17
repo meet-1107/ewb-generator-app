@@ -11,7 +11,7 @@ import { peekWorkspace, readDoc, withDoc, withWorkspace } from "./store";
 export const SELLER = {
   name: "E-Way Easy",
   address: "Rajkot, Gujarat, India",
-  email: "bvbtrade9@gmail.com",
+  email: "meet.akabari@ewayeasy.in",
   website: "ewb---generator.web.app",
   logoUrl: "https://ewb---generator.web.app/logo.png",
   /** Printed only when set (BILLING_GSTIN). */

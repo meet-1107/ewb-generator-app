@@ -5,10 +5,11 @@ import { IconButton, TextBlock } from '@/components/AppUI';
 import { useColors } from '@/hooks/useColors';
 
 /** App logo and name, for the top of the Dashboard and Account screens. */
-export function BrandBar({ right }: { right?: ReactNode }) {
+export function BrandBar({ left, right }: { left?: ReactNode; right?: ReactNode }) {
   const colors = useColors();
   return (
     <View style={styles.bar}>
+      {left}
       <Image source={require('@/assets/images/icon.png')} style={[styles.logo, { borderColor: colors.border }]} accessibilityIgnoresInvertColors />
       <TextBlock size={18} weight="bold" color={colors.primary} style={{ flex: 1, letterSpacing: -0.3 }} accessibilityRole="header">E-Way Easy</TextBlock>
       {right}

@@ -7,8 +7,9 @@ import { ewbProvider, type ProviderContext } from "../providers/ewb-provider";
 import { placeOf, testCredentials, transactionTypeOf } from "../providers/gstinapi-ewb-provider";
 import { currentContext } from "../lib/context";
 import { audit, currentPeriod, withWorkspace, type CewbRecord, type EwbRecord, type Workspace } from "../lib/store";
-import { decryptSecret, encryptSecret, secretsConfigured } from "../lib/secrets";
+import { decryptSecret, encryptSecret, loginFingerprint, secretsConfigured } from "../lib/secrets";
 import { holdCredits, refundCredits, settleCredits, walletSummary } from "../lib/wallet";
+import { noticeEwbGenerated, pushNotices } from "../lib/notify";
 import { gstinProblem, stateFromName, VEHICLE_PATTERN, type EwbInput } from "../lib/validation";
 
 const router: IRouter = Router();
@@ -267,6 +268,7 @@ router.post("/ewb/generate", async (req, res) => {
     workspace.subscription.usageCount += 1;
     settleCredits(workspace, claim.holdId, { ewbNumber: record.ewbNumber, targetId: record.id });
     audit(workspace, req.actor, "ewb.generate", record.id, "generated");
+    noticeEwbGenerated(workspace, record);
     return { ok: true as const, record, wallet: walletSummary(workspace).balance };
   }, { requests: [requestKey, lockKey], ewbs: [] });
 
@@ -280,6 +282,7 @@ router.post("/ewb/generate", async (req, res) => {
     const failed = outcome.result as Extract<typeof result, { ok: false }>;
     return res.status(422).json({ error: "rejected", message: failed.message, issues: failed.issues, reference: claim.requestId.slice(0, 8) });
   }
+  await pushNotices(req.workspaceId);
   return res.status(201).json({ ewb: outcome.record, balance: outcome.wallet });
 });
 
@@ -508,20 +511,42 @@ router.put("/ewb-credentials", credentialLimit, async (req, res) => {
   if (gstinProblem(gstin)) return res.status(400).json({ error: "bad_request", message: gstinProblem(gstin) });
   if (!secretsConfigured) return res.status(503).json({ error: "not_configured", message: "The server cannot store passwords securely yet (EWB_CREDENTIALS_SECRET is not set)." });
   // Check the login with the portal first so a typo is caught now, not at generation.
-  let check: { valid: boolean | null; message: string } = { valid: null, message: "" };
+  let check: { valid: boolean | null; message: string; rateLimited?: boolean } = { valid: null, message: "" };
+  const username = parsed.data.username.trim();
+  const fingerprint = loginFingerprint(gstin, username, parsed.data.password);
+  // Every check is kept in the account's audit log (valid / refused / unchecked), for support.
+  const note = (outcome: string) => withWorkspace(req.workspaceId, (workspace) => audit(workspace, req.actor, "ewb.credentials.check", gstin, outcome)).catch(() => undefined);
   if (ewbProvider?.id === "gstinapi") {
     try {
-      check = await testCredentials({ gstin, username: parsed.data.username.trim(), password: parsed.data.password });
+      check = await testCredentials({ gstin, username, password: parsed.data.password });
     } catch {
       check = { valid: null, message: "Could not check the login right now; it was saved and will be checked on first use." };
     }
-    if (check.valid === false) return res.status(400).json({ error: "credentials_invalid", message: `The portal refused this login: ${check.message}` });
+    if (check.valid === false) {
+      await withWorkspace(req.workspaceId, (workspace) => {
+        (workspace.refusedLogins ??= {})[gstin] = { fingerprint, at: new Date().toISOString() };
+        audit(workspace, req.actor, "ewb.credentials.check", gstin, "refused");
+      });
+      return res.status(400).json({ error: "credentials_invalid", message: `The portal refused this login: ${check.message}` });
+    }
+    // The portal allows only a few checks per GSTIN in 15 minutes. A login it refused a
+    // moment ago is not saved unchecked just because it can no longer be checked.
+    if (check.rateLimited) {
+      const refused = await withWorkspace(req.workspaceId, (workspace) => workspace.refusedLogins?.[gstin]);
+      if (refused && refused.fingerprint === fingerprint && Date.now() - Date.parse(refused.at) < 30 * 60_000) {
+        await note("refused_again");
+        return res.status(400).json({ error: "credentials_invalid", message: "The portal refused this same username and password a few minutes ago. Check the API username (grey part + your 3 letters) and the password, or create a new API login on the portal." });
+      }
+    }
+    await note(check.valid === true ? "valid" : check.rateLimited ? "unchecked_rate_limited" : "unchecked");
   }
   const saved = await withWorkspace(req.workspaceId, (workspace) => {
     const updatedAt = new Date().toISOString();
-    workspace.ewbCredentials[gstin] = { gstin, username: parsed.data.username.trim(), passwordEnc: encryptSecret(parsed.data.password), updatedAt };
+    workspace.ewbCredentials[gstin] = { gstin, username, passwordEnc: encryptSecret(parsed.data.password), updatedAt };
+    // Saved: a refusal of an earlier login no longer applies.
+    if (check.valid === true) delete workspace.refusedLogins?.[gstin];
     audit(workspace, req.actor, "ewb.credentials.save", gstin, "ok");
-    return { gstin, username: parsed.data.username.trim(), updatedAt };
+    return { gstin, username, updatedAt };
   });
   // First portal login of a GSTIN that never had free credits: the trial credits, only once the
   // portal has accepted the login (an unchecked one could be made up to collect them).

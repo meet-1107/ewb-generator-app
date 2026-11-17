@@ -8,6 +8,7 @@ import { appendLog, audit, withWorkspace, type Workspace } from "../lib/store";
 import { addCredits, walletHistory, walletSummary } from "../lib/wallet";
 import { billingInvoiceHtml, emailBillingInvoice, issueBillingInvoice, type BillingInvoice } from "../lib/billing";
 import { readDoc } from "../lib/store";
+import { noticeCreditsBought, noticeCreditsChanged, noticePaymentFailed, pushNotices } from "../lib/notify";
 
 const paymentsMode = razorpayConfigured ? "razorpay" : authMode === "sandbox" ? "sandbox" : "off";
 
@@ -24,6 +25,7 @@ export function settlePurchase(workspace: Workspace, purchaseId: string, payment
   purchase.paymentId = paymentId;
   addCredits(workspace, purchase.credits, `Bought for ₹${(purchase.amountPaise / 100).toFixed(2)}${paymentId ? ` · ${paymentId}` : purchase.provider === "sandbox" ? " · test purchase" : ""}`, purchaseId);
   audit(workspace, "payments", "wallet.purchase", purchaseId, "paid");
+  noticeCreditsBought(workspace, purchase.amountPaise, purchase.credits);
   return true;
 }
 
@@ -38,9 +40,19 @@ async function recheckPurchase(req: Request, purchaseId: string) {
     const link = await fetchPaymentLink(current.id);
     if (link.status === "paid" && link.amountPaid >= current.amountPaise) {
       const credited = await withWorkspace(req.workspaceId, (workspace) => settlePurchase(workspace, current.id, link.paymentId));
-      if (credited) await issueBillingInvoice(req.workspaceId, current.id);
+      if (credited) {
+        await issueBillingInvoice(req.workspaceId, current.id);
+        await pushNotices(req.workspaceId);
+      }
     } else if (link.status !== "created") {
-      await withWorkspace(req.workspaceId, (workspace) => { workspace.purchases[current.id]!.status = link.status; });
+      const failed = await withWorkspace(req.workspaceId, (workspace) => {
+        const purchase = workspace.purchases[current.id]!;
+        if (purchase.status !== "created") return false;
+        purchase.status = link.status;
+        noticePaymentFailed(workspace, purchase.amountPaise, link.status);
+        return true;
+      });
+      if (failed) await pushNotices(req.workspaceId);
     }
   } catch (error) {
     req.log?.warn({ err: (error as Error).message }, "Razorpay status check failed");
@@ -83,6 +95,7 @@ walletRouter.post("/wallet/purchase", async (req, res) => {
       return { purchase: workspace.purchases[id]!, balance: workspace.wallet.balance };
     });
     const invoice = await issueBillingInvoice(req.workspaceId, result.purchase.id);
+    await pushNotices(req.workspaceId);
     return res.status(201).json({ ...result, purchase: { ...result.purchase, invoiceNumber: invoice?.number } });
   }
 
@@ -165,8 +178,10 @@ adminRouter.post("/admin/wallet/topup", async (req, res) => {
   const summary = await withWorkspace(workspaceId, (workspace) => {
     addCredits(workspace, credits, note);
     audit(workspace, "admin", "wallet.topup", String(credits), "ok");
+    noticeCreditsChanged(workspace, credits, note);
     return walletSummary(workspace);
   });
+  await pushNotices(workspaceId);
   return res.json({ workspaceId, balance: summary.balance });
 });
 
@@ -191,7 +206,10 @@ adminRouter.post("/payments/razorpay/webhook", async (req, res) => {
     if (!purchase || (link.amount_paid ?? 0) < purchase.amountPaise) return false;
     return settlePurchase(workspace, link.id!, event.payload?.payment?.entity?.id);
   });
-  if (credited) await issueBillingInvoice(workspaceId, link.id);
+  if (credited) {
+    await issueBillingInvoice(workspaceId, link.id);
+    await pushNotices(workspaceId);
+  }
   logger.info({ link: link.id, credited }, "Razorpay payment_link.paid");
   // Every verified delivery is kept, so replays and late deliveries are visible in the admin panel.
   await appendLog("payment_events", { at: new Date().toISOString(), provider: "razorpay", event: event.event, signatureValid: true, linkId: link.id, paymentId: event.payload?.payment?.entity?.id ?? null, workspaceId, amountPaid: link.amount_paid ?? 0, credited }).catch(() => undefined);

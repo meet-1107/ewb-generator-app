@@ -19,6 +19,7 @@ import { AppStoreProvider, useAppStore } from '@/state/app-store';
 import { DialogProvider } from '@/components/Dialog';
 import ConsentGate from '@/components/ConsentGate';
 import UpdateGate from '@/components/UpdateGate';
+import PushManager from '@/components/PushManager';
 import { loadThemePreference } from '@/state/theme';
 import { useColors } from '@/hooks/useColors';
 
@@ -50,6 +51,7 @@ function RootLayoutNav() {
   return (
     <>
       <StatusBar style={colors.isDark ? 'light' : 'dark'} />
+      <PushManager />
       <UpdateGate>
       <ConsentGate>
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background }, animation: 'slide_from_right' }}>
@@ -79,9 +81,12 @@ function RootLayoutNav() {
         <Stack.Screen name="wallet" />
         <Stack.Screen name="billing" />
         <Stack.Screen name="ewb-login" />
+        <Stack.Screen name="ewb-setup" options={{ animation: 'fade' }} />
         <Stack.Screen name="subscription" />
         <Stack.Screen name="saved/[kind]" />
         <Stack.Screen name="help" />
+        <Stack.Screen name="notifications" />
+        <Stack.Screen name="support" />
       </Stack>
       </ConsentGate>
       </UpdateGate>

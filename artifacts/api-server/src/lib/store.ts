@@ -182,6 +182,27 @@ export type Workspace = {
   gstLookups?: Record<string, string>;
   audit: { at: string; actor: string; action: string; targetId: string; outcome: string }[];
   sync: Record<string, Record<string, SyncRecord>>;
+  /** The newest notifications, oldest first (lib/notify.ts). */
+  notices?: Notice[];
+  /** Per GSTIN: the last login the portal refused (a keyed fingerprint, never the password). */
+  refusedLogins?: Record<string, { fingerprint: string; at: string }>;
+  /** FCM registration tokens of the user's devices, with when each was last seen. */
+  pushTokens?: Record<string, { platform: string; updatedAt: string }>;
+};
+
+/** A notification shown under the bell and sent to the user's phones. `route` says where a tap opens. */
+export type Notice = {
+  id: string;
+  at: string;
+  kind: "credits" | "payment" | "ewb" | "support";
+  title: string;
+  body: string;
+  route: "wallet" | "ewb" | "support";
+  /** The e-way bill (record id) for route "ewb". */
+  targetId?: string;
+  read?: boolean;
+  /** Sent to the devices (or there were none to send to). */
+  pushed?: boolean;
 };
 
 
@@ -281,6 +302,23 @@ export async function readDoc<T>(collection: string, id: string): Promise<T | nu
   const { db } = await firestore();
   const snap = await db.collection(collection).doc(docId(id)).get();
   return snap.exists ? (JSON.parse(String(snap.get("data"))) as T) : null;
+}
+
+/** Every document of a small shared collection (e.g. support threads), unlocked. */
+export async function listDocs<T>(collection: string): Promise<T[]> {
+  if (backend === "file") {
+    const dir = path.join(dataDir, collection);
+    let names: string[] = [];
+    try {
+      names = (await readdir(dir)).filter((name) => name.endsWith(".json"));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
+      throw error;
+    }
+    return Promise.all(names.map(async (name) => JSON.parse(await readFile(path.join(dir, name), "utf8")) as T));
+  }
+  const { db } = await firestore();
+  return (await db.collection(collection).get()).docs.map((snap) => JSON.parse(String(snap.get("data"))) as T);
 }
 
 export function audit(workspace: Workspace, actor: string, action: string, targetId: string, outcome: string) {

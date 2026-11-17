@@ -175,7 +175,25 @@ export type ExtractedInvoice = {
 };
 export type SyncEnvelope = { id: string; updatedAt: string; deleted?: boolean; data?: unknown };
 
+/** A notification under the bell; a tap opens the wallet or the e-way bill (targetId). */
+export type Notice = { id: string; at: string; kind: 'credits' | 'payment' | 'ewb' | 'support'; title: string; body: string; route: 'wallet' | 'ewb' | 'support'; targetId?: string; read: boolean };
+export type NoticeList = { notices: Notice[]; unread: number };
+/** The support chat: the user's messages, the assistant's instant answers and the team's replies. */
+export type SupportMessage = { id: string; at: string; from: 'user' | 'bot' | 'admin'; text: string; guide?: 'ewb_login' };
+export type SupportTopic = 'ewb_login' | 'payment' | 'credits' | 'ewb_generate' | 'other';
+export type SupportChat = { messages: SupportMessage[]; status: 'open' | 'replied' | 'closed' | null; unread: number; topics: { value: SupportTopic; label: string }[] };
+
 export const api = {
+  /** `seen`: the chat is on screen, so the team's replies count as read. */
+  supportChat: (seen = false) => request<SupportChat>(`/support${seen ? '?seen=1' : ''}`, { timeoutMs: 15_000 }),
+  sendSupportMessage: (text: string, topic?: SupportTopic) => request<SupportChat>('/support/messages', { body: { text, ...(topic ? { topic } : {}) }, timeoutMs: 20_000 }),
+  notifications: () => request<NoticeList>('/notifications', { timeoutMs: 15_000 }),
+  /** Without ids, every notification. */
+  markNoticesRead: (ids?: string[]) => request<NoticeList>('/notifications/read', { body: ids ? { ids } : {}, timeoutMs: 15_000 }),
+  /** Without ids, every notification. */
+  deleteNotices: (ids?: string[]) => request<NoticeList>('/notifications/delete', { body: ids ? { ids } : {}, timeoutMs: 15_000 }),
+  savePushToken: (token: string, platform: 'android' | 'ios' | 'web') => request<{ ok: true }>('/push-token', { body: { token, platform }, timeoutMs: 15_000 }),
+  removePushToken: (token: string) => request<{ ok: true }>('/push-token/remove', { body: { token }, timeoutMs: 10_000 }),
   health: () => request<{ status: string }>('/healthz', { timeoutMs: 6000 }),
   config: () => request<ServiceConfig>('/config', { timeoutMs: 8000 }),
   /** Whether this account accepted the current Terms & Privacy Policy. */
@@ -193,7 +211,7 @@ export const api = {
     request<{ cewb: CewbRecord; balance: number }>('/ewb-consolidated', { body, timeoutMs: 45_000 }),
   ewbCredentials: () => request<{ credentials: EwbCredential[]; required: boolean; canStore: boolean; provider?: 'live' | 'test' | 'none'; providerId?: string | null }>('/ewb-credentials'),
   saveEwbCredential: (gstin: string, username: string, password: string) =>
-    request<{ credential: EwbCredential; checked: boolean; message: string; welcomeCredits?: number; balance?: number }>('/ewb-credentials', { method: 'PUT', body: { gstin, username, password }, timeoutMs: 30_000 }),
+    request<{ credential: EwbCredential; checked: boolean; message: string; welcomeCredits?: number; balance?: number }>('/ewb-credentials', { method: 'PUT', body: { gstin, username, password }, timeoutMs: 55_000 }),
   deleteEwbCredential: (gstin: string) => request<{ ok: true }>(`/ewb-credentials/${encodeURIComponent(gstin)}`, { method: 'DELETE' }),
   /** Road distance between two PIN codes (Google Routes, looked up once per pair on the server). */
   distance: (from: string, to: string) => request<{ from: string; to: string; km: number; cached: boolean }>(`/distance?from=${from}&to=${to}`, { timeoutMs: 20_000 }),
@@ -227,5 +245,5 @@ export const api = {
     request<{ serverTime: string; changes: Record<string, SyncEnvelope[]> }>('/sync', { body: { since, collections }, timeoutMs: 30_000 }),
 };
 
-/** Support inbox; set EXPO_PUBLIC_SUPPORT_EMAIL before release. */
-export const SUPPORT_EMAIL = process.env.EXPO_PUBLIC_SUPPORT_EMAIL ?? '';
+/** Support inbox (EXPO_PUBLIC_SUPPORT_EMAIL overrides it). */
+export const SUPPORT_EMAIL = process.env.EXPO_PUBLIC_SUPPORT_EMAIL || 'meet.akabari@ewayeasy.in';

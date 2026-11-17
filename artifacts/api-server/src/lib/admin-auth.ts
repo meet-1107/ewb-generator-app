@@ -35,6 +35,8 @@ export const PERMISSIONS = {
   audit: ["super", "finance"],
   export: ["super", "finance"],
   health: ["super", "finance", "tech"],
+  /** Support chat: read and reply to users. */
+  support: ["super", "finance", "support"],
   admins: ["super"],
 } as const satisfies Record<string, readonly AdminRole[]>;
 export type Permission = keyof typeof PERMISSIONS;

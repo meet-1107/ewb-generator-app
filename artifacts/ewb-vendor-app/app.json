@@ -2,7 +2,7 @@
   "expo": {
     "name": "E-Way Easy",
     "slug": "eway-easy",
-    "version": "1.3.17",
+    "version": "1.3.18",
     "orientation": "default",
     "icon": "./assets/images/icon.png",
     "scheme": "ewayeasy",
@@ -13,7 +13,7 @@
     },
     "android": {
       "package": "com.ewayeasy.app",
-      "versionCode": 21,
+      "versionCode": 22,
       "adaptiveIcon": {
         "foregroundImage": "./assets/images/adaptive-icon.png",
         "backgroundImage": "./assets/images/adaptive-background.png",
@@ -27,6 +27,9 @@
         "android.permission.ACCESS_BACKGROUND_LOCATION",
         "android.permission.CAMERA",
         "android.permission.RECORD_AUDIO"
+      ],
+      "permissions": [
+        "android.permission.POST_NOTIFICATIONS"
       ]
     },
     "web": {
@@ -51,12 +54,17 @@
       "expo-sharing",
       "@react-native-firebase/app",
       "@react-native-firebase/auth",
+      "@react-native-firebase/messaging",
+      "./plugins/with-notifications",
       "@react-native-google-signin/google-signin",
       [
         "expo-build-properties",
         {
           "android": {
-            "buildArchs": ["arm64-v8a", "armeabi-v7a"],
+            "buildArchs": [
+              "arm64-v8a",
+              "armeabi-v7a"
+            ],
             "enableMinifyInReleaseBuilds": true,
             "enableShrinkResourcesInReleaseBuilds": true,
             "useLegacyPackaging": true
