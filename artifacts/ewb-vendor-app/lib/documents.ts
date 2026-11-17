@@ -95,7 +95,7 @@ export function invoiceHtml(invoice: Invoice, signature?: Signature) {
     <div>IFSC: <strong>${esc(invoice.bank.ifsc)}</strong></div>
     ${invoice.bank.upiId ? `<div>UPI: <strong>${esc(invoice.bank.upiId)}</strong></div>` : ''}` : '';
 
-  // The same invoice twice, each copy starting on a new page and marked at the top.
+  // One copy of the invoice, marked for the recipient at the top.
   const copy = (label: string) => `<div class="copy">
   <div class="head"><div><h1 class="${minimal ? '' : 'accent'}">${esc(invoice.sellerName)}</h1>
     <div class="muted">${esc(invoice.sellerAddress)}</div><div class="muted">${esc(invoice.sellerState)} ${esc(invoice.sellerPincode)} · GSTIN ${esc(invoice.sellerGstin)}</div>
@@ -132,8 +132,7 @@ export function invoiceHtml(invoice: Invoice, signature?: Signature) {
   .copy + .copy { break-before: page; page-break-before: always; }
   .copy-label { font-size: 10px; font-weight: 700; letter-spacing: 1px; color: #5f6a63; margin-bottom: 6px; }
   </style></head><body>
-  ${copy('ORIGINAL COPY')}
-  ${copy('DUPLICATE COPY')}
+  ${copy('ORIGINAL FOR RECIPIENT')}
   </body></html>`;
 }
 

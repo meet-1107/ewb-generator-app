@@ -120,6 +120,10 @@ export function buildGeneratePayload(input: EwbInput) {
   const tax = (line: EwbInput["lines"][number]) => Math.round((line.taxablePaise * line.taxRate) / 100);
   const taxTotal = input.lines.reduce((sum, line) => sum + tax(line), 0);
   const half = Math.round(taxTotal / 2);
+  // The bill total is rounded to the rupee; that round off (at most a rupee) goes in "other value" so the
+  // portal's total invoice value matches the bill. Anything bigger is not a round off: send the exact total.
+  const exact = input.totals.taxable + taxTotal;
+  const roundOff = Math.abs(input.totals.total - exact) <= 100 ? input.totals.total - exact : 0;
   const fromState = stateCode(input.seller.state);
   const toState = stateCode(input.buyer.state);
   // The goods move from the dispatch place to the delivery place; the GSTIN states stay the parties'.
@@ -155,8 +159,8 @@ export function buildGeneratePayload(input: EwbInput) {
     igstValue: inter ? rupees(taxTotal) : 0,
     cessValue: 0,
     cessNonAdvolValue: 0,
-    otherValue: 0,
-    totInvValue: rupees(input.totals.total),
+    otherValue: rupees(roundOff),
+    totInvValue: rupees(exact + roundOff),
     transporterId: input.transport.transporterId,
     transporterName: input.transport.transporterName,
     transDistance: nicDistance(input),

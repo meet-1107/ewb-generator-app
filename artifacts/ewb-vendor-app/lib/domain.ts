@@ -461,7 +461,7 @@ export function invoiceTotals(invoice: Pick<Invoice, 'lines' | 'supplyType'>) {
   const taxable = invoice.lines.reduce((sum, line) => sum + line.taxablePaise, 0);
   const tax = invoice.lines.reduce((sum, line) => sum + lineTax(line), 0);
   const halfTax = invoice.supplyType === 'intra' ? Math.round(tax / 2) : 0;
-  // Invoices and purchase bills total to the nearest rupee; the e-way bill keeps the exact value.
+  // Invoices, purchase bills and e-way bills total to the nearest rupee (the difference is the round off).
   const exact = taxable + tax;
   const total = Math.round(exact / 100) * 100;
   return {
@@ -625,7 +625,8 @@ export function toEwbInput(invoice: Invoice) {
       docDate: invoice.transportDocDate.trim() || undefined,
       vehicleType: invoice.vehicleType,
     },
-    totals: { taxable: totals.taxable, tax: totals.tax, total: totals.exact },
+    // The bill's rounded total; the server reports the round off as "other value" so the two match.
+    totals: { taxable: totals.taxable, tax: totals.tax, total: totals.total },
   };
 }
 

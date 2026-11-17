@@ -29,6 +29,43 @@ export type ExtractedLine = { description: string; hsn: string; quantity: string
 /** One visual row of a PDF page: text pieces with their x position and width. */
 export type PdfRow = { page: number; cells: { x: number; width: number; text: string }[] };
 
+/** "ORIGINAL FOR RECIPIENT", "DUPLICATE COPY FOR TRANSPORTER", "OFFICE COPY"… — which copy of the bill a page is. */
+const COPY_LABEL = /\b(?:(original|duplicate|triplicate|quadruplicate)\s+(?:copy\s+)?for\s+(recipient|receiver|buyer|transporter|supplier|seller|assessee|consignee)|(original|duplicate|triplicate|quadruplicate|office|transporter|customer|extra|buyer'?s|seller'?s)\s+copy)\b/i;
+const rowText = (row: PdfRow) => row.cells.map((cell) => cell.text).join(" ");
+const copyLabel = (row: PdfRow) => {
+  const match = unspaceLetters(rowText(row)).match(COPY_LABEL);
+  return match ? match[0].toLowerCase().replace(/\s+/g, " ") : null;
+};
+
+/**
+ * The rows of the first copy only. Many billing apps put the same invoice in one PDF two or three times
+ * (original for recipient, duplicate for transporter…); reading them all would import every item twice.
+ * A new copy starts where a different copy label appears, or with a page that repeats an earlier page.
+ */
+export function firstCopy(rows: PdfRow[]): PdfRow[] {
+  let firstLabel: string | null = null;
+  const seenPages = new Set<string>();
+  const pages = [...new Set(rows.map((row) => row.page))];
+  const kept: PdfRow[] = [];
+  for (const page of pages) {
+    const pageRows = rows.filter((row) => row.page === page);
+    const signature = pageRows.map(rowText).join("\n").replace(new RegExp(COPY_LABEL.source, "gi"), "").replace(/\s+/g, " ").trim();
+    if (seenPages.has(signature)) break;
+    seenPages.add(signature);
+    for (const [index, row] of pageRows.entries()) {
+      const label = copyLabel(row);
+      if (!label) continue;
+      if (firstLabel === null) { firstLabel = label; continue; }
+      if (label === firstLabel) continue;
+      // The next copy. Its label sits in the header, so near the top of a page the copy starts with the
+      // page; further down (two copies on one sheet) it starts at the label.
+      return index < 6 && kept.length ? kept : [...kept, ...pageRows.slice(0, index)];
+    }
+    kept.push(...pageRows);
+  }
+  return kept;
+}
+
 const MAX_LINES = 200;
 const GST_RATES = [0, 0.25, 3, 5, 12, 18, 28, 40];
 
@@ -137,6 +174,24 @@ function unlabelledInvoiceNumber(rows: PdfRow[]): string | null {
   return null;
 }
 
+/**
+ * A value printed in a box under its label (Tally: "Invoice No." above "SBIPL/139", "Dated" above
+ * "14-Nov-26"): the first text on the next two rows that starts in line with the label.
+ */
+function valueUnder(rows: PdfRow[], label: RegExp): string | null {
+  for (const [index, row] of rows.entries()) {
+    for (const cell of row.cells) {
+      if (!label.test(cell.text.trim())) continue;
+      for (const below of rows.slice(index + 1, index + 3)) {
+        if (below.page !== row.page) break;
+        const value = below.cells.find((other) => Math.abs(other.x - cell.x) <= 12);
+        if (value) return value.text.trim();
+      }
+    }
+  }
+  return null;
+}
+
 /** The issuer's name printed as the bill's heading: the first plain text line at the top. */
 function headerName(lines: string[]) {
   for (const line of lines.slice(0, 4)) {
@@ -154,19 +209,25 @@ function singleName(text: string) {
 }
 
 /** Labels that head the buyer's block. ("ORIGINAL FOR RECIPIENT" on every GST invoice is not one.) */
-const BUYER_LABEL = /bill(?:ed)? to|buyer|consignee|ship(?:ped)? to|details of (?:recipient|receiver)|receiver|customer|party|\bm\/s\b/i;
+const BUYER_LABEL = /bill(?:ed)? to|buyer(?!'?s\s*(?:order|ref))|consignee|ship(?:ped)? to|details of (?:recipient|receiver)|receiver|customer|party|\bm\/s\b/i;
 const COPY_MARK = /\b(?:original|duplicate|triplicate)\s+(?:copy\s+)?for\s+\w+/gi;
+/** Lines that are only the labels of the boxes beside the address (Tally's header grid). */
+const BOX_LABELS = /^(?:(?:buyer'?s order no\.?|dispatch doc no\.?|delivery note(?: date)?|reference no\.? & date\.?|other references|dispatched through|destination|terms of delivery|mode\/terms of payment|dated)\s*)+$/i;
 
 /** Name on the line under the buyer label above the GSTIN ("BILL TO" / "ATLANTIS AGRITECH PVT LTD"). */
 function nameUnderLabel(lines: string[], index: number) {
-  for (let at = index - 1; at >= Math.max(0, index - 8); at -= 1) {
+  // Twelve lines: a Tally address block can run that long beside the "Dispatch Doc No." boxes.
+  for (let at = index - 1; at >= Math.max(0, index - 12); at -= 1) {
     const line = (lines[at] ?? "").replace(COPY_MARK, "").trim();
     const label = BUYER_LABEL.exec(line);
     if (!label) continue;
     // Name after the label on the same line ("Bill To: XYZ"), else the next line.
     // A box beside the name on the same line ("M/s. : ROYAL ENTERPRISE  Invoice No. : 5") is not part of it.
-    const rest = line.slice(label.index + label[0].length).replace(/^[\s.:()\-]+|(?:\s*(?:ship(?:ped)? to|consignee).*)$/gi, "").replace(/\s+(?:(?:invoice|inv|bill)\s*(?:no|number|#|date)|date\s*:).*$/i, "").replace(/^(m\/s\.?|name:?)\s*/i, "").trim();
-    const value = singleName(rest.length >= 3 && /[a-z]/i.test(rest) ? rest : lines[at + 1] ?? "");
+    // "Buyer (Bill to)": the bracket is more of the label, not the name.
+    const rest = line.slice(label.index + label[0].length).replace(/^\s*\(\s*(?:bill(?:ed)? to|ship(?:ped)? to|consignee)\s*\)/i, "").replace(/^[\s.:()\-]+|(?:\s*(?:ship(?:ped)? to|consignee).*)$/gi, "").replace(/\s+(?:(?:invoice|inv|bill)\s*(?:no|number|#|date)|date\s*:).*$/i, "").replace(/^(m\/s\.?|name:?)\s*/i, "").trim();
+    // The next line can be a box beside the address (Tally's "Buyer's Order No.  Dated"): skip those.
+    const below = lines.slice(at + 1, at + 4).find((next) => !BOX_LABELS.test(next)) ?? "";
+    const value = singleName(rest.length >= 3 && /[a-z]/i.test(rest) ? rest : below);
     if (value.length >= 3 && value.length < 80 && /[a-z]/i.test(value) && !/gstin|address|state\s*:|mobile|phone/i.test(value)) return value.replace(/^(m\/s\.?|name:?)\s*/i, "");
     return null;
   }
@@ -317,7 +378,7 @@ function rowRate(cells: { text: string }[]) {
 const STOP_ROW = /\b(sub ?total|grand total|total|amount chargeable|amount in words|in words)\b/i;
 /** An amount written out ("Sixty Four Thousand Nine Hundred Rupees Only"): below the table, never a product. */
 const AMOUNT_IN_WORDS = /\b(?:rupees|paise|thousand|lakhs?|crores?|hundred)\b.*\bonly\b/i;
-const TAX_ROW = /\b(cgst|sgst|utgst|igst|output|round(ed)? off|less|freight|packing)\b/i;
+const TAX_ROW = /\b(cgst|sgst|utgst|igst|output|round(ed|ing)? ?off|less|freight|packing)\b/i;
 
 /**
  * Line items from the invoice's item table: finds the header row (HSN, Qty,
@@ -331,7 +392,7 @@ export function tableLines(rows: PdfRow[], fallbackRate: number): ExtractedLine[
   let last: ExtractedLine | null = null;
   let page = 0;
   // An HSN printed a little above or below its product's row (another baseline) lands on a row of its own.
-  let pendingHsn = "";
+  let pending: { hsn: string; rate: number | null; unit: string | undefined } | null = null;
   let hsnAbove: boolean | null = null;
   for (const row of rows) {
     // A table can run onto the next page without repeating its header.
@@ -357,7 +418,9 @@ export function tableLines(rows: PdfRow[], fallbackRate: number): ExtractedLine[
     for (const cell of row.cells) {
       const position = center(cell);
       const nearest = header.reduce((best, column) => (Math.abs(column.center - position) < Math.abs(best.center - position) ? column : best));
-      values.set(nearest.kind, [...(values.get(nearest.kind) ?? []), cell.text]);
+      // A left-aligned description starts close to the narrow Sl column; only a serial number belongs there.
+      const kind = nearest.kind === "sl" && !/^\d{1,4}[.)]?$/.test(cell.text) && header.some((column) => column.kind === "desc") ? "desc" : nearest.kind;
+      values.set(kind, [...(values.get(kind) ?? []), cell.text]);
     }
     const get = (kind: Column) => (values.get(kind) ?? []).join(" ").trim();
     const getAll = (kind: Column) => values.get(kind) ?? [];
@@ -405,7 +468,7 @@ export function tableLines(rows: PdfRow[], fallbackRate: number): ExtractedLine[
     if (!hsn && TAX_ROW.test(description)) continue;
 
     const quantity = quantityOf(qtyCells.join(" "));
-    const rate = toPaise(get("rate").split(/\s+/)[0] ?? "");
+    let rate = toPaise(get("rate").split(/\s+/)[0] ?? "");
     const amountText = get("taxable") || getAll("amount")[0] || "";
     let taxablePaise = toPaise(amountText.split(/\s+/)[0] ?? "");
     if (!taxablePaise && quantity && rate) taxablePaise = Math.round(Number(quantity.quantity) * rate);
@@ -413,13 +476,23 @@ export function tableLines(rows: PdfRow[], fallbackRate: number): ExtractedLine[
     if (hsn && !description && !quantity && !taxablePaise) {
       // The first such row says which way the table is offset: before any product
       // (or after one that has its HSN) it belongs to the product below it.
+      // The rate and unit can sit on that baseline too ("84818090 70.00 Nos").
+      const unit = unitName(get("unit"));
       if (hsnAbove === null) hsnAbove = !(last && !last.hsn);
-      if (!hsnAbove && last && !last.hsn) last.hsn = hsn;
-      else pendingHsn = hsn;
+      if (!hsnAbove && last && !last.hsn) {
+        last.hsn = hsn;
+        if (rate && !last.unitPricePaise) last.unitPricePaise = rate;
+        if (unit && !last.unit) last.unit = unit;
+      } else pending = { hsn, rate, unit };
       continue;
     }
-    if (!hsn && hsnAbove) hsn = pendingHsn;
-    pendingHsn = "";
+    const above: typeof pending = hsnAbove ? pending : null;
+    if (!hsn && above) {
+      hsn = above.hsn;
+      if (!rate) rate = above.rate;
+    }
+    const aboveUnit: string | undefined = above?.unit;
+    pending = null;
 
     if ((hsn || quantity) && taxablePaise && (description || hsn)) {
       const gst = rateOf(get("gst")) ?? rowRate(row.cells);
@@ -434,7 +507,7 @@ export function tableLines(rows: PdfRow[], fallbackRate: number): ExtractedLine[
         description: description || `Item ${lines.length + 1}`,
         hsn,
         quantity: quantity?.quantity ?? "1",
-        ...(quantity?.unit || unitName(get("unit")) ? { unit: quantity?.unit ?? unitName(get("unit")) } : {}),
+        ...(quantity?.unit || unitName(get("unit")) || aboveUnit ? { unit: quantity?.unit ?? unitName(get("unit")) ?? aboveUnit } : {}),
         ...(rate ? { unitPricePaise: rate } : {}),
         taxablePaise,
         taxRate,
@@ -533,7 +606,9 @@ export function extractInvoiceFields(text: string, pageCount: number, spacedRows
   }
 
   const invoiceNo = /(?:invoice|inv|bill|challan|note)\s*(?:no|number|#)\.?\s*[:\-]?\s*([A-Za-z0-9/-]{1,20})/i.exec(normalized);
+  const boxedNo = valueUnder(rows, /^(?:invoice|inv|bill)\s*(?:no|number|#)\.?:?$/i);
   if (invoiceNo && /\d/.test(invoiceNo[1]!)) result.invoiceNumber = { value: invoiceNo[1]!.toUpperCase(), confidence: "high" };
+  else if (boxedNo && /^[A-Za-z0-9][A-Za-z0-9/-]{0,19}$/.test(boxedNo) && /\d/.test(boxedNo)) result.invoiceNumber = { value: boxedNo.toUpperCase(), confidence: "high" };
   else {
     const bare = unlabelledInvoiceNumber(rows);
     if (bare) result.invoiceNumber = { value: bare, confidence: "low" };
@@ -545,7 +620,10 @@ export function extractInvoiceFields(text: string, pageCount: number, spacedRows
     // Unlabelled "25 Oct 2026" (the app's own printed invoice).
     /\b([0-9]{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*,?\s+[0-9]{4})\b/i,
   ];
-  for (const [index, pattern] of datePatterns.entries()) {
+  const boxedDate = valueUnder(rows, /^(?:invoice\s*)?dated?\.?:?$|^invoice\s*date:?$/i);
+  const boxedIso = boxedDate ? toIsoDate(boxedDate) : null;
+  if (boxedIso) result.invoiceDate = { value: boxedIso, confidence: "high" };
+  for (const [index, pattern] of boxedIso ? [] : datePatterns.entries()) {
     const match = pattern.exec(normalized);
     const iso = match ? toIsoDate(match[1]!) : null;
     if (iso) {

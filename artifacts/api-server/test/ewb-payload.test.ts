@@ -16,6 +16,39 @@ const base = {
 const payload = (transport: Record<string, string>) =>
   buildGeneratePayload({ ...base, transport: { transporterName: "", transporterId: "", vehicleNumber: "", mode: "Road", distanceKm: "700", ...transport } } as never);
 
+describe("NIC generate payload: round off", () => {
+  const withTotals = (taxablePaise: number, total: number) =>
+    buildGeneratePayload({ ...base, lines: [{ ...base.lines[0], taxablePaise }], totals: { taxable: taxablePaise, tax: 0, total }, transport: { transporterName: "", transporterId: "", vehicleNumber: "", mode: "Road", distanceKm: "700" } } as never);
+
+  it("sends the bill's rounded total with the round off as other value", () => {
+    // ₹9,999.50 + 18% = ₹11,799.41, billed as ₹11,799.00
+    const body = withTotals(999_950, 1_179_900);
+    assert.equal(body.totalValue, 9999.5);
+    assert.equal(body.igstValue, 1799.91);
+    assert.equal(body.otherValue, -0.41);
+    assert.equal(body.totInvValue, 11799);
+  });
+
+  it("rounds up with a positive other value", () => {
+    // ₹1,000.50 + 18% = ₹1,180.59, billed as ₹1,181.00
+    const body = withTotals(100_050, 118_100);
+    assert.equal(body.otherValue, 0.41);
+    assert.equal(body.totInvValue, 1181);
+  });
+
+  it("keeps the exact total when an older app sends it", () => {
+    const body = withTotals(999_950, 1_179_941);
+    assert.equal(body.otherValue, 0);
+    assert.equal(body.totInvValue, 11799.41);
+  });
+
+  it("ignores a total that is off by more than a rupee", () => {
+    const body = withTotals(999_950, 1_200_000);
+    assert.equal(body.otherValue, 0);
+    assert.equal(body.totInvValue, 11799.41);
+  });
+});
+
 describe("NIC generate payload: Part-B", () => {
   it("leaves the mode and vehicle blank when only the transporter ID is given", () => {
     const body = payload({ transporterId: "24AAACR5055K1ZD", transporterName: "Fast Movers" });

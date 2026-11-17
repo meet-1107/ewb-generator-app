@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { extractInvoiceFields, unspaceLetters, type PdfRow } from "../src/lib/pdf-extract";
+import { extractInvoiceFields, firstCopy, unspaceLetters, type PdfRow } from "../src/lib/pdf-extract";
 
 const row = (page: number, cells: [number, number, string][]): PdfRow => ({ page, cells: cells.map(([x, width, text]) => ({ x, width, text })) });
 const textOf = (rows: PdfRow[]) => rows.map((item) => item.cells.map((cell) => cell.text).join(" ")).join("\n");
@@ -256,5 +256,93 @@ describe("PDF fields from letter-spaced and unlabelled layouts", () => {
     assert.equal(unspaceLetters("A M O U NT I N W O R D S"), "AMOUNT IN WORDS");
     assert.equal(unspaceLetters("B I L L TO S H I P TO"), "BILL TO SHIP TO");
     assert.equal(unspaceLetters("J K INDUSTRIES"), "J K INDUSTRIES");
+  });
+});
+
+describe("PDF with the bill printed more than once", () => {
+  const bill = (page: number, label: string) => [
+    row(page, [[28, 59, "TAX INVOICE"], [98, 119, label]]),
+    row(page, [[30, 120, "Shree Traders"]]),
+    row(page, [[30, 20, "Sl No."], [60, 100, "Description of Goods"], [250, 40, "HSN/SAC"], [300, 35, "GST Rate"], [345, 40, "Quantity"], [400, 25, "Rate"], [480, 40, "Amount"]]),
+    row(page, [[32, 6, "1"], [60, 70, "MS Plate 10mm"], [250, 38, "72085110"], [305, 20, "18 %"], [340, 50, "1,000 kg"], [400, 25, "55.00"], [475, 45, "55,000.00"]]),
+    row(page, [[32, 6, "2"], [60, 70, "MS Angle 50x50"], [250, 38, "72163100"], [305, 20, "18 %"], [345, 40, "500 Nos"], [398, 28, "120.00"], [475, 45, "60,000.00"]]),
+    row(page, [[60, 25, "Total"], [470, 50, "1,15,000.00"]]),
+  ];
+  const linesOf = (rows: PdfRow[]) => { const kept = firstCopy(rows); return extractInvoiceFields(textOf(kept), 3, kept).lines; };
+
+  it("imports the items once from an original + duplicate + triplicate PDF", () => {
+    const rows = [...bill(1, "ORIGINAL FOR RECIPIENT"), ...bill(2, "DUPLICATE FOR TRANSPORTER"), ...bill(3, "TRIPLICATE FOR SUPPLIER")];
+    assert.equal(firstCopy(rows).length, 6);
+    const lines = linesOf(rows);
+    assert.equal(lines.length, 2, JSON.stringify(lines));
+    assert.equal(lines[0]!.taxablePaise + lines[1]!.taxablePaise, 11_500_000);
+  });
+
+  it("cuts two copies printed on one page", () => {
+    const rows = [...bill(1, "ORIGINAL COPY"), ...bill(1, "DUPLICATE COPY")];
+    assert.equal(linesOf(rows).length, 2);
+  });
+
+  it("skips a page that repeats an earlier page without copy labels", () => {
+    const rows = [...bill(1, ""), ...bill(2, "")];
+    assert.equal(linesOf(rows).length, 2);
+  });
+
+  it("keeps every page of one long bill whose pages all say ORIGINAL", () => {
+    const page2 = [
+      row(2, [[28, 59, "TAX INVOICE"], [98, 119, "ORIGINAL FOR RECIPIENT"]]),
+      row(2, [[32, 6, "3"], [60, 70, "Binding Wire"], [250, 38, "7217"], [305, 20, "18 %"], [345, 40, "25 kg"], [400, 25, "80.00"], [480, 40, "2,000.00"]]),
+    ];
+    const rows = [...bill(1, "ORIGINAL FOR RECIPIENT").slice(0, 5), ...page2];
+    assert.equal(firstCopy(rows).length, rows.length);
+  });
+});
+
+describe("Tally bill with boxed header and an HSN row above the product (SBIPL/139)", () => {
+  const rows = [
+    row(1, [[252, 62, "Tax Invoice"]]),
+    row(1, [[290, 45, "Invoice No."], [415, 24, "Dated"]]),
+    row(1, [[38, 163, "Shraddha Brass Industries Pvt Ltd"]]),
+    row(1, [[290, 49, "SBIPL/139"], [415, 48, "14-Nov-26"]]),
+    row(1, [[38, 64, "Rajkot 360004"], [290, 54, "Delivery Note"], [415, 98, "Mode/Terms of Payment"]]),
+    row(1, [[38, 147, "GSTIN/UIN: 24ABOCS1961J1ZZ"]]),
+    row(1, [[38, 145, "State Name : Gujarat, Code : 24"], [290, 90, "Reference No. & Date."], [415, 70, "Other References"]]),
+    row(1, [[38, 54, "Buyer (Bill to)"]]),
+    row(1, [[290, 71, "Buyer's Order No."], [415, 24, "Dated"]]),
+    row(1, [[38, 145, "Sri Lakshmi Sales Corporation"]]),
+    row(1, [[38, 43, "20/3,No 3"]]),
+    row(1, [[290, 69, "Dispatch Doc No."], [415, 75, "Delivery Note Date"]]),
+    row(1, [[38, 59, "Ground Floor"]]),
+    row(1, [[38, 135, "Sri Lakshmi Sales Corporarion"]]),
+    row(1, [[290, 77, "Dispatched through"], [415, 45, "Destination"]]),
+    row(1, [[38, 53, "M R R Lane"]]),
+    row(1, [[38, 79, "S J P Road Cross"]]),
+    row(1, [[38, 75, "Bengaluru Urban"], [290, 70, "Terms of Delivery"]]),
+    row(1, [[38, 50, "GSTIN/UIN"], [120, 100, ": 29AGFPN0020J1ZM"]]),
+    row(1, [[38, 52, "State Name"], [120, 102, ": Karnataka, Code : 29"]]),
+    row(1, [[38, 9, "Sl"], [128, 81, "Description of Goods"], [299, 40, "HSN/SAC"], [352, 33, "Quantity"], [409, 19, "Rate"], [448, 13, "per"], [486, 31, "Amount"]]),
+    row(1, [[38, 10, "No."]]),
+    row(1, [[297, 40, "84818090"], [418, 23, "70.00"], [447, 16, "Nos"]]),
+    row(1, [[42, 6, "1"], [53, 91, "1\"200gm Brass Nrv"], [353, 38, "384 Nos"], [491, 44, "26,880.00"]]),
+    row(1, [[237, 53, "Output Igst"], [430, 11, "18"], [446, 9, "%"], [496, 39, "4,838.40"]]),
+    row(1, [[53, 22, "Less :"]]),
+    row(1, [[227, 64, "Rounding Off"], [506, 29, "(-)0.40"]]),
+    row(1, [[271, 20, "Total"]]),
+    row(1, [[353, 38, "384 Nos"], [471, 64, "₹ 31,718.00"]]),
+    row(1, [[38, 114, "Amount Chargeable (in words)"], [500, 35, "E. & O.E"]]),
+  ];
+
+  it("reads the product name, rate and unit, and not the rounding row", () => {
+    const fields = extractInvoiceFields(textOf(rows), 1, rows);
+    assert.equal(fields.lines.length, 1, JSON.stringify(fields.lines));
+    assert.deepEqual(fields.lines[0], { description: "1\"200gm Brass Nrv", hsn: "84818090", quantity: "384", unit: "Nos", unitPricePaise: 7000, taxablePaise: 2_688_000, taxRate: 18, confidence: "medium" });
+  });
+
+  it("reads the invoice number and date from their boxes, and the buyer under 'Buyer (Bill to)'", () => {
+    const fields = extractInvoiceFields(textOf(rows), 1, rows);
+    assert.equal(fields.invoiceNumber?.value, "SBIPL/139");
+    assert.equal(fields.invoiceDate?.value, "2026-11-14");
+    assert.equal(fields.buyerName?.value, "Sri Lakshmi Sales Corporation");
+    assert.equal(fields.sellerName?.value, "Shraddha Brass Industries Pvt Ltd");
   });
 });

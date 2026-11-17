@@ -238,7 +238,8 @@ export default function EwbReviewScreen() {
           <KeyValue label="Items" value={`${input.lines.length} (${input.lines.map((line) => line.hsn).filter(Boolean).slice(0, 3).join(', ')})`} />
           <KeyValue label="Taxable value" value={formatInr(totals.taxable)} />
           <KeyValue label={invoice.supplyType === 'intra' ? 'CGST + SGST' : 'IGST'} value={formatInr(totals.tax)} />
-          <KeyValue label="Total value" value={formatInr(totals.exact)} strong />
+          {totals.roundOff ? <KeyValue label="Round off" value={(totals.roundOff > 0 ? '+' : '−') + formatInr(Math.abs(totals.roundOff))} /> : null}
+          <KeyValue label="Total value" value={formatInr(totals.total)} strong />
         </SummaryCard>
         <SummaryCard title="Transport" icon="truck" onEdit={editInvoice}>
           <KeyValue label="Mode" value={`${invoice.transportMode}${invoice.vehicleType === 'odc' ? ' · Over-dimensional' : ''}`} />

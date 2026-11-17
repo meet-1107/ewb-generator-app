@@ -1,6 +1,6 @@
 import { Router, type IRouter } from "express";
 import { getDocumentProxy } from "unpdf";
-import { extractInvoiceFields, type PdfRow } from "../lib/pdf-extract";
+import { extractInvoiceFields, firstCopy, type PdfRow } from "../lib/pdf-extract";
 import { logger } from "../lib/logger";
 
 const router: IRouter = Router();
@@ -9,7 +9,6 @@ const MAX_BYTES = 8 * 1024 * 1024;
 /** Rebuilds visual lines from positioned text items so label/value pairs stay together. */
 async function pdfText(bytes: Uint8Array) {
   const pdf = await getDocumentProxy(bytes);
-  const pages: string[] = [];
   const allRows: PdfRow[] = [];
   for (let pageNumber = 1; pageNumber <= Math.min(pdf.numPages, 10); pageNumber += 1) {
     const page = await pdf.getPage(pageNumber);
@@ -24,9 +23,11 @@ async function pdfText(bytes: Uint8Array) {
     }
     const ordered = [...rows.entries()].sort((a, b) => b[0] - a[0]).map(([, row]) => row.sort((a, b) => a.x - b.x));
     allRows.push(...ordered.map((cells) => ({ page: pageNumber, cells })));
-    pages.push(ordered.map((row) => row.map((cell) => cell.text).join(" ")).join("\n"));
   }
-  return { text: pages.join("\n"), rows: allRows, pageCount: pdf.numPages };
+  // Only the first copy when the PDF holds the bill more than once (original + duplicate…).
+  const rows = firstCopy(allRows);
+  const text = rows.map((row) => row.cells.map((cell) => cell.text).join(" ")).join("\n");
+  return { text, rows, pageCount: pdf.numPages };
 }
 
 router.post("/pdf/parse", async (req, res) => {
