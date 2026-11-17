@@ -69,12 +69,14 @@ export function MoneyRow({ icon, tone, title, detail, amount, amountTone, sub, o
     <Pressable onPress={onPress} disabled={!onPress} testID={testID} style={({ pressed }) => [styles.row, pressed && { opacity: 0.7 }]} accessibilityRole={onPress ? 'button' : undefined}>
       <View style={[styles.icon, { backgroundColor: t.bg }]}><Feather name={icon} size={16} color={t.fg} /></View>
       <View style={{ flex: 1, minWidth: 0 }}>
-        <TextBlock size={14} weight="semibold" numberOfLines={1}>{title}</TextBlock>
-        {detail ? <TextBlock size={12} color={colors.mutedForeground} numberOfLines={1}>{detail}</TextBlock> : null}
+        {/* Never cut: long party names wrap onto more lines. */}
+        <TextBlock size={14} weight="semibold">{title}</TextBlock>
+        {detail ? <TextBlock size={12} color={colors.mutedForeground} numberOfLines={2}>{detail}</TextBlock> : null}
       </View>
-      <View style={{ alignItems: 'flex-end' }}>
-        <TextBlock size={14} weight="bold" color={amountTone === 'in' ? colors.successForeground : amountTone === 'out' ? colors.dangerForeground : colors.foreground}>{amount}</TextBlock>
-        {sub ? <TextBlock size={11} color={colors.mutedForeground}>{sub}</TextBlock> : null}
+      {/* Amounts up to crores stay on one line (shrinking if needed); the title gives way. */}
+      <View style={{ alignItems: 'flex-end', maxWidth: '46%' }}>
+        <TextBlock size={14} weight="bold" color={amountTone === 'in' ? colors.successForeground : amountTone === 'out' ? colors.dangerForeground : colors.foreground} numberOfLines={1} fit>{amount}</TextBlock>
+        {sub ? <TextBlock size={11} color={colors.mutedForeground} numberOfLines={1} fit>{sub}</TextBlock> : null}
       </View>
     </Pressable>
   );

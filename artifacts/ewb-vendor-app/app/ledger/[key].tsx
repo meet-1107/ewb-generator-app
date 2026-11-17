@@ -112,27 +112,30 @@ export default function PartyStatementScreen() {
 
       <View style={[styles.table, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <View style={[styles.tr, { backgroundColor: colors.muted }]}>
-          <TextBlock size={10} weight="bold" color={colors.mutedForeground} style={styles.cDetail}>DATE · DETAILS</TextBlock>
-          <TextBlock size={10} weight="bold" color={colors.mutedForeground} style={styles.cNum}>DEBIT</TextBlock>
-          <TextBlock size={10} weight="bold" color={colors.mutedForeground} style={styles.cNum}>CREDIT</TextBlock>
-          <TextBlock size={10} weight="bold" color={colors.mutedForeground} style={styles.cBal}>BALANCE</TextBlock>
+          <TextBlock size={10} weight="bold" color={colors.mutedForeground} style={styles.left}>DATE · DETAILS</TextBlock>
+          <TextBlock size={10} weight="bold" color={colors.mutedForeground} style={styles.right}>AMOUNT · BALANCE</TextBlock>
         </View>
-        {statement.rows.map((row, index) => (
-          <Pressable key={`${row.invoiceId ?? row.entryId}-${index}`} onPress={() => openLine(row)} style={({ pressed }) => [styles.tr, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }, pressed && { opacity: 0.6 }]}>
-            <View style={styles.cDetail}>
-              <TextBlock size={12} weight="semibold" numberOfLines={1}>{row.title}</TextBlock>
-              <TextBlock size={11} color={colors.mutedForeground} numberOfLines={1}>{[formatDate(row.date), row.detail].filter(Boolean).join(' · ')}</TextBlock>
-            </View>
-            <TextBlock size={12} style={styles.cNum}>{num(row.debit)}</TextBlock>
-            <TextBlock size={12} color={colors.successForeground} style={styles.cNum}>{num(row.credit)}</TextBlock>
-            <TextBlock size={12} weight="semibold" style={styles.cBal}>{num(Math.abs(row.balance)) || '0'} {drCr(row.balance)}</TextBlock>
-          </Pressable>
-        ))}
+        {statement.rows.map((row, index) => {
+          // One amount per line: a debit (to receive more) or a credit (paid / bought). Two short lines fit up to crores.
+          const debit = row.debit > 0;
+          return (
+            <Pressable key={`${row.invoiceId ?? row.entryId}-${index}`} onPress={() => openLine(row)} style={({ pressed }) => [styles.line, { borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.border }, pressed && { opacity: 0.6 }]}>
+              <View style={styles.tr2}>
+                <TextBlock size={13} weight="semibold" numberOfLines={2} style={styles.left}>{row.title}</TextBlock>
+                <TextBlock size={13} weight="bold" color={debit ? colors.foreground : colors.successForeground} numberOfLines={1} fit style={styles.right}>{debit ? 'Dr' : 'Cr'} {formatInr(debit ? row.debit : row.credit)}</TextBlock>
+              </View>
+              <View style={styles.tr2}>
+                <TextBlock size={11} color={colors.mutedForeground} numberOfLines={1} style={styles.left}>{[formatDate(row.date), row.detail].filter(Boolean).join(' · ')}</TextBlock>
+                <TextBlock size={11} color={colors.mutedForeground} numberOfLines={1} fit style={styles.right}>Bal {formatInr(Math.abs(row.balance))} {drCr(row.balance)}</TextBlock>
+              </View>
+            </Pressable>
+          );
+        })}
       </View>
-      <TextBlock size={11} color={colors.mutedForeground}>Debit = amount to receive (sales). Credit = payments received or purchases from this party.</TextBlock>
+      <TextBlock size={11} color={colors.mutedForeground}>Dr = amount to receive (sales). Cr = payments received, or purchases from this party. Bal = running balance.</TextBlock>
 
       <View style={{ flexDirection: 'row', gap: 10 }}>
-        <Button title={balance < 0 ? 'Record payment made' : 'Record payment'} icon={balance < 0 ? 'arrow-up-right' : 'arrow-down-left'} onPress={recordPayment} style={{ flex: 1.3 }} testID="ledger-record" />
+        <Button title="Record payment" icon={balance < 0 ? 'arrow-up-right' : 'arrow-down-left'} onPress={recordPayment} style={{ flex: 1.3 }} testID="ledger-record" />
         <Button title="Remind" icon="message-circle" variant="outline" onPress={() => void remind()} style={{ flex: 1 }} />
       </View>
       <Button title="Share statement PDF" icon="file-text" variant="outline" onPress={() => void sharePdf()} />
@@ -168,7 +171,8 @@ const styles = StyleSheet.create({
   top: { flexDirection: 'row', alignItems: 'center' },
   table: { borderWidth: 1, borderRadius: 16, overflow: 'hidden' },
   tr: { flexDirection: 'row', alignItems: 'center', paddingVertical: 9, paddingHorizontal: 10, gap: 6 },
-  cDetail: { flex: 1, minWidth: 0 },
-  cNum: { width: 64, textAlign: 'right' },
-  cBal: { width: 84, textAlign: 'right' },
+  line: { paddingVertical: 9, paddingHorizontal: 12, gap: 2 },
+  tr2: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+  left: { flex: 1, minWidth: 0 },
+  right: { maxWidth: '58%', textAlign: 'right' },
 });

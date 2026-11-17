@@ -7,7 +7,7 @@ import { useColors } from '@/hooks/useColors';
 import { useAppStore, useScopedRecords } from '@/state/app-store';
 import { useAuth } from '@/state/auth';
 import { setThemePreference, useThemePreference, type ThemePreference } from '@/state/theme';
-import { defaultBank, formatInr, gstinProblem, relativeTime, STATES, stateForGstin, templates, type Business } from '@/lib/domain';
+import { defaultBank, formatRupees, gstinProblem, relativeTime, STATES, stateForGstin, templates, type Business } from '@/lib/domain';
 import { accountBook, accountLabel, CASH, inPeriod, partySummaries, periodRange, scopedEntries } from '@/lib/ledger';
 import { Button, Card, Divider, Field, Heading, ListRow, Notice, Page, Segmented, SectionTitle, SelectField, Sheet, StatusPill, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
@@ -43,7 +43,7 @@ export default function AccountScreen() {
     const month = periodRange('month');
     const parties = partySummaries([...records.invoices, ...records.purchases], entries);
     return {
-      bankDetail: bank ? `${accountLabel(bank.id, banks)} · ${formatInr(accountBook(entries, bank.id).balance)}` : 'Add a bank account to start',
+      bankDetail: bank ? `${accountLabel(bank.id, banks)} · ${(() => { const b = accountBook(entries, bank.id).balance; return `${b < 0 ? '−' : ''}${formatRupees(Math.abs(b))}`; })()}` : 'Add a bank account to start',
       cash: accountBook(entries, CASH).balance,
       expenses: entries.filter((entry) => entry.kind === 'expense' && inPeriod(entry.date, month)).reduce((sum, entry) => sum + entry.amountPaise, 0),
       receive: parties.reduce((sum, party) => sum + Math.max(0, party.balance), 0),
@@ -252,11 +252,11 @@ export default function AccountScreen() {
         <Divider inset={64} />
         <ListRow icon="credit-card" title="Bank entry" detail={books.bankDetail} onPress={() => router.push('/bank-entry')} testID="my-business-bank" />
         <Divider inset={64} />
-        <ListRow icon="dollar-sign" title="Cash entry" detail={`Cash in hand ${formatInr(books.cash)}`} onPress={() => router.push('/cash-entry')} testID="my-business-cash" />
+        <ListRow icon="dollar-sign" title="Cash entry" detail={`Cash in hand ${books.cash < 0 ? '−' : ''}${formatRupees(Math.abs(books.cash))}`} onPress={() => router.push('/cash-entry')} testID="my-business-cash" />
         <Divider inset={64} />
-        <ListRow icon="file-minus" title="Expenses" detail={`${formatInr(books.expenses)} this month`} onPress={() => router.push('/expenses')} testID="my-business-expenses" />
+        <ListRow icon="file-minus" title="Expenses" detail={`${formatRupees(books.expenses)} this month`} onPress={() => router.push('/expenses')} testID="my-business-expenses" />
         <Divider inset={64} />
-        <ListRow icon="book-open" title="Party ledger" detail={`To receive ${formatInr(books.receive)} · To pay ${formatInr(books.pay)}`} onPress={() => router.push('/ledger')} testID="my-business-ledger" />
+        <ListRow icon="book-open" title="Party ledger" detail={`To receive ${formatRupees(books.receive)} · To pay ${formatRupees(books.pay)}`} onPress={() => router.push('/ledger')} testID="my-business-ledger" />
       </Card>
 
       <SectionTitle title="Saved details" />
