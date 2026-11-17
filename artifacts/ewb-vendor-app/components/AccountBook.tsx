@@ -20,21 +20,28 @@ export default function AccountBook({ mode }: { mode: 'bank' | 'cash' }) {
   const store = useAppStore();
   const dialog = useDialog();
   const banks = store.business?.bankAccounts ?? [];
-  const [bankId, setBankId] = useState(store.business?.defaultBankId && banks.some((bank) => bank.id === store.business?.defaultBankId) ? store.business.defaultBankId : banks[0]?.id ?? '');
-  const account = mode === 'cash' ? CASH : bankId;
-  const [period, setPeriod] = useState<Period>('month');
+  /** '' = every bank account together (the default). */
+  const [bankId, setBankId] = useState('');
+  const allBanks = mode === 'bank' && !bankId && banks.length > 1;
+  const defaultBankId = banks.find((bank) => bank.id === store.business?.defaultBankId)?.id ?? banks[0]?.id ?? '';
+  // The single account entries are added to: cash, the chosen bank, or (with all banks) the default bank.
+  const account = mode === 'cash' ? CASH : bankId || defaultBankId;
+  const shownAccounts = mode === 'cash' ? [CASH] : bankId ? [bankId] : banks.map((bank) => bank.id);
+  const [period, setPeriod] = useState<Period>('all');
   const [draft, setDraft] = useState<EntryDraft | null>(null);
   const [opening, setOpening] = useState<{ id?: string; createdAt?: string; amountPaise: number; date: string } | null>(null);
   const list = useLoadMore(PAGE);
 
   const entries = useMemo(() => scopedEntries(store.entries, store.activeGstin), [store.entries, store.activeGstin]);
-  const book = useMemo(() => (account ? accountBook(entries, account) : { rows: [], balance: 0 }), [entries, account]);
+  const accountsKey = shownAccounts.join(',');
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const book = useMemo(() => (shownAccounts.length ? accountBook(entries, shownAccounts) : { rows: [], balance: 0 }), [entries, accountsKey]);
   const range = periodRange(period);
   const rows = book.rows.filter((row) => inPeriod(row.entry.date, range));
   const moneyIn = rows.reduce((sum, row) => sum + Math.max(0, row.effect), 0);
   const moneyOut = rows.reduce((sum, row) => sum + Math.max(0, -row.effect), 0);
   const openingEntry = entries.find((entry) => entry.kind === 'opening' && entry.account === account);
-  const name = mode === 'cash' ? 'Cash' : accountLabel(account, banks);
+  const name = mode === 'cash' ? 'Cash' : allBanks ? 'All banks' : accountLabel(account, banks);
 
   const back = () => (router.canGoBack() ? router.back() : router.replace('/account'));
 
@@ -50,9 +57,19 @@ export default function AccountBook({ mode }: { mode: 'bank' | 'cash' }) {
     );
   }
 
+  // With all banks shown, each row also says which bank it belongs to.
   const describe = (entry: Entry) => {
+    const info = describeIn(entry);
+    if (!allBanks || entry.kind === 'transfer') return info;
+    return { ...info, detail: [accountLabel(entry.account, banks), info.detail].filter(Boolean).join(' · ') };
+  };
+  const describeIn = (entry: Entry) => {
     if (entry.kind === 'opening') return { icon: 'flag' as const, tone: 'neutral' as const, title: 'Opening balance', detail: formatDate(entry.date) };
+    if (entry.kind === 'transfer' && allBanks && entry.account !== CASH && entry.toAccount !== CASH) {
+      return { icon: 'repeat' as const, tone: 'move' as const, title: 'Transfer between banks', detail: `${accountLabel(entry.account, banks)} → ${accountLabel(entry.toAccount ?? '', banks)}` };
+    }
     if (entry.kind === 'transfer') {
+      const account = shownAccounts.includes(entry.toAccount ?? '') ? entry.toAccount ?? '' : entry.account;
       const incoming = entry.toAccount === account;
       const other = accountLabel(incoming ? entry.account : entry.toAccount ?? '', banks);
       return { icon: 'repeat' as const, tone: 'move' as const, title: incoming ? (entry.account === CASH ? 'Cash deposited' : `From ${other}`) : entry.toAccount === CASH ? 'Cash withdrawn' : `To ${other}`, detail: [incoming ? `From ${other}` : `To ${other}`, entry.reference].filter(Boolean).join(' · ') };
@@ -98,12 +115,15 @@ export default function AccountBook({ mode }: { mode: 'bank' | 'cash' }) {
         amount={`${book.balance < 0 ? '−' : ''}${formatInr(Math.abs(book.balance))}`}
         detail={`As on ${formatDate(today())}`}
         split={[{ label: `In · ${range.label}`, value: `+${formatInr(moneyIn)}` }, { label: `Out · ${range.label}`, value: `−${formatInr(moneyOut)}` }]}
-        action={openingEntry ? undefined : 'Set opening'}
+        action={openingEntry || allBanks ? undefined : 'Set opening'}
         onAction={() => setOpening({ amountPaise: 0, date: `${periodRange('fy').from}` })}
         testID={`${mode}-balance`}
       />
-      {mode === 'bank' && banks.length > 1 ? (
-        <ChipRow>{banks.map((bank) => <Chip key={bank.id} label={accountLabel(bank.id, banks)} icon="credit-card" selected={bank.id === bankId} onPress={() => { setBankId(bank.id); list.reset(); }} />)}</ChipRow>
+      {mode === 'bank' ? (
+        <ChipRow>
+          <Chip label="All banks" icon="credit-card" selected={!bankId} onPress={() => { setBankId(''); list.reset(); }} />
+          {banks.map((bank) => <Chip key={bank.id} label={accountLabel(bank.id, banks)} selected={bank.id === bankId} onPress={() => { setBankId(bank.id); list.reset(); }} />)}
+        </ChipRow>
       ) : null}
       <ChipRow>{PERIODS.map((item) => <Chip key={item.value} label={item.label} selected={period === item.value} onPress={() => { setPeriod(item.value); list.reset(); }} />)}</ChipRow>
       <InOutButtons
@@ -153,7 +173,8 @@ export default function AccountBook({ mode }: { mode: 'bank' | 'cash' }) {
       )}
       <TextBlock size={12} color={colors.mutedForeground} style={{ textAlign: 'center' }}>Expenses paid from {mode === 'cash' ? 'cash' : 'this bank'} show here too.</TextBlock>
 
-      <EntrySheet draft={draft} onClose={() => setDraft(null)} />
+      {/* With all banks shown, the form asks which bank (or cash) the money went through. */}
+      <EntrySheet draft={draft} onClose={() => setDraft(null)} chooseAccount={allBanks} />
 
       <Sheet
         visible={Boolean(opening)}

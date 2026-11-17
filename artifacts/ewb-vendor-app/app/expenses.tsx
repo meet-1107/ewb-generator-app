@@ -35,7 +35,7 @@ export default function ExpensesScreen() {
   const dialog = useDialog();
   const params = useLocalSearchParams<{ edit?: string }>();
   const banks = store.business?.bankAccounts ?? [];
-  const [period, setPeriod] = useState<Period>('month');
+  const [period, setPeriod] = useState<Period>('all');
   const [category, setCategory] = useState('');
   const [draft, setDraft] = useState<Draft | null>(null);
   const [errors, setErrors] = useState<Record<string, string>>({});

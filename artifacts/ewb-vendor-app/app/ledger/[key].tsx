@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { Pressable, Share, StyleSheet, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Button, Card, EmptyState, IconButton, MoneyField, Page, Segmented, Sheet, TextBlock } from '@/components/AppUI';
+import { useLoadMore } from '@/hooks/useLoadMore';
 import { DateField } from '@/components/DateField';
 import { useDialog } from '@/components/Dialog';
 import { draftFromEntry, EntrySheet, newDraft, type EntryDraft } from '@/components/EntrySheet';
@@ -25,6 +26,8 @@ export default function PartyStatementScreen() {
   const entries = useMemo(() => scopedEntries(store.entries, store.activeGstin), [store.entries, store.activeGstin]);
   const statement = useMemo(() => partyStatement([...invoices, ...purchases], entries, key), [invoices, purchases, entries, key]);
   const [draft, setDraft] = useState<EntryDraft | null>(null);
+  /** The latest lines first come into view; older ones load on request (the PDF always has every line). */
+  const list = useLoadMore(30);
   const [opening, setOpening] = useState<{ id?: string; createdAt?: string; amountPaise: number; side: 'receive' | 'pay'; date: string } | null>(null);
   const back = () => (router.canGoBack() ? router.back() : router.replace('/ledger'));
 
@@ -115,7 +118,12 @@ export default function PartyStatementScreen() {
           <TextBlock size={10} weight="bold" color={colors.mutedForeground} style={styles.left}>DATE · DETAILS</TextBlock>
           <TextBlock size={10} weight="bold" color={colors.mutedForeground} style={styles.right}>AMOUNT · BALANCE</TextBlock>
         </View>
-        {statement.rows.map((row, index) => {
+        {statement.rows.length > list.limit ? (
+          <View style={{ padding: 8 }}>
+            <Button title={`Show ${Math.min(30, statement.rows.length - list.limit)} earlier entries (${statement.rows.length - list.limit} more)`} icon="chevrons-up" size="sm" variant="ghost" loading={list.loading} onPress={() => list.more(statement.rows.length)} />
+          </View>
+        ) : null}
+        {statement.rows.slice(-list.limit).map((row, index) => {
           // One amount per line: a debit (to receive more) or a credit (paid / bought). Two short lines fit up to crores.
           const debit = row.debit > 0;
           return (

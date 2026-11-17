@@ -77,15 +77,17 @@ export function accountEffect(entry: Entry, account: string) {
   return -entry.amountPaise;
 }
 
-/** The account's entries, newest first, each with the balance after it. */
-export function accountBook(entries: Entry[], account: string) {
+/** The entries of one account (or several together, e.g. every bank), newest first, each with the balance after it. */
+export function accountBook(entries: Entry[], account: string | string[]) {
+  const accounts = Array.isArray(account) ? account : [account];
   const mine = entries
-    .filter((entry) => entry.account === account || entry.toAccount === account)
+    .filter((entry) => accounts.includes(entry.account) || accounts.includes(entry.toAccount ?? ''))
     .filter((entry) => !(entry.kind === 'opening' && !entry.account))
     .sort((a, b) => a.date.localeCompare(b.date) || a.createdAt.localeCompare(b.createdAt));
   let balance = 0;
   const rows = mine.map((entry) => {
-    const effect = accountEffect(entry, account);
+    // A transfer between two of the accounts shown together nets to zero.
+    const effect = accounts.reduce((sum, item) => sum + accountEffect(entry, item), 0);
     balance += effect;
     return { entry, effect, balance };
   });
@@ -95,10 +97,10 @@ export function accountBook(entries: Entry[], account: string) {
 export type Period = 'month' | 'last' | 'fy' | 'all';
 
 export const PERIODS: { value: Period; label: string }[] = [
+  { value: 'all', label: 'All' },
   { value: 'month', label: 'This month' },
   { value: 'last', label: 'Last month' },
   { value: 'fy', label: 'This FY' },
-  { value: 'all', label: 'All' },
 ];
 
 /** First and last day (yyyy-mm-dd) of a period, in India time. */
