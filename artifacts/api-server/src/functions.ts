@@ -9,6 +9,8 @@ import app from "./app";
  */
 export const api = onRequest(
   // 300 s: an e-way bill call can take up to ~140 s (45 s timeout, retried on 429/502), which must finish before the instance is stopped.
-  { region: "asia-south1", memory: "512MiB", timeoutSeconds: 300, maxInstances: 10, concurrency: 80 },
+  // Up to 100 instances × 80 requests at once (8,000 in flight) for busy hours; instances start only
+  // when needed and are billed only while they run. maxInstances is also the spending cap.
+  { region: "asia-south1", memory: "1GiB", cpu: 1, timeoutSeconds: 300, maxInstances: 100, concurrency: 80 },
   app,
 );

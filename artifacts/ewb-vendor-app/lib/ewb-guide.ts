@@ -12,7 +12,8 @@ export const GSP_NAME = 'Chartered Information Systems Private Limited';
 export const GUIDE_STEPS: GuideStep[] = [
   {
     title: 'Log in to the e-way bill portal',
-    points: ['Tap “Open e-way bill portal” below.', 'Log in with your normal e-way bill username and password.'],
+    points: ['Tap “Open e-way bill portal” below.', '① Type your normal e-way bill username and password.', '② Type the captcha letters shown in the picture.', '③ Tap Login.'],
+    image: require('@/assets/images/ewb-guide/step-0.jpg'),
     tip: 'Use a laptop or the phone browser. Keep this app open to follow the steps.',
   },
   {

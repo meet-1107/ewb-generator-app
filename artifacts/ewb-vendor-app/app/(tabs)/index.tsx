@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useWelcomeCredits } from '@/hooks/useWelcomeCredits';
-import { useReviewPrompt } from '@/hooks/useReviewPrompt';
 import { Feather } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useColors } from '@/hooks/useColors';
@@ -67,8 +66,6 @@ export default function DashboardScreen() {
   const wallet = store.wallet;
   const lowCredits = Boolean(wallet && wallet.balance < wallet.costs.generate);
   const welcomeCredits = useWelcomeCredits();
-  // A Play Store rating is asked for once the account has made a few e-way bills.
-  useReviewPrompt(store.ewbs.length);
 
   const refresh = async () => {
     setRefreshing(true);

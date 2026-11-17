@@ -20,6 +20,7 @@ import { DialogProvider } from '@/components/Dialog';
 import ConsentGate from '@/components/ConsentGate';
 import UpdateGate from '@/components/UpdateGate';
 import PushManager from '@/components/PushManager';
+import RatePrompt from '@/components/RatePrompt';
 import { loadThemePreference } from '@/state/theme';
 import { useColors } from '@/hooks/useColors';
 
@@ -52,6 +53,7 @@ function RootLayoutNav() {
     <>
       <StatusBar style={colors.isDark ? 'light' : 'dark'} />
       <PushManager />
+      <RatePrompt />
       <UpdateGate>
       <ConsentGate>
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.background }, animation: 'slide_from_right' }}>
