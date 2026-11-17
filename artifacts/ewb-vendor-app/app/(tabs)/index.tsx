@@ -7,6 +7,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useColors } from '@/hooks/useColors';
 import { useAppStore, useScopedRecords } from '@/state/app-store';
 import { useNotices } from '@/state/notices';
+import { ledgerSign } from '@/lib/ledger';
 import {
   ewbStatusMeta,
   financialYear,
@@ -46,8 +47,9 @@ export default function DashboardScreen() {
     // Saved purchase bills of the same year; drafts are not counted, as with sales.
     const bills = purchases.filter((purchase) => inYear(purchase.invoiceDate) && purchase.status !== 'draft');
     return {
-      sales: issued.reduce((sum, invoice) => sum + invoiceTotals(invoice).total, 0),
-      purchases: bills.reduce((sum, purchase) => sum + invoiceTotals(purchase).total, 0),
+      // Delivery challans are rough challans (not sales or purchases); credit notes reduce the total.
+      sales: issued.reduce((sum, invoice) => sum + ledgerSign(invoice) * invoiceTotals(invoice).total, 0),
+      purchases: bills.reduce((sum, purchase) => sum + ledgerSign(purchase) * invoiceTotals(purchase).total, 0),
       purchaseCount: bills.length,
       invoiceCount: fyInvoices.length,
       issuedCount: issued.length,

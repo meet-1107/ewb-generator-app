@@ -6,7 +6,7 @@ import { DateField } from '@/components/DateField';
 import { useDialog } from '@/components/Dialog';
 import { useColors } from '@/hooks/useColors';
 import { formatInr, formatDate, isPurchase, today } from '@/lib/domain';
-import { accountLabel, amountDue, BANK_MODES, CASH, partyKey, partySummaries, scopedEntries, type Entry } from '@/lib/ledger';
+import { accountLabel, amountDue, BANK_MODES, CASH, ledgerSign, partyKey, partySummaries, scopedEntries, type Entry } from '@/lib/ledger';
 import { useAppStore, useScopedRecords } from '@/state/app-store';
 
 type MoneyKind = 'receipt' | 'payment' | 'transfer';
@@ -98,7 +98,8 @@ export function EntrySheet({ draft, onClose, chooseAccount = false }: { draft: E
   // Invoices (for money received) or purchase bills (for money paid) of this party still due.
   const key = form.partyName.trim() ? partyKey(form.partyName, form.partyGstin) : '';
   const documents = form.kind === 'transfer' || !key ? [] : (form.kind === 'receipt' ? invoices : purchases)
-    .filter((invoice) => invoice.status !== 'draft' && partyKey(isPurchase(invoice) ? invoice.sellerName : invoice.buyerName, isPurchase(invoice) ? invoice.sellerGstin : invoice.buyerGstin) === key)
+    // A delivery challan is not a bill: no payment is recorded against it.
+    .filter((invoice) => invoice.status !== 'draft' && ledgerSign(invoice) !== 0 && partyKey(isPurchase(invoice) ? invoice.sellerName : invoice.buyerName, isPurchase(invoice) ? invoice.sellerGstin : invoice.buyerGstin) === key)
     .map((invoice) => ({ invoice, due: amountDue(invoice, entries.filter((entry) => entry.id !== form.id)) }))
     .filter((item) => item.due > 0 || item.invoice.id === form.invoiceId);
   const docOptions = [{ value: '', label: 'Not against an invoice' }, ...documents.map(({ invoice, due }) => ({ value: invoice.id, label: `${invoice.invoiceNumber || 'No number'} · ${formatInr(due)} due`, detail: formatDate(invoice.invoiceDate) }))];

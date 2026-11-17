@@ -128,7 +128,13 @@ export const inPeriod = (date: string, range: { from: string; to: string }) => d
 export const partyKey = (name?: string, gstin?: string) => (gstin?.trim() ? gstin.trim().toUpperCase() : `name:${(name ?? '').trim().toLowerCase()}`);
 
 /** Credit note: money back to the buyer (sales) or from the seller (purchase); delivery challans are not sales. */
-const SIGN: Record<string, number> = { 'Credit note': -1, 'Debit note': 1, 'Delivery challan': 0 };
+const SIGN: Record<string, number> = { 'credit note': -1, 'debit note': 1, 'delivery challan': 0 };
+
+/**
+ * How a document counts in money: +1 (invoice, debit note), -1 (credit note), 0 (delivery
+ * challan: only a rough challan, never part of what is owed, paid or sold).
+ */
+export const ledgerSign = (invoice: Pick<Invoice, 'documentType'>) => SIGN[(invoice.documentType || 'Tax invoice').trim().toLowerCase()] ?? 1;
 
 export type LedgerLine = {
   date: string;
@@ -161,7 +167,7 @@ function partyLines(invoices: Invoice[], entries: Entry[]) {
   };
   for (const invoice of invoices) {
     if (invoice.status === 'draft' || invoice.unsaved) continue;
-    const sign = SIGN[invoice.documentType] ?? 1;
+    const sign = ledgerSign(invoice);
     if (!sign) continue;
     const purchase = isPurchase(invoice);
     const name = purchase ? invoice.sellerName : invoice.buyerName;
