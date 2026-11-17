@@ -673,7 +673,7 @@
       view.append(head("Settings & health", "How the server is configured right now. Secrets are never shown; change settings in functions/.env and deploy."));
       const body = h("div", {}, loading());
       view.append(body);
-      const [health, subs, metrics] = await Promise.all([api("/health"), canDo("payments") ? api("/subscriptions") : Promise.resolve(null), canDo("admins") ? api("/metrics/status").catch(() => null) : Promise.resolve(null)]);
+      const [health, subs, metrics] = await Promise.all([api("/health"), canDo("payments") ? api("/subscriptions") : Promise.resolve(null), canDo("admins") ? api("/metrics/status").catch(() => ({ ready: false })) : Promise.resolve(null)]);
       const yes = (value, label = "Configured") => badge(value ? "ok" : "unknown", value ? label : "Not set");
       if (metrics) {
         const status = h("p", { class: "note", style: "margin:0" }, metrics.ready ? "On: the Overview and Users pages read the counters and the user index (a few hundred small documents, whatever the number of accounts)." : "Off: the panel still reads every account for each view. Build the counters once to switch.");
@@ -691,7 +691,8 @@
             toast("Counters built");
           } catch (error) { status.textContent = `Stopped: ${error.message}. Run it again to start over.`; run.disabled = false; }
         } }, metrics.ready ? "Rebuild counters" : "Build counters");
-        body.after(h("div", { class: "card section" }, h("h2", {}, "Low-cost admin panel"), status, h("div", { class: "filters", style: "margin:10px 0 0" }, run)));
+        // At the top of the page, so it is easy to find.
+        body.before(h("div", { class: "card", style: "margin-bottom:16px" }, h("h2", {}, "Low-cost admin panel"), status, h("div", { class: "filters", style: "margin:10px 0 0" }, run)));
       }
       put(body, h("div", { class: "grid two" },
         h("div", { class: "card" }, h("h2", {}, "Services"), h("dl", { class: "kv" },
