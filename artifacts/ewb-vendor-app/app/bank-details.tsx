@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { Share, StyleSheet, View } from 'react-native';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { router, useLocalSearchParams } from 'expo-router';
 import { Button, Card, Checkbox, Divider, EmptyState, Field, IconButton, ListRow, ScreenHeader, Segmented, SelectSheet, Sheet, StatusPill, TextBlock } from '@/components/AppUI';
 import { useDialog } from '@/components/Dialog';
 import { useColors } from '@/hooks/useColors';
@@ -30,6 +31,9 @@ export default function BankDetailsScreen() {
   /** What the IFSC lookup found, shown under the IFSC field. */
   const [ifscNote, setIfscNote] = useState('');
   const lookedUp = useRef('');
+  /** add=1 opens the add form at once; back=1 returns to the screen that sent us (e.g. Bank entry) when done. */
+  const params = useLocalSearchParams<{ add?: string; back?: string }>();
+  const returnAfter = params.back === '1';
 
   const open = (bank?: BankAccount) => {
     setErrors({});
@@ -46,6 +50,14 @@ export default function BankDetailsScreen() {
       setErrors((existing) => ({ ...existing, [key]: '' }));
     },
   });
+
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { if (params.add === '1' && business) open(); }, []);
+
+  const close = () => {
+    setDraft(null);
+    if (returnAfter && router.canGoBack()) router.back();
+  };
 
   // A complete IFSC fills in the branch (and the bank, when not chosen yet).
   const draftIfsc = draft?.ifsc ?? '';
@@ -95,8 +107,8 @@ export default function BankDetailsScreen() {
     const next = draft.id ? banks.map((bank) => (bank.id === draft.id ? saved : bank)) : [...banks, saved];
     const defaultBankId = isDefault || !next.some((bank) => bank.id === business.defaultBankId) ? saved.id : business.defaultBankId;
     await store.saveBusiness({ ...business, bankAccounts: next, defaultBankId });
-    setDraft(null);
     dialog.toast(draft.id ? 'Bank account updated' : 'Bank account added', 'success');
+    close();
   };
 
   const share = async (bank: BankAccount) => {
@@ -164,7 +176,7 @@ export default function BankDetailsScreen() {
 
       <Sheet
         visible={Boolean(draft)}
-        onClose={() => setDraft(null)}
+        onClose={close}
         title={draft?.id ? 'Edit bank account' : 'Add bank account'}
         footer={(
           <View style={{ flexDirection: 'row', gap: 10 }}>

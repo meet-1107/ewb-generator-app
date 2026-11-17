@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { View } from 'react-native';
+import { router } from 'expo-router';
 import { Button, Field, MoneyField, Segmented, SelectField, SelectSheet, Sheet, TextBlock } from '@/components/AppUI';
 import { DateField } from '@/components/DateField';
 import { useDialog } from '@/components/Dialog';
@@ -170,7 +171,12 @@ export function EntrySheet({ draft, onClose, chooseAccount = false }: { draft: E
         {form.kind === 'transfer' ? (
           accounts.length > 1
             ? <SelectField label={isCash ? 'Deposited in' : 'Moved to'} required value={form.toAccount} placeholder="Choose" options={accounts.filter((item) => item.value !== form.account)} onSelect={(toAccount) => set({ toAccount })} error={errors.toAccount} />
-            : <TextBlock size={12} color={colors.dangerForeground}>Add a bank account in Account → Bank details to move money between cash and bank.</TextBlock>
+            : (
+              <View style={{ gap: 8 }}>
+                <TextBlock size={12} color={colors.dangerForeground}>No bank account saved yet. Add one to move money between cash and bank.</TextBlock>
+                <Button title="Add bank account" icon="plus" variant="outline" onPress={() => { onClose(); router.push({ pathname: '/bank-details', params: { add: '1', back: '1' } }); }} />
+              </View>
+            )
         ) : (
           <>
             <Field

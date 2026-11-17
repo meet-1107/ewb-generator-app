@@ -51,7 +51,7 @@ export default function AccountBook({ mode }: { mode: 'bank' | 'cash' }) {
         <View style={styles.top}><IconButton icon="arrow-left" accessibilityLabel="Go back" onPress={back} /></View>
         <Heading eyebrow="My business" title="Bank entry" />
         <Card>
-          <EmptyState icon="credit-card" title="Add your bank account first" body="Bank entries are kept for each bank account. Add the account once, then record money in and out." action={<Button title="Add bank account" icon="plus" onPress={() => router.push('/bank-details')} />} />
+          <EmptyState icon="credit-card" title="Add your bank account first" body="Bank entries are kept for each bank account. Add the account once, then record money in and out." action={<Button title="Add bank account" icon="plus" onPress={() => router.push({ pathname: '/bank-details', params: { add: '1', back: '1' } })} />} />
         </Card>
       </Page>
     );
@@ -123,6 +123,7 @@ export default function AccountBook({ mode }: { mode: 'bank' | 'cash' }) {
         <ChipRow>
           <Chip label="All banks" icon="credit-card" selected={!bankId} onPress={() => { setBankId(''); list.reset(); }} />
           {banks.map((bank) => <Chip key={bank.id} label={accountLabel(bank.id, banks)} selected={bank.id === bankId} onPress={() => { setBankId(bank.id); list.reset(); }} />)}
+          <Chip label="Add bank" icon="plus" selected={false} onPress={() => router.push({ pathname: '/bank-details', params: { add: '1', back: '1' } })} />
         </ChipRow>
       ) : null}
       <ChipRow>{PERIODS.map((item) => <Chip key={item.value} label={item.label} selected={period === item.value} onPress={() => { setPeriod(item.value); list.reset(); }} />)}</ChipRow>
