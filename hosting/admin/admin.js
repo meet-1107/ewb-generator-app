@@ -329,6 +329,12 @@
         h("div", { class: "grid kpis" }, tile("Registered users", num(o.users.total), `${num(o.users.newInRange)} new in period`), tile("Verified email", num(o.users.verified), `${num(o.users.unverified)} unverified`),
           tile("New today", num(o.users.newToday), `${num(o.users.new7d)} in 7 days · ${num(o.users.new30d)} in 30`), tile("Signed in during period", num(o.users.signedInInRange), "by last sign-in"),
           tile("Suspended", num(o.users.suspended)), tile("Never made a bill", num(o.users.neverGenerated))),
+        o.invoices ? [h("h3", { class: "section" }, "Invoices made in the app"), h("div", { class: "grid kpis" },
+          tile("Users making invoices", num(o.invoices.usersMaking), `of ${num(o.users.total)} users`),
+          tile("Made invoices in last 30 days", num(o.invoices.usersLast30), "different accounts"),
+          tile("Never made an invoice", num(o.invoices.usersNever), "set up, but no invoice yet"),
+          tile("Sales invoices", num(o.invoices.total), `${num(o.invoices.last30)} in last 30 days (incl. purchases)`),
+          tile("Purchase bills", num(o.invoices.purchases), `${num(o.invoices.drafts)} drafts not counted`))] : null,
         h("h3", { class: "section" }, "E-way bills"),
         h("div", { class: "grid kpis" }, tile("Generated in period", num(o.ewbs.generated), `${num(o.ewbs.allTime)} all time`), tile("Generated today", num(o.ewbs.today)),
           tile("Still active", num(o.ewbs.active), `${num(o.ewbs.partBPending)} Part-B pending`), tile("Cancelled", num(o.ewbs.cancelled), `${num(o.ewbs.expired)} expired`),
@@ -395,7 +401,7 @@
 
     async users(view, params) {
       if (params[0]) return userDetail(view, params[0]);
-      const state = { q: "", status: "", verified: "", paid: "", bills: "", credits: "", sort: "createdAt", page: 1, ...(pages.users.state || {}) };
+      const state = { q: "", status: "", verified: "", paid: "", bills: "", invoices: "", credits: "", sort: "createdAt", page: 1, ...(pages.users.state || {}) };
       pages.users.state = state;
       view.append(head("Users & businesses", "Every registered account, with its business, bills, credits and payments.", canDo("export") ? h("button", { class: "btn", onclick: () => download(`/export/users?${filterQuery(state)}`, "users.csv") }, "Export CSV") : null));
       const list = h("div", {}, loading());
@@ -406,8 +412,9 @@
         select("Email", state.verified, [["", "Any email"], ["yes", "Verified"], ["no", "Unverified"]], (v) => { state.verified = v; reload(); }),
         select("Paid", state.paid, [["", "Paid or free"], ["yes", "Has paid"], ["no", "Never paid"]], (v) => { state.paid = v; reload(); }),
         select("Bills", state.bills, [["", "Any usage"], ["yes", "Made bills"], ["no", "No bills"]], (v) => { state.bills = v; reload(); }),
+        select("Invoices", state.invoices, [["", "Any invoices"], ["yes", "Made invoices"], ["recent", "Invoices in last 30 days"], ["no", "No invoices"]], (v) => { state.invoices = v; reload(); }),
         select("Credits", state.credits, [["", "Any balance"], ["low", "Low credits"], ["zero", "Zero credits"]], (v) => { state.credits = v; reload(); }),
-        select("Sort", state.sort, [["createdAt", "Newest"], ["lastSignInAt", "Last sign-in"], ["ewbTotal", "Most bills"], ["paidPaise", "Most paid"], ["balance", "Highest balance"]], (v) => { state.sort = v; reload(); })), list);
+        select("Sort", state.sort, [["createdAt", "Newest"], ["lastSignInAt", "Last sign-in"], ["invoiceCount", "Most invoices"], ["lastInvoiceAt", "Latest invoice"], ["ewbTotal", "Most bills"], ["paidPaise", "Most paid"], ["balance", "Highest balance"]], (v) => { state.sort = v; reload(); })), list);
       async function load() {
         put(list, loading());
         try {
@@ -418,6 +425,8 @@
             { label: "Business", wrap: true, render: (r) => h("div", {}, r.businessName || "—", r.gstin ? h("div", { class: "note mono", style: "margin:0" }, r.gstin) : null) },
             { label: "Registered", render: (r) => day(r.createdAt) },
             { label: "Last sign-in", render: (r) => when(r.lastSignInAt) },
+            { label: "Invoices", num: true, render: (r) => h("div", { title: `${num(r.purchaseCount)} purchase bills · ${num(r.draftCount)} drafts` }, num(r.invoiceCount), r.invoicesLast30 ? h("div", { class: "note", style: "margin:0" }, `${num(r.invoicesLast30)} in 30 days`) : null) },
+            { label: "Last invoice", render: (r) => day(r.lastInvoiceAt) },
             { label: "Bills", num: true, render: (r) => num(r.ewbTotal) },
             { label: "Credits", num: true, render: (r) => num(r.balance) },
             { label: "Bought", num: true, render: (r) => num(r.purchasedCredits) },
@@ -719,7 +728,7 @@
           h("dt", {}, "Portal logins"), h("dd", {}, d.portalLogins.length ? d.portalLogins.map((login) => `${login.gstin} (saved ${day(login.updatedAt)})`).join(", ") : "none")) : h("p", { class: "note" }, u.businessName ? `${u.businessName}` : "Business details are not available to your role, or not set up yet.")),
         d.subscription ? h("div", { class: "card" }, h("h2", {}, "Plan"), h("dl", { class: "kv" }, h("dt", {}, "Plan"), h("dd", {}, d.subscription.planId), h("dt", {}, "State"), h("dd", {}, d.subscription.entitlementState), h("dt", {}, "Renews / trial ends"), h("dd", {}, day(d.subscription.renewalAt)),
           h("dt", {}, "Bills this month"), h("dd", {}, num(d.subscription.usageCount))), h("p", { class: "note" }, "Plans are display-only; billing is by credits.")) : null)],
-      ["Usage", () => h("div", {}, h("div", { class: "grid kpis" }, tile("Bills generated", num(u.ewbTotal), `${num(u.ewbActive)} active · ${num(u.ewbCancelled)} cancelled`), tile("Submissions rejected", num(d.attempts.rejected)), tile("Outcome unknown", num(d.attempts.unknown)), tile("Still pending", num(d.attempts.pending)),
+      ["Usage", () => h("div", {}, h("div", { class: "grid kpis" }, tile("Sales invoices", num(u.invoiceCount), `${num(u.invoicesLast30)} in last 30 days · last ${day(u.lastInvoiceAt)}`), tile("Purchase bills", num(u.purchaseCount), `${num(u.draftCount)} drafts`), tile("Bills generated", num(u.ewbTotal), `${num(u.ewbActive)} active · ${num(u.ewbCancelled)} cancelled`), tile("Submissions rejected", num(d.attempts.rejected)), tile("Outcome unknown", num(d.attempts.unknown)), tile("Still pending", num(d.attempts.pending)),
         d.api ? tile("API calls (90 days)", num(d.api.total), `${num(d.api.failed)} failed`) : null, tile("Last activity", day(u.lastActivityAt))),
         d.api ? h("div", { class: "card section" }, h("h2", {}, "API calls by operation (90 days)"), table([{ label: "Operation", key: "name", mono: true }, { label: "Requests", num: true, key: "total" }, { label: "Failed", num: true, key: "failed" }, { label: "Avg time", num: true, render: (r) => ms(r.avgMs) }], d.api.byOperation, { empty: "No API calls." })) : null)],
       d.wallet ? ["Credits", () => h("div", {}, h("div", { class: "grid kpis" }, tile("Balance", num(d.wallet.balance)), tile("Bought", num(u.purchasedCredits)), tile("Welcome", num(u.grantedCredits)), tile("Adjusted", num(u.adjustedCredits)), tile("Consumed", num(u.consumedCredits)), tile("Held now", num(u.heldCredits))),

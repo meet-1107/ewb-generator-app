@@ -38,6 +38,13 @@ export type UserRow = {
   ewbTotal: number;
   ewbActive: number;
   ewbCancelled: number;
+  /** Saved sales invoices (not drafts, not deleted), purchase bills, and drafts, from the synced records. */
+  invoiceCount: number;
+  purchaseCount: number;
+  draftCount: number;
+  /** Sales invoices and purchase bills created in the last 30 days. */
+  invoicesLast30: number;
+  lastInvoiceAt: string | null;
   lastActivityAt: string | null;
   planId: string;
   planState: string;
@@ -99,10 +106,26 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
   return out;
 }
 
+/** Invoice counts from a workspace's synced invoice records (the app's own copies; deleted ones are tombstones). */
+export function invoiceStats(workspace: Workspace | undefined, now = Date.now()) {
+  const out = { sales: 0, purchases: 0, drafts: 0, last30: 0, lastAt: null as string | null };
+  const since = new Date(now - 30 * 86_400_000).toISOString();
+  for (const record of Object.values(workspace?.sync["invoices"] ?? {})) {
+    const invoice = record.data as { kind?: string; status?: string; unsaved?: boolean; createdAt?: string } | undefined;
+    if (record.deleted || !invoice || invoice.unsaved) continue;
+    if (invoice.status === "draft") { out.drafts += 1; continue; }
+    if (invoice.kind === "purchase") out.purchases += 1; else out.sales += 1;
+    const created = invoice.createdAt ?? record.updatedAt;
+    if (created >= since) out.last30 += 1;
+    if (!out.lastAt || created > out.lastAt) out.lastAt = created;
+  }
+  return out;
+}
+
 async function build(): Promise<Snapshot> {
   const [accounts, ids, suspended] = await Promise.all([directory().list(), listWorkspaceIds(), suspendedAccounts()]);
   const workspaces = new Map<string, Workspace>();
-  const loaded = await mapLimit(ids, 10, (id) => peekWorkspace(id, { ewbs: true, syncKeys: ["business/profile"] }));
+  const loaded = await mapLimit(ids, 10, (id) => peekWorkspace(id, { ewbs: true, syncKeys: ["business/profile"], syncNames: ["invoices"] }));
   loaded.forEach((workspace, index) => { if (workspace) workspaces.set(ids[index]!, workspace); });
 
   const byUid = new Map<string, DirectoryUser>(accounts.map((account) => [account.uid, account]));
@@ -136,7 +159,8 @@ async function build(): Promise<Snapshot> {
     for (const purchase of ownPurchases) purchases.push({ ...purchase, uid });
     const paid = ownPurchases.filter((purchase) => purchase.status === "paid" && purchase.provider === "razorpay");
     const business = workspace?.sync["business"]?.["profile"]?.data as { name?: string; gstin?: string } | undefined;
-    const activity = [account?.lastSignInAt, ...own.map((ewb) => ewb.updatedAt), entries.at(-1)?.at].filter(Boolean) as string[];
+    const docs = invoiceStats(workspace);
+    const activity = [account?.lastSignInAt, ...own.map((ewb) => ewb.updatedAt), entries.at(-1)?.at, docs.lastAt].filter(Boolean) as string[];
     return {
       uid,
       email: account?.email ?? null,
@@ -162,6 +186,11 @@ async function build(): Promise<Snapshot> {
       ewbTotal: own.length,
       ewbActive: own.filter((ewb) => ["active", "part_b_pending"].includes(liveStatus(ewb))).length,
       ewbCancelled: own.filter((ewb) => ewb.status === "cancelled").length,
+      invoiceCount: docs.sales,
+      purchaseCount: docs.purchases,
+      draftCount: docs.drafts,
+      invoicesLast30: docs.last30,
+      lastInvoiceAt: docs.lastAt,
       lastActivityAt: activity.sort().at(-1) ?? null,
       planId: workspace?.subscription.planId ?? "free",
       planState: workspace?.subscription.entitlementState ?? "trial",
@@ -418,6 +447,16 @@ export async function overview(range: Range) {
       newInRange: users.filter((user) => inRange(user.createdAt, range)).length,
       signedInInRange: users.filter((user) => inRange(user.lastSignInAt, range)).length,
       neverGenerated: users.filter((user) => user.ewbTotal === 0).length,
+    },
+    invoices: {
+      // Counted from the invoices each account has synced (saved sales invoices; drafts apart).
+      total: users.reduce((sum, user) => sum + user.invoiceCount, 0),
+      purchases: users.reduce((sum, user) => sum + user.purchaseCount, 0),
+      drafts: users.reduce((sum, user) => sum + user.draftCount, 0),
+      last30: users.reduce((sum, user) => sum + user.invoicesLast30, 0),
+      usersMaking: users.filter((user) => user.invoiceCount > 0).length,
+      usersLast30: users.filter((user) => user.invoicesLast30 > 0).length,
+      usersNever: users.filter((user) => user.hasWorkspace && user.invoiceCount === 0 && user.purchaseCount === 0).length,
     },
     ewbs: {
       allTime: snap.ewbs.length,

@@ -166,6 +166,7 @@ function filterUsers(req: Request, users: UserRow[]) {
   const verified = text(req, "verified");
   const paid = text(req, "paid");
   const bills = text(req, "bills");
+  const invoices = text(req, "invoices");
   const credits = text(req, "credits");
   const range = text(req, "from") || text(req, "to") ? rangeOf(req) : null;
   return users.filter((user) => {
@@ -178,6 +179,9 @@ function filterUsers(req: Request, users: UserRow[]) {
     if (paid === "no" && user.paidPayments) return false;
     if (bills === "yes" && !user.ewbTotal) return false;
     if (bills === "no" && user.ewbTotal) return false;
+    if (invoices === "yes" && !user.invoiceCount) return false;
+    if (invoices === "no" && user.invoiceCount) return false;
+    if (invoices === "recent" && !user.invoicesLast30) return false;
     if (credits === "low" && user.balance > creditCosts.generate * 2) return false;
     if (credits === "zero" && user.balance > 0) return false;
     if (range && !inRange(user.createdAt, range)) return false;
@@ -190,6 +194,8 @@ const USER_SORT: Record<string, (user: UserRow) => string | number | null> = {
   lastSignInAt: (user) => user.lastSignInAt,
   balance: (user) => user.balance,
   ewbTotal: (user) => user.ewbTotal,
+  invoiceCount: (user) => user.invoiceCount,
+  lastInvoiceAt: (user) => user.lastInvoiceAt,
   paidPaise: (user) => user.paidPaise,
   email: (user) => user.email,
 };
@@ -542,7 +548,7 @@ router.get("/export/:report", allow("export"), async (req, res) => {
   const email = (uid: string) => users.get(uid)?.email ?? "";
   let rows: Record<string, unknown>[];
   if (report === "users") {
-    rows = filterUsers(req, snap.users).map((user) => ({ uid: user.uid, name: user.name, email: user.email, verified: user.emailVerified, status: user.suspended || user.disabled ? "suspended" : "active", registered: user.createdAt, lastSignIn: user.lastSignInAt, business: user.businessName, gstin: user.gstin, ewbs: user.ewbTotal, balance: user.balance, purchasedCredits: user.purchasedCredits, consumedCredits: user.consumedCredits, paidPayments: user.paidPayments, paidRupees: (user.paidPaise / 100).toFixed(2) }));
+    rows = filterUsers(req, snap.users).map((user) => ({ uid: user.uid, name: user.name, email: user.email, verified: user.emailVerified, status: user.suspended || user.disabled ? "suspended" : "active", registered: user.createdAt, lastSignIn: user.lastSignInAt, business: user.businessName, gstin: user.gstin, invoices: user.invoiceCount, purchaseBills: user.purchaseCount, draftInvoices: user.draftCount, invoicesLast30Days: user.invoicesLast30, lastInvoiceAt: user.lastInvoiceAt, ewbs: user.ewbTotal, balance: user.balance, purchasedCredits: user.purchasedCredits, consumedCredits: user.consumedCredits, paidPayments: user.paidPayments, paidRupees: (user.paidPaise / 100).toFixed(2) }));
   } else if (report === "ewbs") {
     rows = snap.ewbs.filter((ewb) => inRange(ewb.generatedAt, range)).map((ewb) => ({ ewbNumber: ewb.ewbNumber, generatedAt: ewb.generatedAt, status: ewb.status, provider: ewb.provider, invoiceNumber: ewb.invoiceNumber, invoiceDate: ewb.invoiceDate, totalRupees: (ewb.totalPaise / 100).toFixed(2), creditsCharged: ewb.creditsCharged, userEmail: email(ewb.uid), sellerGstin: ewb.sellerGstin, buyerName: ewb.buyerName }));
   } else if (report === "payments") {

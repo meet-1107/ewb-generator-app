@@ -486,7 +486,8 @@ async function firestoreDoc<T, R>(collection: string, id: string, fn: (current: 
 /* ---------- Read-only views and append-only logs (admin panel) ---------- */
 
 /** What `peekWorkspace` loads besides the small fields. */
-export type PeekSpec = { ewbs?: boolean; requests?: boolean; syncKeys?: string[] };
+/** syncNames: every record of these sync collections (e.g. "invoices" for the admin's invoice counts). */
+export type PeekSpec = { ewbs?: boolean; requests?: boolean; syncKeys?: string[]; syncNames?: string[] };
 
 /** Every workspace that has been created, by id. */
 export async function listWorkspaceIds(): Promise<string[]> {
@@ -526,6 +527,7 @@ export async function peekWorkspace(id: string, spec: PeekSpec = {}): Promise<Wo
       const record = full.sync[name]?.[recordId];
       if (record) (sync[name] ??= {})[recordId] = record;
     }
+    for (const name of spec.syncNames ?? []) if (full.sync[name]) sync[name] = { ...sync[name], ...full.sync[name] };
     return { ...full, ewbs: spec.ewbs ? full.ewbs : {}, requests: spec.requests ? full.requests : {}, gst: {}, cewbs: {}, sync };
   }
   const { db } = await firestore();
@@ -543,6 +545,9 @@ export async function peekWorkspace(id: string, spec: PeekSpec = {}): Promise<Wo
       const doc = item.data() as RecordDoc;
       (workspace.sync[doc.name!] ??= {})[doc.key] = JSON.parse(doc.json) as SyncRecord;
     }
+  }
+  if (spec.syncNames?.length) {
+    for (const doc of records((await root.collection("sync").where("name", "in", spec.syncNames).get()).docs)) (workspace.sync[doc.name!] ??= {})[doc.key] = JSON.parse(doc.json) as SyncRecord;
   }
   return workspace;
 }
